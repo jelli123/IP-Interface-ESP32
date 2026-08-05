@@ -298,9 +298,13 @@ void OtaService::installTask(void* arg)
         return;
     }
 
-    WiFiClient* stream  = https.getStreamPtr();
-    size_t      written = 0;
-    int         stalls  = 0;
+    // NetworkClient rather than WiFiClient: HTTPClient::getStreamPtr() returns
+    // the interface-agnostic type in Arduino-ESP32 3.x, which is what lets the
+    // update run over Ethernet just as well as over WiFi. WiFiClient is only a
+    // typedef for it and would drag in WiFi.h for no reason.
+    NetworkClient* stream  = https.getStreamPtr();
+    size_t         written = 0;
+    int            stalls  = 0;
 
     while (written < (size_t)length)
     {

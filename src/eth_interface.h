@@ -16,13 +16,19 @@
 class EthInterface
 {
 public:
+    /*
+     * Prefixed because Arduino-ESP32 defines a bare `DISABLED` macro in
+     * esp32-hal-gpio.h (`#define DISABLED 0x00`). An unprefixed enumerator of
+     * that name is rewritten by the preprocessor and the header stops parsing.
+     * The wire format is unaffected - stateName() still reports "disabled".
+     */
     enum State : uint8_t
     {
-        DISABLED, //!< no CS pin configured, nothing was tried
-        ABSENT,   //!< configured, but no W5500 answered the probe
-        NO_LINK,  //!< chip found, cable unplugged or no partner
-        NO_IP,    //!< link up, waiting for DHCP
-        READY     //!< link up and addressed
+        STATE_DISABLED, //!< no CS pin configured, nothing was tried
+        STATE_ABSENT,   //!< configured, but no W5500 answered the probe
+        STATE_NO_LINK,  //!< chip found, cable unplugged or no partner
+        STATE_NO_IP,    //!< link up, waiting for DHCP
+        STATE_READY     //!< link up and addressed
     };
 
     /**

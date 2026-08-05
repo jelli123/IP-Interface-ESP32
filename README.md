@@ -201,9 +201,69 @@ dynamisch angelegt und dem Platform-Objekt per `knxUart()` untergeschoben.
 
 ## Build
 
+### Entwicklungsumgebung einrichten
+
+Getestete Kombination:
+
+| Komponente | Version |
+| --- | --- |
+| VS Code + Extension **PlatformIO IDE** (`platformio.platformio-ide`) | PlatformIO Core 6.1.19 |
+| Plattform | pioarduino 54.03.21 |
+| Arduino-ESP32 | 3.2.1 (ESP-IDF 5.4.2) |
+| Git | beliebig, wird für den Build-Hash gebraucht |
+
+1. **VS Code** installieren, darin die Extension *PlatformIO IDE*. Sie bringt
+   eine eigene Python-Umgebung unter `~/.platformio/penv` mit; eine separate
+   Python-Installation ist nicht nötig.
+2. **Repository klonen.** Ohne Git-Historie funktioniert der Build zwar, aber
+   [scripts/version_bump.py](scripts/version_bump.py) trägt dann keinen
+   Commit-Hash in `src/build_info.h` ein.
+3. **Proxy** – nur in Netzen ohne direkten Internetzugang. PlatformIO liest im
+   Terminal ausschließlich die Umgebungsvariablen, die VS-Code-Einstellung
+   `http.proxy` wirkt dort *nicht*:
+
+   ```powershell
+   [Environment]::SetEnvironmentVariable("HTTP_PROXY","http://proxy:8080","User")
+   [Environment]::SetEnvironmentVariable("HTTPS_PROXY","http://proxy:8080","User")
+   ```
+
+4. **Ersten Build starten.** Plattform, Toolchains und Framework (zusammen gut
+   1,5 GB) werden dabei automatisch geholt – die Plattform-URL steht in
+   [platformio.ini](platformio.ini) und ist auf eine feste Release-Version
+   gepinnt. Rechne beim ersten Mal mit einigen Minuten pro Ziel.
+
+Die Registry-Plattform `espressif32` wird **nicht** verwendet: Sie liefert
+weiterhin Arduino-Core 2.0.x, und dort fehlt die halbe API dieses Projekts –
+`ETH.begin(ETH_PHY_W5500, …, SPI, …)`, `ETH.hasIP()`, `ETH.setDefault()` sowie
+die mbedTLS-3-Signaturen in [src/fw_hash.cpp](src/fw_hash.cpp). Core 2.0.x
+kennt zudem nur RMII-PHYs und kann einen W5500 gar nicht ansprechen.
+
+### Bekannte Stolpersteine
+
+**`TypeError: ParamType.get_metavar() missing 1 required positional argument`**
+beim Erzeugen von `bootloader.bin`. Das mitgelieferte `tool-esptoolpy` 5.0.0
+ist mit Click ≥ 8.2 inkompatibel. Einmalig in der PlatformIO-Umgebung:
+
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\python.exe" -m pip install "click==8.1.8"
 ```
-pio run -e esp32dev -t upload
-pio device monitor
+
+**`fatal error: Network.h: No such file or directory`** darf nicht auftreten –
+dagegen wirkt [scripts/framework_includes.py](scripts/framework_includes.py),
+das über `extra_scripts` eingebunden ist. Die Arduino-3.x-Bibliotheken
+inkludieren sich gegenseitig, deklarieren das aber nicht in ihren
+`library.properties`. Sobald der Library Dependency Finder sie als eigene
+Libraries einzieht – hier über `knx` und `ESPAsyncWebServer`, die `WiFi.h`
+einbinden –, fehlen ihnen die Pfade zueinander.
+
+**Änderungen an `platformio.ini`** verwerfen `.pio/build` vollständig. Danach
+bauen alle Ziele neu, nicht nur das geänderte.
+
+### Bauen
+
+```
+pio run                 # alle Ziele
+pio run -e esp32dev     # nur eines
 ```
 
 Der Pre-Script [scripts/version_bump.py](scripts/version_bump.py) erzeugt
@@ -223,6 +283,65 @@ eigene physikalische Adresse; solange das Gerät unprogrammiert ist, leitet der
 Stack sie aus dem eigenen Subnetz ab (`15.15.1` … `15.15.10`). Der Aufwand liegt
 bei ~24 Byte RAM und 7 Byte Property-Daten je Tunnel – die praktische Grenze ist
 der Adressbereich, nicht der ESP32.
+
+---
+
+## Firmware auf den ESP32 bringen
+
+### Über USB (Erstinbetriebnahme)
+
+Board anschließen, Port prüfen, flashen:
+
+```
+pio device list
+pio run -e esp32dev -t upload
+pio device monitor
+```
+
+PlatformIO wählt den Port selbst, wenn nur ein Gerät angeschlossen ist; sonst
+`--upload-port COM5` bzw. `/dev/ttyUSB0` anhängen oder `upload_port` in
+[platformio.ini](platformio.ini) setzen.
+
+Bleibt der Chip stumm (`Failed to connect`), BOOT-Taste gedrückt halten,
+EN/RST kurz drücken, BOOT loslassen. Boards mit nativem USB (C3, C6, S2, S3)
+melden sich nach dem Flashen mit einer neuen Port-Nummer.
+
+### Manuell mit esptool
+
+Nötig etwa zum Flashen ohne Toolchain oder für vorgefertigte Images. Es sind
+**vier** Dateien – `boot_app0.bin` gehört dazu, sonst startet das Gerät nach
+dem ersten OTA-Update in die falsche Partition:
+
+```
+esptool.py --chip esp32 --port COM5 --baud 460800 \
+  --before default-reset --after hard-reset \
+  write-flash -z --flash-mode dio --flash-freq 40m --flash-size detect \
+  0x1000  .pio/build/esp32dev/bootloader.bin \
+  0x8000  .pio/build/esp32dev/partitions.bin \
+  0xe000  <framework>/tools/partitions/boot_app0.bin \
+  0x10000 .pio/build/esp32dev/firmware.bin
+```
+
+`<framework>` ist `~/.platformio/packages/framework-arduinoespressif32`.
+
+Der Bootloader-Offset ist chipabhängig, alles andere ist identisch:
+
+| Ziel | `--chip` | bootloader.bin | partitions.bin | boot_app0.bin | firmware.bin |
+| --- | --- | --- | --- | --- | --- |
+| `esp32dev` | `esp32` | **0x1000** | 0x8000 | 0xe000 | 0x10000 |
+| `esp32s2` | `esp32s2` | **0x1000** | 0x8000 | 0xe000 | 0x10000 |
+| `esp32c3` | `esp32c3` | **0x0** | 0x8000 | 0xe000 | 0x10000 |
+| `esp32c6` | `esp32c6` | **0x0** | 0x8000 | 0xe000 | 0x10000 |
+| `esp32s3` | `esp32s3` | **0x0** | 0x8000 | 0xe000 | 0x10000 |
+
+Den exakten Aufruf für ein Ziel zeigt `pio run -e <ziel> -t upload -v`.
+
+### Danach: nur noch `firmware.bin`
+
+Ist das Gerät im Netz, läuft jedes weitere Update über das Dashboard oder die
+REST-API – dann wird ausschließlich `firmware.bin` gebraucht, und der
+Bootloader-Rollback fängt ein defektes Image auf. Siehe
+[Firmware-Update und Integrität](#firmware-update-und-integrität).
 
 ---
 

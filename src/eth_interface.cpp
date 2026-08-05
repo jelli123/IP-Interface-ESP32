@@ -210,12 +210,12 @@ bool EthInterface::active() const
 
 EthInterface::State EthInterface::state() const
 {
-    if (!hwConfig.active().ethEnabled) return DISABLED;
-    if (!_present)     return ABSENT;
-    if (!_started)     return ABSENT;
-    if (!ETH.linkUp()) return NO_LINK;
-    if (!ETH.hasIP())  return NO_IP;
-    return READY;
+    if (!hwConfig.active().ethEnabled) return STATE_DISABLED;
+    if (!_present)     return STATE_ABSENT;
+    if (!_started)     return STATE_ABSENT;
+    if (!ETH.linkUp()) return STATE_NO_LINK;
+    if (!ETH.hasIP())  return STATE_NO_IP;
+    return STATE_READY;
 }
 
 uint32_t EthInterface::ipAddress() const  { return (uint32_t)ETH.localIP(); }
@@ -244,7 +244,7 @@ bool EthInterface::begin(void (*)()) { return false; }
 void EthInterface::loop() {}
 bool EthInterface::active() const { return false; }
 
-EthInterface::State EthInterface::state() const { return DISABLED; }
+EthInterface::State EthInterface::state() const { return STATE_DISABLED; }
 
 uint32_t EthInterface::ipAddress() const  { return 0; }
 uint32_t EthInterface::subnetMask() const { return 0; }
@@ -261,11 +261,11 @@ const char* EthInterface::stateName() const
 {
     switch (state())
     {
-    case DISABLED: return "disabled";
-    case ABSENT:   return "absent";
-    case NO_LINK:  return "no_link";
-    case NO_IP:    return "no_ip";
-    case READY:    return "ready";
+    case STATE_DISABLED: return "disabled";
+    case STATE_ABSENT:   return "absent";
+    case STATE_NO_LINK:  return "no_link";
+    case STATE_NO_IP:    return "no_ip";
+    case STATE_READY:    return "ready";
     }
     return "?";
 }
