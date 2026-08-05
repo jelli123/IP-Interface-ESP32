@@ -1,0 +1,741 @@
+# Selfbus KNXnet/IP Interface (ESP32)
+
+KNXnet/IP-Interface aus einem ESP32 und einem **Selfbus SB-Interface
+(LPC1115)**, das die [TP-UART-2-Emulation](../TPUART2-Emu) ausführt.
+
+Konzeptionell an [ip4knx](https://github.com/tostmann/ip4knx) orientiert, aber
+neu geschrieben und modularisiert. ip4knx zielt auf die Busware-TUL-Sticks mit
+NCN5130-Transceiver; hier sitzt stattdessen ein Selfbus-Interface am UART.
+
+```
+   KNX TP1  ──  SB-Interface (LPC1115)  ──UART 19200 8E1──  ESP32  ──WLAN──  ETS / HA / knxd
+                TP-UART-2-Emulation                        KNXnet/IP
+```
+
+---
+
+## Funktionsumfang
+
+| | |
+|---|---|
+| KNXnet/IP Routing | Multicast, Auto-Discovery in Home Assistant |
+| KNXnet/IP Tunneling | 10 gleichzeitige Verbindungen (ETS, HA, Node-RED …) |
+| **KNX-Zeitserver** | DPT 19.001 / 10.001 / 11.001, NTP + optionaler RV-3028-C7 || **Ethernet (optional)** | W5500 über SPI, beim Start automatisch erkannt || Web-Dashboard | Status, Buslast, Telegrammzähler, Systeminfo |
+| WLAN-Einrichtung | Captive Portal (offener AP) **oder** Improv über USB |
+| Programmiermodus | per Klick im Dashboard, kein Tastendruck am Gerät nötig |
+| OTA-Update | Datei-Upload **und** Online-Pull aus einem Manifest |
+| Anti-Brick | zwei App-Partitionen + Bootloader-Rollback |
+| WLAN-Watchdog | erkennt stille Abbrüche und verlorene DHCP-Leases |
+| TP-Link-Watchdog | erneuert den Reset-Handshake, wenn das SB-Interface stumm wird |
+| mDNS | `http://sbip.local` |
+| CSRF-Schutz | Origin-Prüfung auf allen schreibenden Endpunkten |
+
+---
+
+## Unterstützte ESP32-Varianten
+
+| Chip | Env | Anmerkung |
+|---|---|---|
+| ESP32 (WROOM/WROVER) | `esp32dev` | Dual-Core, 3 UARTs |
+| ESP32-S3 | `esp32s3` | Dual-Core, viel RAM – die komfortabelste Wahl |
+| ESP32-C3 | `esp32c3` | Single-Core RISC-V, ausreichend |
+| ESP32-C6 | `esp32c6` | Single-Core RISC-V, WiFi 6 |
+| ESP32-S2 | `esp32s2` | funktioniert, Single-Core, kein BLE |
+| ESP32-H2 | — | **nicht möglich**, kein WLAN (nur 802.15.4 + BLE) |
+| ESP8266 | — | nicht unterstützt (RAM, UART-Anzahl) |
+
+Die Bindung entsteht über `ARDUINO_ARCH_ESP32` in `esp32_platform.h` des
+KNX-Stacks – grundsätzlich läuft jedes Arduino-ESP32-Ziel mit WLAN.
+
+**Anforderungen:** ein freier Hardware-UART für KNX (getrennt vom Debug-/USB-
+Port), WLAN, ≥ 4 MB Flash für das Dual-OTA-Layout.
+
+**Zur Kernanzahl:** Auf Single-Core-Varianten teilen sich WLAN-Stack und
+`loop()` einen Kern. Das ist unkritisch, weil das SB-Interface das zeitkritische
+TP1-Bit-Timing und die ACK-Erzeugung selbst übernimmt – genau der Vorteil dieser
+Architektur gegenüber einem direkt angebundenen Transceiver. Der ESP32 sieht nur
+noch einen 19200-Baud-Bytestrom.
+
+---
+
+## Hardware
+
+### Verdrahtung
+
+| SB-Interface (LPC1115) | ESP32 |
+| --- | --- |
+| `PIN_TX` (PIO1_7) | RX (`SBIP_KNX_RX_PIN`) |
+| `PIN_RX` (PIO1_6) | TX (`SBIP_KNX_TX_PIN`) |
+| GND | GND |
+
+Beide Seiten 3,3 V TTL, kein Pegelwandler. **19200 Baud, 8E1.**
+
+Die Stromversorgung des ESP32 sollte **nicht** aus dem SB-Interface kommen. Das
+KNX-Busnetzteil des Selfbus-Interfaces ist für die WLAN-Stromspitzen (bis
+~350 mA beim RF-Init) nicht ausgelegt. ip4knx umgeht das auf der bus-powered
+TULX32 mit deaktiviertem Brownout-Detector, reduziertem CPU-Takt und 1,5 s
+Kondensator-Ladezeit – diese Krücken sind hier bewusst nicht übernommen.
+
+### Pin-Belegung der vorkonfigurierten Boards
+
+| Env | Board | KNX-UART | RX / TX | LED | Taster |
+| --- | --- | --- | --- | --- | --- |
+| `esp32dev` | ESP32-WROOM | UART2 | 16 / 17 | 2 | 0 |
+| `esp32s3` | ESP32-S3-DevKitC | UART1 | 18 / 17 | 48 | 0 |
+| `esp32c3` | XIAO ESP32-C3 | UART1 | 20 / 21 | 4 (low-aktiv) | 9 |
+| `esp32c6` | ESP32-C6-DevKitC | UART1 | 5 / 4 | 8 (low-aktiv) | 9 |
+| `esp32s2` | ESP32-S2-Saola | UART1 | 18 / 17 | 15 | 0 |
+
+I2C für die optionale RTC: `esp32dev` 21/22, `esp32s2`/`esp32s3` 8/9,
+`esp32c3`/`esp32c6` 6/7.
+
+SPI für den optionalen W5500: `esp32dev` 18/19/23, CS 5; `esp32s2`/`esp32s3`
+12/13/11, CS 10. Bei `esp32c3`/`esp32c6` nicht belegt – siehe *Ethernet*.
+
+Anpassung über die `-DSBIP_*`-Flags in [platformio.ini](platformio.ini).
+
+> **Wichtig:** Diese Flags sind nur noch **Vorgabewerte**. Was das Gerät
+> tatsächlich verwendet, steht in NVS und ist über das Dashboard änderbar –
+> siehe *Hardware-Profil*. Ein Image läuft damit auf mehreren Boards.
+
+---
+
+## Hardware-Profil
+
+Pinbelegung, UART-Nummer und Bestückungsoptionen sind zur Laufzeit
+konfigurierbar. Das Dashboard bietet ein Formular, JSON-Upload und -Download.
+
+### Was konfigurierbar ist
+
+| Feld | Bedeutung |
+| --- | --- |
+| `knx_uart`, `knx_rx`, `knx_tx` | KNX-Anbindung zum SB-Interface |
+| `led`, `led_active_low`, `button` | Programmier-LED und Taster |
+| `i2c_enabled`, `i2c_sda`, `i2c_scl` | RV-3028-C7 |
+| `eth_enabled`, `eth_sck`, `eth_miso`, `eth_mosi`, `eth_cs`, `eth_irq`, `eth_rst`, `eth_spi_mhz` | W5500 |
+
+`-1` bedeutet durchgehend „nicht bestückt". Ein hochgeladenes JSON darf
+Teilmengen enthalten – fehlende Felder behalten ihren Wert.
+
+Beispiel:
+
+```json
+{
+  "knx_uart": 1,
+  "knx_rx": 18,
+  "knx_tx": 17,
+  "led": 48,
+  "led_active_low": false,
+  "button": 0,
+  "i2c_enabled": true,
+  "i2c_sda": 8,
+  "i2c_scl": 9,
+  "eth_enabled": true,
+  "eth_sck": 12, "eth_miso": 13, "eth_mosi": 11, "eth_cs": 10,
+  "eth_irq": -1, "eth_rst": -1, "eth_spi_mhz": 20
+}
+```
+
+### Änderungen brauchen einen Neustart
+
+Peripherie lässt sich nicht verschieben, während sie läuft. Das Profil wird
+deshalb **genau einmal** beim Start gelesen. Das Dashboard bietet nach dem
+Speichern einen Neustart an.
+
+### Warum das Gerät dabei nicht unbrauchbar wird
+
+Eine falsche Pin-Angabe kann das Gerät im Prinzip lahmlegen – etwa ein Pin am
+SPI-Flash. Drei unabhängige Sicherungen verhindern das:
+
+**1. Prüfung vor dem Speichern.** [src/hw_config.cpp](src/hw_config.cpp) lehnt
+ab:
+
+* GPIOs, die es auf diesem Chip nicht gibt (`GPIO_IS_VALID_GPIO`)
+* Eingangs-only-Pins dort, wo ein Ausgang nötig ist (`GPIO_IS_VALID_OUTPUT_GPIO`)
+* **Pins am SPI-Flash** – chipabhängig: ESP32 6–11, S2/S3 26–32, C3 11–17,
+  C6 24–30. Diese liegen *innerhalb* der gültigen GPIO-Maske, werden also von
+  den ESP-IDF-Makros nicht erfasst; ein Zugriff killt die laufende Firmware
+  sofort. Deshalb explizit geprüft.
+* doppelt belegte Pins – immer ein Fehler, und ein besonders unangenehmer:
+  Zwei Peripherien am selben Pin erzeugen Symptome weit weg von der Ursache.
+* UART-Nummern außerhalb `0 … SOC_UART_NUM-1`
+
+**2. Crash-Loop-Erkennung.** Ein neu gespeichertes Profil gilt als
+*unbewährt*. Jeder Start zählt einen NVS-Zähler hoch; nach 20 s Laufzeit setzt
+`HwConfig::loop()` ihn zurück. Startet das Gerät zweimal nicht bis dahin
+durch, wird das Profil verworfen und die Image-Werte greifen. Dasselbe Muster
+wie beim OTA-Rollback.
+
+**3. Taster beim Einschalten.** Gedrückt halten → Image-Werte. Bewusst am
+**Compile-Zeit-Pin**, nicht am gespeicherten: Wenn das Profil den Nutzer
+ausgesperrt hat, ist dessen Taster-Pin ebenfalls nicht vertrauenswürdig.
+
+Auf S3-Modulen mit **Octal**-Flash/PSRAM sind zusätzlich GPIO 33–37 belegt.
+Das lässt sich zur Laufzeit nicht erkennen – bei diesen Modulen vorher ins
+Datenblatt schauen.
+
+### Speicherung
+
+Das Profil liegt als **einzelne NVS-Schlüssel**, nicht als JSON-Blob. JSON ist
+nur das Transportformat für das Dashboard: Geparst wird einmal beim Annehmen,
+nie im Startpfad. Ein abgeschnittener oder beschädigter Blob kann den Start
+daher nicht verhindern.
+
+### Startreihenfolge
+
+`HwConfig::begin()` läuft als **Erstes** in `setup()` – vor Improv, vor
+Ethernet, vor KNX. Es bringt NVS hoch, entscheidet über die Pins und liest den
+Rettungstaster. Kostet rund 20 ms, das Improv-Fenster bleibt also innerhalb
+der zwei Sekunden, die ESP Web Tools abwartet.
+
+Ein Detail: Die UART-Nummer ist ein **Konstruktor-Argument** von
+`HardwareSerial`. Statische Objekte entstehen aber vor `setup()` – also lange
+bevor das Profil bekannt ist. Der Port wird deshalb in `KnxLink::begin()`
+dynamisch angelegt und dem Platform-Objekt per `knxUart()` untergeschoben.
+
+> **Zum Präfix:** In `-DSBIP_KNX_RX_PIN=16` ist `-D` der Compiler-Schalter
+> „Define“ und `SBIP_` das Projekt-Präfix (SelfBus IP). Frühere Fassungen
+> nutzten `GW_`, was zusammen mit dem Schalter wie ein Token „DGW“ aussah.
+
+---
+
+## Build
+
+```
+pio run -e esp32dev -t upload
+pio device monitor
+```
+
+Der Pre-Script [scripts/version_bump.py](scripts/version_bump.py) erzeugt
+`src/build_info.h` mit Buildnummer und Git-Hash.
+
+### Bewusst *nicht* gesetzte Build-Flags
+
+| Flag | Warum nicht |
+| --- | --- |
+| `-DNCN5120` | Der LPC1115 emuliert einen TP-UART 2. Mit diesem Flag erwartet der Stack `U_Configure`, Marker-Mode, Baudratenwechsel auf 38400 und die NCN-Analogregister – nichts davon existiert. |
+| `-DKNX_BAUDRATE` | Bleibt beim TP-UART-2-Standard 19200. |
+
+### Tunnelanzahl
+
+`-DKNX_TUNNELING=10` entspricht ip4knx. Jede Tunnelverbindung braucht eine
+eigene physikalische Adresse; solange das Gerät unprogrammiert ist, leitet der
+Stack sie aus dem eigenen Subnetz ab (`15.15.1` … `15.15.10`). Der Aufwand liegt
+bei ~24 Byte RAM und 7 Byte Property-Daten je Tunnel – die praktische Grenze ist
+der Adressbereich, nicht der ESP32.
+
+---
+
+## Inbetriebnahme
+
+1. Flashen, ESP32 mit Strom versorgen.
+2. Ohne gespeicherte Zugangsdaten öffnet das Gerät sofort einen **offenen
+   Access Point** `SB-IP AP xxxx`. Verbinden → Captive Portal erscheint
+   (sonst `http://192.168.4.1`).
+3. Netzwerk auswählen, Passwort eingeben, verbinden. Das Gerät startet neu.
+4. Dashboard unter `http://sbip.local` oder der DHCP-Adresse.
+5. In der ETS als KNXnet/IP-Schnittstelle programmieren.
+
+**AP erzwingen:** Taster > 2 s halten.
+
+---
+
+## Improv-WLAN-Provisionierung
+
+[Improv Wi-Fi](https://www.improv-wifi.com/) ist ein **offener Standard** von
+ESPHome und Home Assistant, entwickelt und finanziert von Nabu Casa – keine
+Eigenentwicklung des ip4knx-Autors. Übernommen unter anderem von WLED, Tasmota,
+ESPHome und ESP Web Tools.
+
+Prinzip: Der Browser überträgt die WLAN-Zugangsdaten direkt über die serielle
+Verbindung (Web Serial API) oder über Bluetooth LE an das Gerät. Das umgeht die
+bekannten Schwächen des Soft-AP-Verfahrens – Smartphones mögen Access Points
+ohne Internetzugang nicht und wechseln oft eigenmächtig ins Mobilfunknetz
+zurück.
+
+Diese Firmware nutzt die **serielle** Variante. In den ersten 120 s nach dem
+Start nimmt sie Zugangsdaten von [improv-wifi.com](https://www.improv-wifi.com/)
+oder aus ESP Web Tools entgegen. Der Captive-Portal-Weg bleibt parallel nutzbar.
+
+Verwendet wird die Upstream-Bibliothek
+[jnthas/Improv-WiFi-Library](https://github.com/jnthas/Improv-WiFi-Library).
+ip4knx greift hier auf einen eigenen Fork zurück, weil dessen
+`ImprovTypes::ChipFamily` um `CF_ESP32_C6` erweitert wurde. Da die Chip-Familie
+nur der Anzeige im Browser dient, meldet sich der C6 hier schlicht als `ESP32` –
+das spart die Fork-Abhängigkeit ohne funktionalen Nachteil.
+
+Abschaltbar mit `-DDISABLE_IMPROV` (spart rund 9 KB Flash und 2 s Bootzeit).
+
+---
+
+## REST-API
+
+| Methode | Pfad | Wirkung |
+| --- | --- | --- |
+| GET | `/api/status` | vollständiges Statusdokument |
+| GET | `/api/wifi/scan[?start=1]` | asynchroner Netzwerk-Scan |
+| POST | `/api/wifi/connect` | `ssid`, `password` → speichern + Neustart |
+| POST | `/api/wifi/ap_mode` | Zugangsdaten löschen, AP starten |
+| POST | `/api/progmode` | `state=on\|off\|toggle` |
+| GET | `/api/hwconfig` | aktives, gespeichertes und Image-Profil |
+| POST | `/api/hwconfig` | JSON-Profil speichern (Teilfelder erlaubt) |
+| POST | `/api/hwconfig/reset` | gespeichertes Profil verwerfen |
+| POST | `/api/reboot` | Neustart auslösen |
+| GET | `/api/time` | Zustand und Konfiguration des Zeitservers |
+| POST | `/api/time/config` | Konfiguration schreiben (Teilfelder erlaubt) |
+| POST | `/api/time/set` | `epoch` (UTC-Sekunden) → Uhr stellen |
+| POST | `/api/time/send` | Zeittelegramme sofort senden |
+| POST | `/api/ota` | Multipart `firmware`, optional Header `X-SHA256` |
+| GET | `/api/update/check` | Manifest prüfen (asynchron) |
+| POST | `/api/update/install` | Online-Update installieren |
+| GET | `/api/update/status` | Fortschritt des Updates |
+
+Alle `POST`-Endpunkte sind Origin-geprüft und im AP-Modus gesperrt (Ausnahme:
+`/api/wifi/connect`, sonst wäre keine Einrichtung möglich).
+
+---
+
+## Zeitserver
+
+Verteilt Datum und Uhrzeit auf dem Bus. Konfiguration vollständig über das
+Dashboard, kein ETS nötig.
+
+### Datenpunkttypen
+
+| DPT | Länge | Inhalt |
+|---|---|---|
+| 19.001 | 8 Byte | Datum + Uhrzeit + Statusflags |
+| 10.001 | 3 Byte | Uhrzeit + Wochentag |
+| 11.001 | 3 Byte | Datum |
+
+Alle drei sind unabhängig konfigurierbar (leere Gruppenadresse = aus). Viele
+ältere Geräte verstehen nur 10.001/11.001 – deshalb parallel betreibbar.
+
+### Zeitquellen
+
+| Quelle | Genauigkeit | Priorität |
+|---|---|---|
+| NTP | ~ms, driftfrei | höchste, sobald erreichbar |
+| RV-3028-C7 | ±1 ppm ≈ ±30 s/Jahr | zweite, läuft ohne Netz |
+| Browser | ~1 s | manuell |
+| Manuelle Eingabe | Eingabegenauigkeit | manuell |
+
+Ohne Internetzugang – der Regelfall in einem abgeschotteten KNX-IP-Netz – NTP
+abschalten und die Zeit per Browser oder manuell setzen. Mit bestücktem
+RV-3028 überlebt sie den nächsten Stromausfall; ohne RTC muss sie nach jedem
+Neustart neu gesetzt werden.
+
+### Warum die RTC auch im laufenden Betrieb gebraucht wird
+
+Die ESP32-Systemuhr hängt im Normalbetrieb am APB-Takt, spezifiziert mit
+**±10 ppm** – rund **26 s pro Monat**. Für einen Zeitserver ist das zu viel.
+Der RV-3028-C7 ist temperaturkompensiert und liegt bei ±1 ppm, also etwa
+30 s pro Jahr.
+
+Daraus ergibt sich eine wechselseitige Nachführung:
+
+| Situation | Richtung | Intervall |
+|---|---|---|
+| NTP synchron | System → RTC | 1 h und bei jedem Sync |
+| Kein NTP, RTC vorhanden | RTC → System | 15 min |
+| Zeit manuell gesetzt | System → RTC | sofort |
+
+Beim Zurückholen wird nur gestellt, wenn die Abweichung über einer Sekunde
+liegt – sonst käme sich das ständige `settimeofday()` mit dem SNTP-Client ins
+Gehege.
+
+**Erkennung:** Die RTC wird beim Start gesucht und, falls nicht gefunden, alle
+30 s erneut – ein nachträglich gestecktes Modul wird also ohne Neustart
+übernommen.
+
+### NTP-Server: manuell oder per DHCP
+
+Beide Wege sind im Dashboard wählbar. Bei aktiviertem DHCP-Bezug landet der
+vom Server gelieferte Eintrag in Slot 0, der konfigurierte bleibt als Fallback
+in Slot 1.
+
+> **Einschränkung:** DHCP-Option 42 erreicht die Firmware nur, wenn der
+> lwIP-Build mit `CONFIG_LWIP_DHCP_GET_NTP_SRV` übersetzt wurde. Die
+> vorkompilierten Arduino-ESP32-Bibliotheken haben das **abgeschaltet**.
+> Der Code prüft das zur Übersetzungszeit (`#if LWIP_DHCP_GET_NTP_SRV`),
+> gibt sonst einen Hinweis auf der seriellen Konsole aus und nutzt den
+> konfigurierten Server. Welcher Server tatsächlich aktiv ist, zeigt das
+> Dashboard – mit dem Zusatz `(DHCP)`, wenn der Bezug wirklich greift.
+>
+> Wer die Funktion braucht, muss gegen ESP-IDF mit gesetzter Option bauen.
+
+### RV-3028-C7 (optional)
+
+I2C, feste Adresse `0x52`. Pins und Ein/Aus über das Hardware-Profil im
+Dashboard; `-DSBIP_I2C_SDA_PIN` / `-DSBIP_I2C_SCL_PIN` / `-DSBIP_I2C_ENABLED`
+legen nur die Vorgabe fest.
+
+Zwei Punkte, die in der Praxis Ärger machen:
+
+* **Backup-Umschaltung ist ab Werk deaktiviert.** Ohne Aktivierung tut eine
+  bestückte Batterie oder ein Goldcap gar nichts – der Baustein bleibt bei
+  VDD-Verlust einfach stehen. [src/rv3028.cpp](src/rv3028.cpp) setzt bei jedem
+  Start `BSM` im Konfigurationsregister. Bewusst nur im RAM-Spiegel, nicht im
+  EEPROM: Der Spiegel hängt an der gepufferten Versorgung und überlebt genau
+  den Fall, um den es geht – ohne EEPROM-Verschleiß.
+* **Das PORF-Bit** meldet, ob die Zeit einen Spannungsverlust überstanden hat.
+  Der Treiber liefert nur dann eine Zeit, wenn sie vertrauenswürdig ist –
+  statt stillschweigend das Jahr 2000 auszugeben.
+
+Der Trickle-Charger ist standardmäßig **aus**. Für einen Goldcap in
+`Rv3028::begin()` z. B. `RV3028_TRICKLE_3K` setzen. Mit einer nicht
+wiederaufladbaren Batterie muss er aus bleiben.
+
+### Statusflags in DPT 19.001
+
+Das Bit **CLQ** (Oktett 7, Bit 7) sagt aus, ob die Uhr extern synchronisiert
+ist. Manche Geräte verwerfen Telegramme mit gelöschtem CLQ. Hier wird es
+gesetzt, wenn NTP synchronisiert ist – und sonst eben nicht. Bei manuell
+gesetzter Zeit bleibt es also bewusst auf 0.
+
+Das Sommerzeit-Bit **SUTI** folgt der POSIX-TZ-Regel
+(`CET-1CEST,M3.5.0,M10.5.0/3` für Mitteleuropa). Die Umstellung wird nicht
+selbst berechnet.
+
+### Gruppentelegramme ohne Gruppenobjekte
+
+Ein Koppler der Maske 091A hat keine Kommunikationsobjekte – der übliche Weg
+über die Applikationsschicht existiert nicht. `KnxLink::sendGroupValue()`
+übergibt den Frame deshalb direkt an beide Data-Link-Layer:
+
+* **TP-Layer** → TP1-Medium *und* alle offenen Tunnel
+* **IP-Layer** → Routing-Multicast
+
+Bewusst **nicht** über `dataRequestFromTunnel()`: Der Weg läuft durch
+`frameReceived()`, das bei einer Quelladresse gleich der eigenen sofort
+`individualAddressDuplication()` setzt – genau der Fall beim Eigensenden.
+
+---
+
+## Firmware-Update und Integrität
+
+### SHA-256 statt MD5
+
+MD5 ist seit 2004 nicht mehr kollisionsresistent und für Integritätszwecke
+überholt. Verwendet wird deshalb **SHA-256**, berechnet über
+[src/fw_hash.cpp](src/fw_hash.cpp) mit mbedtls.
+
+Der ESP32 hat einen **SHA-Hardwarebeschleuniger** (SHA-1/224/256/384/512).
+mbedtls nutzt ihn automatisch, sofern `CONFIG_MBEDTLS_HARDWARE_SHA` gesetzt ist
+– in den Standard-Arduino-Builds der Fall. Das Hashen fällt neben dem
+Flash-Schreiben nicht ins Gewicht.
+
+Warum nicht `Update::setMD5()`? Arduinos `Update`-Klasse kennt ausschließlich
+MD5. Der Digest wird daher parallel zum Schreiben selbst gebildet und
+**vor** `Update.end()` geprüft – erst dieser Aufruf schaltet die
+Boot-Partition um. Bei Abweichung folgt `Update.abort()`, die laufende
+Firmware bleibt unangetastet.
+
+| Weg | Header / Feld | Verhalten |
+|---|---|---|
+| Datei-Upload | `X-SHA256` | 64 Hex-Zeichen, bevorzugt |
+| Datei-Upload | `X-MD5` | Legacy, nur falls kein SHA-256 |
+| Online-Update | `sha256` im Manifest | **Pflicht**, sonst wird abgelehnt |
+
+Prüfsumme erzeugen:
+
+```
+sha256sum .pio/build/esp32dev/firmware.bin      # Linux/macOS
+Get-FileHash firmware.bin -Algorithm SHA256     # PowerShell
+```
+
+> **Browser-Einschränkung:** Das Dashboard berechnet den Hash automatisch,
+> aber `crypto.subtle` steht nur im *secure context* zur Verfügung – also über
+> HTTPS oder `localhost`. Beim üblichen Zugriff über `http://<IP>/` fehlt die
+> API. Dann bleibt das Eingabefeld für den manuell ermittelten Hash; das
+> Dashboard weist darauf hin.
+
+### Was das leistet – und was nicht
+
+Die Prüfsumme sichert gegen **Übertragungsfehler und abgeschnittene Uploads**.
+Sie ist **kein Schutz gegen einen Angreifer**: Wer die Firmware-Datei
+manipulieren kann, ändert die Prüfsumme gleich mit.
+
+Echte Authentizität bietet nur eine Signatur. Zwei Wege:
+
+* **ESP32 Secure Boot v2** (RSA-3072 oder ECDSA im Bootloader). Der stärkste
+  Schutz, aber über eFuses **unwiderruflich** aktiviert – ein Fehler beim
+  Einrichten macht das Gerät dauerhaft unbrauchbar.
+* **`UPDATE_SIGN`** in Arduinos `Update`-Klasse. Prüft eine angehängte
+  Signatur vor dem Aktivieren der Partition. Deutlich weniger invasiv, braucht
+  aber eine eigene Schlüsselverwaltung.
+
+Beides ist hier bewusst nicht umgesetzt: Das Interface ist für ein lokales
+KNX-Netz gedacht, und die schreibenden Endpunkte sind bereits Origin-geprüft
+und im AP-Modus gesperrt. Wer die Firmware über ein nicht vertrauenswürdiges
+Netz verteilt, sollte Secure Boot v2 vorsehen.
+
+---
+
+## Konfiguration über die ETS
+
+**Kurz: nur eingeschränkt, und ein knxprod bringt hier wenig.**
+
+Was **ohne** Produktdatenbank funktioniert, weil es über Standard-Properties
+läuft:
+
+* Physikalische Adresse des Interfaces vergeben
+* Zusätzliche Tunnel-Adressen setzen (ETS: *Bus → Schnittstellen*, geht über
+  `PID_ADDITIONAL_INDIVIDUAL_ADDRESSES`)
+* Als Schnittstelle für Inbetriebnahme und Diagnose verwenden
+
+Was ein knxprod bräuchte: Filtertabelle, Routing-Parameter des Kopplers und
+sämtliche anwendungsspezifischen Einstellungen – hier also Zeitserver und
+Gruppenadressen.
+
+Drei Gründe, warum das aktuell nicht sinnvoll ist:
+
+1. **Herstellerkennung.** Ein importierbares knxprod braucht eine bei der KNX
+   Association registrierte Manufacturer-ID. Der Stack meldet sich mit `0xFA`
+   (thelsing/knx-Default), was für den Eigengebrauch reicht, aber keine
+   offizielle Kennung ist.
+2. **Doppelte Konfigurationswege.** Zeitserver-Parameter gleichzeitig per ETS
+   *und* Web-GUI pflegbar zu machen, erzeugt Zustandskonflikte. Die GUI ist
+   für dieses Gerät der praktikablere Weg – sie funktioniert ohne ETS-Lizenz
+   und ohne PC mit installierter ETS.
+3. **Aufwand.** Das Erzeugen liefe über
+   [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer) (XML → knxprod,
+   ETS 5.7/6 muss installiert sein). Die Applikationsbeschreibung und der
+   Parameterspeicher wären ein eigenes Teilprojekt.
+
+Falls es später gewünscht ist: Der KNX-Stack unterstützt die dafür nötigen
+`knx.paramByte()`/`paramWord()`-Zugriffe bereits, `Bau091A` enthält ein
+`OT_APPLICATION_PROG`-Objekt. Der Weg ist offen, nur nicht beschritten.
+
+---
+
+## Ethernet (W5500, optional)
+
+Ein W5500-Modul lässt sich per SPI anschließen und wird beim Start
+**automatisch erkannt**. Dasselbe Firmware-Image läuft auf Geräten mit und
+ohne Ethernet.
+
+### PHY-Betrieb ohne Hardware-IP-Stack
+
+Genau so wird der W5500 hier verwendet. Der ESP-IDF-Treiber schaltet ihn in
+den **MACRAW-Modus**: die hartverdrahtete TCP/IP-Engine des Chips bleibt
+ungenutzt, er arbeitet nur als MAC/PHY, und lwIP macht den kompletten
+IP-Stack.
+
+Das ist keine Geschmacksfrage, sondern Voraussetzung:
+
+* Die vier Hardware-Sockets des W5500 reichen für 10 Tunnel plus Routing nicht.
+* KNXnet/IP-Routing braucht **IGMP-Multicast** – der Hardware-Stack kann das
+  nur eingeschränkt.
+* Der KNX-Stack spricht BSD-Sockets. Er merkt vom Interfacewechsel nichts.
+
+Angenehmer Nebeneffekt: `WiFiUDP` ist in Arduino-ESP32 3.x lediglich ein
+`typedef` auf `NetworkUDP`, also ein reiner Socket-Wrapper ohne WLAN-Bezug.
+Der KNX-Stack funktioniert deshalb **unverändert** über Ethernet.
+
+### Verdrahtung
+
+| W5500 | ESP32 (`esp32dev`) |
+| --- | --- |
+| SCK | 18 |
+| MISO | 19 |
+| MOSI | 23 |
+| SCS | 5 |
+| INT | nicht nötig (`SBIP_ETH_IRQ_PIN`, Default −1 = Polling) |
+| RST | nicht nötig (`SBIP_ETH_RST_PIN`, Default −1) |
+| 3V3, GND | 3,3 V, GND |
+
+Vorkonfiguriert für `esp32dev`, `esp32s3` und `esp32s2`. Beim XIAO ESP32-C3
+sind die GPIOs bereits durch KNX-UART, I2C, LED und Taster belegt – dort ist
+Ethernet in der Vorgabe deaktiviert, lässt sich aber über das Hardware-Profil
+nachträglich einschalten, wenn man dafür etwas anderes aufgibt.
+
+Der Treiber ist immer einkompiliert, damit genau das möglich bleibt. Mit
+`-DSBIP_ETH_COMPILED=0` entfällt er vollständig (spart rund 40 KB), dann ist
+Ethernet aber auch über die GUI nicht mehr aktivierbar.
+
+### Wie die Erkennung funktioniert
+
+[src/eth_interface.cpp](src/eth_interface.cpp) liest vor dem Treiberstart das
+**Versionsregister** `VERSIONR` (0x0039) direkt über SPI. Es liefert auf jedem
+W5500 konstant `0x04`.
+
+Bewusst nicht einfach `ETH.begin()` aufrufen und den Rückgabewert auswerten:
+Der Treiber schreibt bei fehlendem Chip eine Fehlerlawine ins Log und lässt
+den SPI-Bus belegt. Ein einzelner Registerzugriff ist deterministisch, still
+und kostet Mikrosekunden – erst das macht das Proben bei jedem Start auch auf
+Geräten vertretbar, an denen nie Ethernet hängt.
+
+### Ethernet hat Vorrang
+
+Kommt der W5500 hoch, wird **WLAN gar nicht erst gestartet**. Zwei Gründe
+jenseits der Stromersparnis:
+
+1. `NetworkUDP::beginMulticast()` tritt der Gruppe mit
+   `imr_interface = INADDR_ANY` bei – lwIP nimmt dafür das *Default-Interface*.
+   Bei zwei aktiven Interfaces hinge es an Routing-Prioritäten, wo der
+   KNX-Multicast landet. `ETH.setDefault()` macht die Sache eindeutig.
+2. Bei funktionierender Kabelverbindung gibt es nichts einzurichten – der
+   offene Provisionierungs-AP wäre nur zusätzliche Angriffsfläche.
+
+**Die Wahl fällt einmal beim Start.** Ein später eingestecktes Kabel wird
+nicht übernommen; dafür ist ein Neustart nötig. Grund: Der KNX-Stack legt
+seinen Multicast-Socket beim Aktivieren an, ein Umschalten im laufenden
+Betrieb würde offene Tunnel abreißen.
+
+### Zwei Fallstricke, die dabei behoben wurden
+
+**Reihenfolge.** `knxLink.begin()` aktiviert den Stack und legt dabei den
+KNXnet/IP-Socket an. Der IGMP-Beitritt bindet sich an das Interface, das in
+diesem Moment Default ist. Deshalb läuft `ethInterface.begin()` in
+[src/main.cpp](src/main.cpp) **vor** dem KNX-Start.
+
+**Mitgliedschaft erneuern.** Auch dann hat das Interface beim Stackstart noch
+keine Adresse. `KnxLink::restartIpLayer()` schließt den Socket und öffnet ihn
+neu, sobald die Verbindung wirklich steht. Das betrifft den WLAN-Pfad genauso
+und war dort vorher nicht abgedeckt.
+
+### IP-Meldung an ETS
+
+`esp32_platform.cpp` des KNX-Stacks legt das Interface zur **Übersetzungszeit**
+fest:
+
+```cpp
+#ifdef KNX_IP_LAN
+    #define KNX_NETIF ETH
+#else
+    #define KNX_NETIF WiFi
+#endif
+```
+
+Das erzwänge zwei Firmware-Varianten und liefe der automatischen Erkennung
+zuwider. Die vier Zugriffsmethoden sind aber `virtual`, deshalb genügt eine
+Ableitung in [src/knx_link.cpp](src/knx_link.cpp) – **kein Patch am Stack**.
+
+Das ist nicht kosmetisch: Diese Werte landen in der HPAI von Search- und
+Connect-Response. Würde die WLAN-Schnittstelle gemeldet, während das Gerät
+über Ethernet läuft, bekäme ETS `0.0.0.0` – WLAN ist dann ja gar nicht
+gestartet.
+
+---
+
+## Architektur
+
+| Datei | Aufgabe |
+| --- | --- |
+| [src/main.cpp](src/main.cpp) | Startreihenfolge, Hauptschleife |
+| [src/hw_config.cpp](src/hw_config.cpp) | Hardware-Profil, Validierung, Failsafe |
+| [src/knx_link.cpp](src/knx_link.cpp) | KNX-Stack, TP-Link-Überwachung, Statistik |
+| [src/net_manager.cpp](src/net_manager.cpp) | WLAN, AP, Captive Portal, Taster, LED |
+| [src/eth_interface.cpp](src/eth_interface.cpp) | W5500-Erkennung und Link-Überwachung |
+| [src/time_service.cpp](src/time_service.cpp) | Zeitquellen, DPT-Kodierung, Sendeplan |
+| [src/rv3028.cpp](src/rv3028.cpp) | Treiber für die optionale RTC |
+| [src/web_server.cpp](src/web_server.cpp) | Dashboard und REST-API |
+| [src/ota_service.cpp](src/ota_service.cpp) | Firmware-Update, Rollback-Freigabe |
+| [src/fw_hash.cpp](src/fw_hash.cpp) | SHA-256 über den Firmware-Datenstrom |
+| [src/improv_service.cpp](src/improv_service.cpp) | Improv-Provisionierung |
+| [src/json_util.cpp](src/json_util.cpp) | JSON-Escaping und Mini-Parser |
+
+### Nebenläufigkeit
+
+Der `ESPAsyncWebServer` läuft im `async_tcp`-Task, der KNX-Stack im
+`loop()`-Task. Beide Regeln sind nicht optional:
+
+1. **Der KNX-Stack wird nie aus einem Web-Handler heraus verändert.**
+   `/api/progmode` setzt nur ein Flag, `KnxLink::loop()` wendet es an. Ebenso
+   `/api/time/set` und `/api/time/send` – sie schreiben sonst die RTC über I2C
+   und senden Telegramme aus dem falschen Task.
+2. **Kein blockierender Aufruf im Web-Handler.** WLAN-Scan und HTTPS-Download
+   laufen asynchron bzw. in eigenen Tasks; ein blockierender Aufruf friert
+   sämtliche HTTP- und TCP-Callbacks ein.
+
+### Zur Frage nach dem zweiten Kern
+
+Ein zweiter Kern hilft **nicht**, um ein zweites KNX-Gerät (etwa das OpenKNX-
+Logikmodul) parallel laufen zu lassen:
+
+* `MASK_VERSION` ist ein Compile-Zeit-Define. `bau091A.cpp` beginnt mit
+  `#if MASK_VERSION == 0x091A` – pro Firmware-Image wird genau eine BAU-Klasse
+  übersetzt. Zwei Masken in einem Binary gibt es nicht, unabhängig von der
+  Kernanzahl.
+* Der Stack greift an mehreren Stellen auf die globale `knx`-Instanz zu
+  (z. B. `ip_data_link_layer.cpp` → `knx.progMode()`). Zwei Instanzen würden
+  kollidieren.
+* Beide Kerne teilen sich Flash und RAM. Ein zweiter Kern liefert Rechenzeit –
+  und Rechenzeit war nie der Engpass.
+
+Wofür ein zweiter Kern **sehr wohl** taugt: den KNX-Stack von dem Kern
+wegzuziehen, auf dem WLAN und AsyncTCP laufen. Das reduziert Jitter im
+UART-Empfangspfad. OpenKNX macht das über `OPENKNX_DUALCORE`. Hier ist es
+nicht nötig, weil das SB-Interface das gesamte zeitkritische Bit-Timing selbst
+erledigt.
+
+### TP-Link-Überwachung
+
+Der KNX-Stack pollt den TP-UART sekündlich mit `U_State.req` und `U_SetAddress`
+und erklärt die Verbindung nach 5 s ohne Antwort für tot – ab dann verwirft er
+jedes `L_Data.req` stillschweigend. Er erholt sich zwar von selbst, sobald
+wieder Bytes eintreffen, aber nach einem Reset des SB-Interface ist der Zustand
+beider Seiten inkonsistent. `KnxLink::superviseTpLink()` stößt deshalb alle
+10 s einen erneuten Reset-Handshake an, solange `isConnected()` false ist.
+
+### Buslast
+
+Die Anzeige ist ein **Indikator, keine Messung**. Der Stack meldet Frames, nicht
+Bytes; die Rechnung nimmt 50 Frames/s als 100 % an (TP1 mit 9600 bit/s und
+minimalen L_Data-Frames). Lange Frames verfälschen den Wert nach unten.
+
+---
+
+## Grenzen gegenüber einem NCN5130-Gateway
+
+Diese Punkte folgen aus der Emulation, nicht aus dieser Firmware:
+
+* **Keine Transceiver-Telemetrie.** V20V, VDD2, VBUS, VFILT, XTAL und
+  Thermal-Warning existieren beim LPC1115 nicht. Das Dashboard zeigt
+  stattdessen den Verbindungszustand und die Frame-Zähler.
+* **Keine Extended Frames.** Die `Bus`-Zustandsmaschine von sblib implementiert
+  nur Standard-Frames.
+* **`L_Data.con` ist immer positiv.** sblib gibt das Sendeergebnis nicht heraus
+  und wiederholt intern bereits bei NACK und BUSY.
+* **ACK erfolgt autonom.** Das SB-Interface quittiert jedes empfangene
+  Telegramm selbst, weil das ACK-Zeitfenster (~1,4 ms) keinen UART-Roundtrip
+  zulässt. Folge: ETS erkennt „Gerät nicht vorhanden" nicht mehr zuverlässig,
+  wenn nur dieses Interface an der Linie hängt.
+
+Details siehe [../TPUART2-Emu/README.md](../TPUART2-Emu/README.md).
+
+---
+
+## Online-Update aktivieren
+
+`UPDATE_MANIFEST_URL` in [include/interface_config.h](include/interface_config.h)
+ist leer, das Online-Update also deaktiviert. Der Datei-Upload funktioniert
+unabhängig davon.
+
+Zum Aktivieren eine HTTPS-URL auf ein Manifest dieser Form setzen:
+
+```json
+{
+  "version": "0.2.0",
+  "ota": {
+    "ESP32":    { "path": "firmware_esp32.bin",   "sha256": "…" },
+    "ESP32-S3": { "path": "firmware_esp32s3.bin", "sha256": "…" },
+    "ESP32-C3": { "path": "firmware_esp32c3.bin", "sha256": "…" },
+    "ESP32-C6": { "path": "firmware_esp32c6.bin", "sha256": "…" }
+  }
+}
+```
+
+Der Schlüssel ergibt sich aus `UPDATE_CHIP_KEY` in
+[src/ota_service.cpp](src/ota_service.cpp) und ist für jede Chip-Variante
+eigenständig – ein Image für das falsche Ziel würde sonst heruntergeladen und
+erst beim Booten scheitern.
+
+Fehlt `sha256` oder ist es kein gültiger 64-stelliger Hex-Wert, wird das
+Update **abgelehnt**. Ein ungeprüfter Download wäre schlechter als keiner.
+
+Die Binärdateien werden relativ zum Manifest aufgelöst. Das Zertifikat wird
+**nicht** geprüft (`setInsecure()`) – die Integrität sichert die SHA-256-Summe
+aus dem Manifest. Zur Reichweite dieser Zusicherung siehe *Firmware-Update und
+Integrität*.
