@@ -9,6 +9,7 @@
 #include <Arduino.h>
 #include <ESPmDNS.h>
 #include <knx.h>
+#include <Network.h>
 
 #include "eth_interface.h"
 #include "hw_config.h"
@@ -70,18 +71,50 @@ void setup()
     }
 
     /*
-     * Ethernet before KNX.
+     * Bring up esp_netif/lwIP before anything can open a socket.
      *
-     * knxLink.begin() enables the stack, which creates the KNXnet/IP routing
-     * socket and joins its multicast group. That join lands on whatever is
-     * the default network interface at that moment, so the wired interface
-     * has to exist first. No keep-alive callback here - the KNX stack is not
-     * running yet, there is nothing to pump.
+     * Arduino-ESP32 3.x initialises the TCP/IP stack lazily - whichever comes
+     * first, WiFi.mode() or ETH.begin(), does it. On a board without a W5500
+     * neither of them runs before knxLink.begin() below, because netManager
+     * only starts afterwards. The KNXnet/IP multicast socket then reaches an
+     * uninitialised lwIP, sys_mutex_lock() asserts on a null semaphore inside
+     * tcpip_send_msg_wait_sem() and the device reboots in a loop.
+     */
+    Network.begin();
+
+    /*
+     * Ethernet before everything else.
+     *
+     * When a W5500 answers, this claims the default route, and NetManager
+     * then leaves WiFi switched off entirely. No keep-alive callback here -
+     * the KNX stack is not running yet, there is nothing to pump.
      *
      * Costs nothing when no W5500 is fitted: the probe is a single SPI
      * register read and bails out in microseconds.
      */
     ethInterface.begin(nullptr);
+
+    /*
+     * Network interface before the KNX stack.
+     *
+     * knx.start() creates the KNXnet/IP routing socket and joins its
+     * multicast group right away. Started earlier, that join has no interface
+     * to bind to and lwIP refuses it:
+     *
+     *   setup multicast addr: 224.0.23.12 port: 3671 ip: 0.0.0.0
+     *   [E][NetworkUdp.cpp:133] beginMulticast(): could not join igmp: 125
+     *
+     * What follows is a socket that exists but cannot receive, so every
+     * knx.loop() logs a parsePacket() error, and reconfiguring the netif
+     * underneath it while bringing up the access point took the whole device
+     * down with an InstructionFetchError.
+     *
+     * NetManager returns immediately in Ethernet mode, and in the AP case the
+     * interface owns 192.168.4.1 by the time the join happens. Only a WiFi
+     * station is still without an address here, which is what the
+     * restartIpLayer() below is for.
+     */
+    netManager.begin();
 
     if (!knxLink.begin())
     {
@@ -90,7 +123,6 @@ void setup()
         Serial.println("WARNING: no answer from the SB-Interface on the KNX UART");
     }
 
-    netManager.begin();
     timeService.begin();
     webServerBegin();
 

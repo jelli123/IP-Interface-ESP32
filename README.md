@@ -81,10 +81,18 @@ Kondensator-Ladezeit – diese Krücken sind hier bewusst nicht übernommen.
 | Env | Board | KNX-UART | RX / TX | LED | Taster |
 | --- | --- | --- | --- | --- | --- |
 | `esp32dev` | ESP32-WROOM | UART2 | 16 / 17 | 2 | 0 |
-| `esp32s3` | ESP32-S3-DevKitC | UART1 | 18 / 17 | 48 | 0 |
+| `esp32s3` | ESP32-S3-DevKitC | UART1 | 18 / 17 | – | 0 |
 | `esp32c3` | XIAO ESP32-C3 | UART1 | 20 / 21 | 4 (low-aktiv) | 9 |
-| `esp32c6` | ESP32-C6-DevKitC | UART1 | 5 / 4 | 8 (low-aktiv) | 9 |
+| `esp32c6` | ESP32-C6-DevKitC | UART1 | 5 / 4 | – | 9 |
 | `esp32s2` | ESP32-S2-Saola | UART1 | 18 / 17 | 15 | 0 |
+
+Auf dem **S3-** und dem **C6-DevKitC** ist die Status-LED abgeschaltet (`-1`).
+Beide Boards haben keine einfache LED, sondern eine **WS2812-RGB-LED** – am S3
+auf GPIO 48, am C6 auf GPIO 8. Die braucht ein getaktetes serielles Protokoll
+(`rgbLedWrite()`); `digitalWrite()` bleibt dort ohne sichtbare Wirkung. Wer
+eine Anzeige will, nimmt einen freien GPIO und eine LED mit Vorwiderstand.
+Beim XIAO C3 ist GPIO 4 herausgeführt, aber unbestückt – dort gehört ebenfalls
+eine eigene LED hin.
 
 I2C für die optionale RTC: `esp32dev` 21/22, `esp32s2`/`esp32s3` 8/9,
 `esp32c3`/`esp32c6` 6/7.
@@ -223,8 +231,15 @@ Getestete Kombination:
    `http.proxy` wirkt dort *nicht*:
 
    ```powershell
+   # Windows (PowerShell), dauerhaft für den Benutzer
    [Environment]::SetEnvironmentVariable("HTTP_PROXY","http://proxy:8080","User")
    [Environment]::SetEnvironmentVariable("HTTPS_PROXY","http://proxy:8080","User")
+   ```
+
+   ```bash
+   # Linux/macOS, dauerhaft in ~/.profile bzw. ~/.bashrc
+   export HTTP_PROXY=http://proxy:8080
+   export HTTPS_PROXY=http://proxy:8080
    ```
 
 4. **Ersten Build starten.** Plattform, Toolchains und Framework (zusammen gut
@@ -245,7 +260,28 @@ beim Erzeugen von `bootloader.bin`. Das mitgelieferte `tool-esptoolpy` 5.0.0
 ist mit Click ≥ 8.2 inkompatibel. Einmalig in der PlatformIO-Umgebung:
 
 ```powershell
+# Windows
 & "$env:USERPROFILE\.platformio\penv\Scripts\python.exe" -m pip install "click==8.1.8"
+```
+
+```bash
+# Linux/macOS
+~/.platformio/penv/bin/python -m pip install "click==8.1.8"
+```
+
+**`error: unrecognized arguments: --ng`** bei `pio run -t metrics`. Umgekehrter
+Fall derselben Art: Die Plattform ruft `esp_idf_size --ng` auf, ein Flag aus
+der 1.x-Reihe, das in `esp-idf-size` 2.x entfernt wurde – dort ist das Format
+Standard. Auf die passende Version zurück:
+
+```powershell
+# Windows
+& "$env:USERPROFILE\.platformio\penv\Scripts\python.exe" -m pip install "esp-idf-size==1.6.1"
+```
+
+```bash
+# Linux/macOS
+~/.platformio/penv/bin/python -m pip install "esp-idf-size==1.6.1"
 ```
 
 **`fatal error: Network.h: No such file or directory`** darf nicht auftreten –
@@ -312,17 +348,32 @@ Nötig etwa zum Flashen ohne Toolchain oder für vorgefertigte Images. Es sind
 **vier** Dateien – `boot_app0.bin` gehört dazu, sonst startet das Gerät nach
 dem ersten OTA-Update in die falsche Partition:
 
-```
-esptool.py --chip esp32 --port COM5 --baud 460800 \
+```bash
+# Linux/macOS
+esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 460800 \
   --before default-reset --after hard-reset \
   write-flash -z --flash-mode dio --flash-freq 40m --flash-size detect \
   0x1000  .pio/build/esp32dev/bootloader.bin \
   0x8000  .pio/build/esp32dev/partitions.bin \
-  0xe000  <framework>/tools/partitions/boot_app0.bin \
+  0xe000  ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin \
   0x10000 .pio/build/esp32dev/firmware.bin
 ```
 
-`<framework>` ist `~/.platformio/packages/framework-arduinoespressif32`.
+```powershell
+# Windows (PowerShell) - Backtick als Zeilenfortsetzung
+$fw = "$env:USERPROFILE\.platformio\packages\framework-arduinoespressif32"
+esptool.py --chip esp32 --port COM5 --baud 460800 `
+  --before default-reset --after hard-reset `
+  write-flash -z --flash-mode dio --flash-freq 40m --flash-size detect `
+  0x1000  .pio\build\esp32dev\bootloader.bin `
+  0x8000  .pio\build\esp32dev\partitions.bin `
+  0xe000  "$fw\tools\partitions\boot_app0.bin" `
+  0x10000 .pio\build\esp32dev\firmware.bin
+```
+
+Liegt `esptool.py` nicht im Pfad, steckt es in der PlatformIO-Umgebung:
+`~/.platformio/packages/tool-esptoolpy/esptool.py` – dann mit dem Python aus
+`~/.platformio/penv` aufrufen.
 
 Der Bootloader-Offset ist chipabhängig, alles andere ist identisch:
 
