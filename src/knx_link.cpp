@@ -297,6 +297,27 @@ void KnxLink::requestProgMode(bool active)
     _progModePending = true;
 }
 
+bool KnxLink::resetConfiguration()
+{
+    uint8_t* nvm  = knxPlatform.getNonVolatileMemoryStart();
+    size_t   size = knxPlatform.getNonVolatileMemorySize();
+
+    if (nvm == nullptr || size == 0)
+    {
+        return false;
+    }
+
+    // 0xFF is what an unwritten area reads as, and what readMemory() treats as
+    // "never programmed" - the same state the stack reports on a fresh chip
+    // with "DataObject api changed, any data stored in flash is invalid".
+    memset(nvm, 0xFF, size);
+    knxPlatform.commitNonVolatileMemory();
+
+    Serial.printf("KNX: configuration cleared (%u bytes), restart required\n",
+                  (unsigned)size);
+    return true;
+}
+
 void KnxLink::restartIpLayer()
 {
     IpDataLinkLayer* ip = knxBau.getPrimaryDataLinkLayer();

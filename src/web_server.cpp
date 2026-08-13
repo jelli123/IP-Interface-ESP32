@@ -30,6 +30,9 @@ static AsyncWebServer server(80);
 static FwHash g_uploadHash;
 static String g_uploadSha256;
 static bool   g_uploadHashFailed = false;
+/* Reason the upload never got off the ground. Update.errorString() cannot
+ * carry it: a refused begin() leaves the previous error in place. */
+static String g_uploadError;
 
 /* ------------------------------------------------------------------------- *
  * Request gating
@@ -247,7 +250,30 @@ static void registerWifiRoutes()
         if (request->hasParam("start") || n == WIFI_SCAN_FAILED)
         {
             WiFi.scanDelete();
-            WiFi.scanNetworks(true);
+
+            /*
+             * The provisioning AP runs as WIFI_AP, without a station half -
+             * that combination crashed the device on startup. scanNetworks()
+             * does call WiFi.enableSTA(true) on its own, but the station then
+             * comes up with modem sleep enabled, and a sleeping station finds
+             * nothing. Switch deliberately and disable power save first.
+             */
+            if (WiFi.getMode() == WIFI_AP)
+            {
+                WiFi.mode(WIFI_AP_STA);
+                WiFi.setSleep(WIFI_PS_NONE);
+            }
+
+            // A failed start used to be reported as "scanning", which left the
+            // page polling forever instead of showing an error.
+            if (WiFi.scanNetworks(true) == WIFI_SCAN_FAILED)
+            {
+                Serial.println("WiFi: scan could not be started");
+                request->send(500, "application/json",
+                              "{\"error\":\"scan could not be started\"}");
+                return;
+            }
+
             request->send(200, "application/json", "{\"scanning\":true}");
             return;
         }
@@ -321,6 +347,35 @@ static void registerKnxRoutes()
 
         request->send(200, "application/json",
                       String("{\"prog_mode\":") + (newState ? "true" : "false") + "}");
+    });
+
+    /*
+     * Factory reset of the KNX side only.
+     *
+     * Needed because the stack derives the tunnel addresses from the device
+     * address exactly once and then keeps them. Programming the device later
+     * leaves its tunnels behind in the old line, and ETS refuses to download
+     * with "more than one device in programming mode".
+     *
+     * WiFi credentials and the hardware profile are in separate NVS
+     * namespaces and survive.
+     */
+    server.on("/api/knx/reset", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        if (!knxLink.resetConfiguration())
+        {
+            request->send(500, "application/json",
+                          "{\"error\":\"could not clear the KNX configuration\"}");
+            return;
+        }
+
+        request->send(200, "application/json",
+                      "{\"status\":\"ok\",\"reboot\":true}");
+
+        // The stack keeps its tables in RAM, so only a restart makes the wipe
+        // effective.
+        netManager.scheduleReboot();
     });
 }
 
@@ -488,50 +543,35 @@ static void registerHardwareRoutes()
      * Applied on the next boot only - pins cannot be moved while the
      * peripherals using them are running.
      */
+    static const size_t HWCONFIG_MAX_BODY = 2048;
+
     server.on(
         "/api/hwconfig", HTTP_POST,
         [](AsyncWebServerRequest* request) {
-            // Answered from the body handler below; nothing to do when a
-            // request arrives without one.
-            if (!request->_tempObject)
-            {
-                if (!mutationAllowed(request)) return;
-                request->send(400, "application/json", "{\"error\":\"empty body\"}");
-            }
-        },
-        nullptr,
-        [](AsyncWebServerRequest* request, uint8_t* data, size_t len,
-           size_t index, size_t total) {
+            // Every reply is written here. The body handler below runs first
+            // and must stay silent: whatever it sent would be replaced by the
+            // response from this handler, which runs unconditionally once the
+            // request is complete.
             if (!mutationAllowed(request)) return;
 
-            if (total > 2048)
+            if (request->contentLength() > HWCONFIG_MAX_BODY)
             {
                 request->send(413, "application/json", "{\"error\":\"body too large\"}");
                 return;
             }
 
-            // Chunked upload: collect until the last piece arrives.
-            if (index == 0)
-            {
-                request->_tempObject = new String();
-                ((String*)request->_tempObject)->reserve(total + 1);
-            }
             String* body = (String*)request->_tempObject;
-            if (body == nullptr) return;
-
-            for (size_t i = 0; i < len; i++)
+            if (body == nullptr)
             {
-                *body += (char)data[i];
-            }
-
-            if (index + len < total)
-            {
-                return; // more to come
+                request->send(400, "application/json", "{\"error\":\"empty body\"}");
+                return;
             }
 
             String error;
             bool   ok = hwConfig.applyJson(*body, error);
 
+            // The request destructor frees _tempObject with free(), which
+            // would leave the String's own buffer behind.
             delete body;
             request->_tempObject = nullptr;
 
@@ -544,6 +584,28 @@ static void registerHardwareRoutes()
 
             request->send(200, "application/json",
                           "{\"status\":\"ok\",\"reboot_required\":true}");
+        },
+        nullptr,
+        [](AsyncWebServerRequest* request, uint8_t* data, size_t len,
+           size_t index, size_t total) {
+            // Collect only. Gate here as well so a rejected request never has
+            // a buffer allocated for it.
+            if (!originAllowed(request) || netManager.isApMode()) return;
+            if (total > HWCONFIG_MAX_BODY) return;
+
+            if (index == 0)
+            {
+                request->_tempObject = new String();
+                ((String*)request->_tempObject)->reserve(total + 1);
+            }
+
+            String* body = (String*)request->_tempObject;
+            if (body == nullptr) return;
+
+            for (size_t i = 0; i < len; i++)
+            {
+                *body += (char)data[i];
+            }
         });
 
     server.on("/api/hwconfig/reset", HTTP_POST, [](AsyncWebServerRequest* request) {
@@ -578,11 +640,15 @@ static void registerOtaRoutes()
             // cheerful 200.
             if (!mutationAllowed(request)) return;
 
-            bool   ok   = !Update.hasError() && !g_uploadHashFailed;
+            bool ok = g_uploadError.isEmpty() && !g_uploadHashFailed &&
+                      !Update.hasError();
+
+            String reason = g_uploadHashFailed ? String("sha256 mismatch")
+                            : !g_uploadError.isEmpty() ? g_uploadError
+                                                       : String(Update.errorString());
+
             String body = ok ? String("{\"status\":\"ok\"}")
-                             : String("{\"error\":\"") +
-                                   (g_uploadHashFailed ? "sha256 mismatch"
-                                                       : Update.errorString()) + "\"}";
+                             : String("{\"error\":\"") + reason + "\"}";
 
             AsyncWebServerResponse* response =
                 request->beginResponse(ok ? 200 : 500, "application/json", body);
@@ -599,6 +665,10 @@ static void registerOtaRoutes()
            uint8_t* data, size_t len, bool final) {
             if (index == 0)
             {
+                g_uploadSha256 = "";
+                g_uploadHashFailed = false;
+                g_uploadError = "";
+
                 // This body handler runs before the response handler above, so
                 // a gated request must never reach Update.begin() - otherwise
                 // the image is already in flash by the time the 403 goes out.
@@ -606,18 +676,35 @@ static void registerOtaRoutes()
                 if (!originAllowed(request) || netManager.isApMode())
                 {
                     Serial.println("OTA: rejected (cross-origin or AP mode)");
+                    g_uploadError = "not allowed in AP mode";
                     return;
                 }
 
                 Serial.printf("OTA: upload start: %s\n", filename.c_str());
-                g_uploadSha256 = "";
-                g_uploadHashFailed = false;
+
+                // A browser that walks away mid-upload leaves Update running:
+                // the final chunk never arrives, so end() is never reached.
+                // begin() then bails out with "already running" without
+                // clearing anything, while isRunning() keeps saying true - so
+                // the next upload writes on top of the abandoned one and dies
+                // with "Not Enough Space" once the stale progress plus the new
+                // image exceed the partition. Every attempt after that fails
+                // the same way until the device is rebooted.
+                if (Update.isRunning())
+                {
+                    Serial.println("OTA: discarding an abandoned upload");
+                    Update.abort();
+                }
 
                 if (!Update.begin(UPDATE_SIZE_UNKNOWN))
                 {
+                    g_uploadError = Update.errorString();
                     Update.printError(Serial);
                     return;
                 }
+
+                Serial.printf("OTA: target partition holds %u bytes\n",
+                              (unsigned)Update.size());
 
                 if (request->hasHeader("X-SHA256"))
                 {
@@ -659,12 +746,14 @@ static void registerOtaRoutes()
             if (len && Update.isRunning() && !Update.hasError())
             {
                 // Update.begin(UPDATE_SIZE_UNKNOWN) set the limit to the OTA
-                // partition size. Reject an oversized image early with a clean
-                // abort instead of a generic short-write error near the end.
-                if ((index + len) > Update.size())
+                // partition size. Compare against what Update itself has left
+                // rather than against the upload offset - the two drift apart
+                // because progress() only counts flushed sectors.
+                if (len > Update.remaining())
                 {
-                    Serial.printf("OTA: image exceeds partition (%u > %u) - abort\n",
-                                  (unsigned)(index + len), (unsigned)Update.size());
+                    Serial.printf("OTA: image exceeds the %u byte partition - abort\n",
+                                  (unsigned)Update.size());
+                    g_uploadError = "image larger than the OTA partition";
                     Update.abort();
                 }
                 else if (Update.write(data, len) != len)

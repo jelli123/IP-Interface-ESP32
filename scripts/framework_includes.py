@@ -1,5 +1,7 @@
 """
-Make the Arduino core's own libraries visible to each other.
+Build tweaks that platformio.ini cannot express.
+
+1. Make the Arduino core's own libraries visible to each other.
 
 Arduino-ESP32 3.x ships its functionality as separate libraries under
 framework-arduinoespressif32/libraries (WiFi, Network, SPI, FS, ...). They
@@ -20,11 +22,22 @@ Adding every core library's src directory to the global include path removes
 the ordering problem entirely. It costs nothing at runtime: unreferenced
 headers are never opened, and unused code is dropped by -ffunction-sections
 plus --gc-sections at link time.
+
+2. Silence -Wvolatile for third party code.
+
+C++20 deprecated the read-modify-write on volatile that the KNX stack uses for
+its frame counters (tpuart_data_link_layer.cpp). Patching .pio/libdeps would be
+undone by the next library update. The flag goes into CXXFLAGS rather than
+build_flags because gcc rejects it for C sources, and build_src_flags in
+platformio.ini re-enables the warning for our own code - there a ++ on a
+volatile would be a real hint at a non-atomic access shared with an ISR.
 """
 
 import os
 
 Import("env")  # noqa: F821  (injected by SCons)
+
+env.Append(CXXFLAGS=["-Wno-volatile"])  # noqa: F821
 
 FRAMEWORK_DIR = env.PioPlatform().get_package_dir(  # noqa: F821
     "framework-arduinoespressif32"

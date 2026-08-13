@@ -70,6 +70,26 @@ public:
     void requestProgMode(bool active);
 
     /**
+     * Wipe the KNX configuration back to factory state.
+     *
+     * Clears the stack's non volatile area: individual address, the tunnel
+     * addresses in PID_ADDITIONAL_INDIVIDUAL_ADDRESSES and every table object.
+     * WiFi credentials and the hardware profile live in their own NVS
+     * namespaces and are left alone.
+     *
+     * The reason this exists: the stack derives the tunnel addresses from the
+     * device address once, on the first tunnel connection, and then keeps
+     * them. Program the device afterwards and its tunnels stay behind in the
+     * old line - ETS then sees two devices in different lines and refuses to
+     * download. Short of erasing the whole flash there was no way back.
+     *
+     * Requires a restart afterwards; the stack caches the tables in RAM.
+     *
+     * @return true if the area was cleared
+     */
+    bool resetConfiguration();
+
+    /**
      * Send a GroupValueWrite telegram onto TP1, the routing multicast and all
      * open tunnels.
      *

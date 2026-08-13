@@ -27,7 +27,9 @@ h1{font-size:17px;margin:0;font-weight:600}
 h2{font-size:13px;margin:0 0 12px;color:var(--dim);text-transform:uppercase;
 letter-spacing:.06em;font-weight:600}
 .badge{margin-left:auto;padding:5px 12px;border-radius:20px;font-size:12px;
-cursor:pointer;border:1px solid var(--line);background:var(--card)}
+cursor:pointer;border:1px solid var(--line);background:var(--card);
+transition:transform .07s ease,filter .12s ease}
+.badge:active{transform:translateY(1px) scale(.97);filter:brightness(.88)}
 .badge.ok{color:var(--ok)} .badge.warn{color:var(--warn)}
 main{display:grid;gap:16px;padding:20px;
 grid-template-columns:repeat(auto-fit,minmax(310px,1fr))}
@@ -38,9 +40,20 @@ border-bottom:1px solid rgba(255,255,255,.04)}
 .row span:first-child{color:var(--dim)}
 .row span:last-child{font-variant-numeric:tabular-nums;text-align:right}
 button{background:var(--acc);color:#fff;border:0;border-radius:7px;
-padding:9px 16px;font-size:13px;cursor:pointer;font-family:inherit}
+padding:9px 16px;font-size:13px;cursor:pointer;font-family:inherit;
+transition:transform .07s ease,filter .12s ease,box-shadow .12s ease}
 button.sec{background:transparent;border:1px solid var(--line);color:var(--fg)}
+button.on{background:var(--warn);color:#12161c;font-weight:600}
+button:hover:not(:disabled){filter:brightness(1.15)}
+/* Press feedback: the button sinks in, so a click is felt and not just seen. */
+button:active:not(:disabled){transform:translateY(1px) scale(.97);
+filter:brightness(.88);box-shadow:inset 0 2px 5px rgba(0,0,0,.35)}
+button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 button:disabled{opacity:.5;cursor:not-allowed}
+@media (prefers-reduced-motion:reduce){
+button,.badge{transition:none}
+button:active:not(:disabled),.badge:active{transform:none}}
+#langBtn{padding:5px 11px;font-size:12px;border-radius:20px}
 .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:8px}
 .bar>i{display:block;height:100%;background:var(--acc);width:0;transition:width .3s}
 .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
@@ -51,8 +64,17 @@ input,select{width:100%;padding:9px;margin:6px 0 12px;background:var(--bg);
 border:1px solid var(--line);border-radius:7px;color:var(--fg);font-family:inherit}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px}
 .dot.ok{background:var(--ok)} .dot.err{background:var(--err)}
+.dot.warn{background:var(--warn)} .dot.off{background:var(--line)}
 .dim{color:var(--dim)}
 dialog label{display:block;margin-top:10px;font-size:12px;color:var(--dim)}
+/* Option groups: the checkbox heads the box it switches on, so it no longer
+ * reads as just another field caption floating above unrelated inputs. */
+.grp{border:1px solid var(--line);border-radius:8px;padding:12px;margin:14px 0}
+dialog .grp>label:not(.chk):first-child{margin-top:0}
+.grp.off>*:not(:first-child){opacity:.45}
+dialog label.chk{display:flex;align-items:center;gap:9px;margin:0;
+font-size:13px;color:var(--fg)}
+input[type=checkbox]{width:auto;margin:0;flex:0 0 auto;accent-color:var(--acc)}
 .trio{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
 .trio input{margin:6px 0}
 small{color:var(--dim)}
@@ -62,6 +84,8 @@ small{color:var(--dim)}
 <header>
   <h1>Selfbus KNX/IP Interface</h1>
   <span class="badge" id="netBadge" onclick="openWifi()">...</span>
+  <button class="sec" id="langBtn" onclick="toggleLang()"
+          title="Sprache / Language">EN</button>
 </header>
 
 <main>
@@ -71,8 +95,10 @@ small{color:var(--dim)}
     <div class="row"><span>Physikalische Adresse</span><span id="pa">-</span></div>
     <div class="row"><span>ETS-Konfiguration</span><span id="cfg">-</span></div>
     <div class="row"><span>Tunnel (max.)</span><span id="tun">-</span></div>
+    <div class="row"><span>Programmiermodus</span><span id="pm">-</span></div>
     <div class="actions">
       <button id="pmBtn" onclick="toggleProg()">Programmiermodus</button>
+      <button class="sec" onclick="resetKnx()">KNX zur&uuml;cksetzen</button>
     </div>
   </section>
 
@@ -118,6 +144,9 @@ small{color:var(--dim)}
     <div class="row"><span>MAC</span><span id="mac">-</span></div>
     <div class="row"><span>Signal</span><span id="rssi">-</span></div>
     <div class="row"><span>Ethernet (W5500)</span><span id="ethSt">-</span></div>
+    <div class="actions">
+      <button class="sec" onclick="openWifi()">WLAN einrichten</button>
+    </div>
   </section>
 
   <section class="card">
@@ -159,7 +188,7 @@ small{color:var(--dim)}
     <label style="display:block;margin-top:10px;font-size:12px;color:var(--dim)">
       SHA-256 der Datei (optional, aus <code>sha256sum</code>)</label>
     <input id="fwHash" placeholder="64 Hex-Zeichen &ndash; leer = ungeprueft">
-    <p><small id="hashNote"></small></p>
+    <p><small id="hashNote" data-dyn></small></p>
   </section>
 </main>
 
@@ -177,19 +206,24 @@ small{color:var(--dim)}
 
 <dialog id="timeDlg">
   <h2>Zeitserver</h2>
-  <label><input type="checkbox" id="tsEn"> Telegramme senden</label>
-  <label>Gruppenadresse Datum+Zeit (DPT 19.001)</label>
-  <input id="tsGaDt" placeholder="z.B. 0/0/1 &ndash; leer = aus">
-  <label>Gruppenadresse Uhrzeit (DPT 10.001)</label>
-  <input id="tsGaT" placeholder="leer = aus">
-  <label>Gruppenadresse Datum (DPT 11.001)</label>
-  <input id="tsGaD" placeholder="leer = aus">
-  <label>Sendeintervall (Minuten)</label>
-  <input id="tsIvl" type="number" min="1" max="1440">
-  <label><input type="checkbox" id="tsNtpEn"> NTP verwenden</label>
-  <label><input type="checkbox" id="tsNtpDhcp"> NTP-Server vom DHCP beziehen</label>
-  <label>NTP-Server (Fallback, wenn DHCP keinen liefert)</label>
-  <input id="tsNtpSrv" placeholder="pool.ntp.org">
+  <div class="grp">
+    <label class="chk"><input type="checkbox" id="tsEn"> Zeit auf den KNX-Bus senden</label>
+    <label>Gruppenadresse Datum+Zeit (DPT 19.001)</label>
+    <input id="tsGaDt" placeholder="z.B. 0/0/1 &ndash; leer = aus">
+    <label>Gruppenadresse Uhrzeit (DPT 10.001)</label>
+    <input id="tsGaT" placeholder="leer = aus">
+    <label>Gruppenadresse Datum (DPT 11.001)</label>
+    <input id="tsGaD" placeholder="leer = aus">
+    <label>Sendeintervall (Minuten)</label>
+    <input id="tsIvl" type="number" min="1" max="1440">
+  </div>
+  <div class="grp">
+    <label class="chk"><input type="checkbox" id="tsNtpEn"> Zeit per NTP holen</label>
+    <label class="chk" style="margin-top:10px">
+      <input type="checkbox" id="tsNtpDhcp"> NTP-Server vom DHCP beziehen</label>
+    <label>NTP-Server (Fallback, wenn DHCP keinen liefert)</label>
+    <input id="tsNtpSrv" placeholder="pool.ntp.org">
+  </div>
   <label>Zeitzone (POSIX TZ)</label>
   <input id="tsTz" placeholder="CET-1CEST,M3.5.0,M10.5.0/3">
   <label>Zeit manuell setzen</label>
@@ -205,7 +239,7 @@ small{color:var(--dim)}
 
 <dialog id="hwDlg">
   <h2>Hardware-Profil</h2>
-  <p><small id="hwChip"></small></p>
+  <p><small id="hwChip" data-dyn></small></p>
 
   <label>KNX &ndash; UART-Nummer / RX / TX</label>
   <div class="trio">
@@ -218,28 +252,34 @@ small{color:var(--dim)}
   <div class="trio">
     <input id="hwLedPin" type="number" min="-1">
     <input id="hwBtn"    type="number" min="-1">
-    <label style="margin:0;align-self:center">
+    <label class="chk" style="align-self:center">
       <input type="checkbox" id="hwLedLow"> LED low-aktiv</label>
   </div>
 
-  <label><input type="checkbox" id="hwI2cEn"> RTC ueber I2C (SDA / SCL)</label>
-  <div class="trio">
-    <input id="hwSda" type="number" min="-1">
-    <input id="hwScl" type="number" min="-1">
-    <span></span>
+  <div class="grp">
+    <label class="chk"><input type="checkbox" id="hwI2cEn"> RTC ueber I2C anschliessen</label>
+    <label>SDA / SCL</label>
+    <div class="trio">
+      <input id="hwSda" type="number" min="-1">
+      <input id="hwScl" type="number" min="-1">
+      <span></span>
+    </div>
   </div>
 
-  <label><input type="checkbox" id="hwEthEn"> Ethernet W5500 (SCK / MISO / MOSI)</label>
-  <div class="trio">
-    <input id="hwSck"  type="number" min="-1">
-    <input id="hwMiso" type="number" min="-1">
-    <input id="hwMosi" type="number" min="-1">
-  </div>
-  <label>W5500 &ndash; CS / IRQ / RST (&minus;1 = ungenutzt)</label>
-  <div class="trio">
-    <input id="hwCs"  type="number" min="-1">
-    <input id="hwIrq" type="number" min="-1">
-    <input id="hwRst" type="number" min="-1">
+  <div class="grp">
+    <label class="chk"><input type="checkbox" id="hwEthEn"> Ethernet W5500 anschliessen</label>
+    <label>SCK / MISO / MOSI</label>
+    <div class="trio">
+      <input id="hwSck"  type="number" min="-1">
+      <input id="hwMiso" type="number" min="-1">
+      <input id="hwMosi" type="number" min="-1">
+    </div>
+    <label>CS / IRQ / RST (&minus;1 = ungenutzt)</label>
+    <div class="trio">
+      <input id="hwCs"  type="number" min="-1">
+      <input id="hwIrq" type="number" min="-1">
+      <input id="hwRst" type="number" min="-1">
+    </div>
   </div>
 
   <p id="hwErr" style="color:var(--err);font-size:12px"></p>
@@ -257,19 +297,222 @@ small{color:var(--dim)}
 
 <script>
 const $ = id => document.getElementById(id);
-const dot = ok => `<span class="dot ${ok?'ok':'err'}"></span>${ok?'OK':'Fehler'}`;
+
+/*
+ * Zweisprachigkeit.
+ *
+ * Deutsch steht im Markup und ist die Quelle. Uebersetzt wird ueber eine
+ * einzige Tabelle, die vom deutschen Text auf den englischen abbildet - so
+ * gibt es kein zweites Woerterbuch zu pflegen, und was fehlt, bleibt einfach
+ * deutsch. Beim Umschalten zurueck wird der urspruengliche Textknoten aus
+ * dem Cache wiederhergestellt.
+ */
+let LANG = localStorage.getItem('sbip-lang') === 'en' ? 'en' : 'de';
+
+const EN = {
+'Telegramme':'Telegrams', 'Zeitserver':'Time server', 'Netzwerk':'Network',
+'Hardware-Profil':'Hardware profile', 'WLAN einrichten':'Set up Wi-Fi',
+'Laufzeit':'Uptime', 'Physikalische Adresse':'Individual address',
+'ETS-Konfiguration':'ETS configuration', 'Tunnel (max.)':'Tunnels (max.)',
+'Programmiermodus':'Programming mode', 'Verbindung':'Connection',
+'Schnittstelle':'Interface', 'Baudrate':'Baud rate', 'Selbsttest':'Self test',
+'Buslast':'Bus load', 'TP empfangen':'TP received',
+'TP verworfen (fremd)':'TP discarded (foreign)', 'TP ungueltig':'TP invalid',
+'TP gesendet':'TP sent', 'IP empfangen':'IP received', 'IP gesendet':'IP sent',
+'Aktuelle Zeit':'Current time', 'Zeitquelle':'Time source',
+'NTP-Server':'NTP server', 'Naechstes Senden':'Next transmission',
+'IP-Adresse':'IP address', 'Takt':'Clock', 'Freier Speicher':'Free memory',
+'Quelle':'Source', 'LED / Taster':'LED / button',
+
+'KNX zur\u00fccksetzen':'Reset KNX', 'Einstellungen':'Settings',
+'Zeit vom Browser':'Time from browser', 'Jetzt senden':'Send now',
+'Bearbeiten':'Edit', 'JSON laden':'Load JSON', 'JSON speichern':'Save JSON',
+'Online pruefen':'Check online', 'Installieren':'Install',
+'Datei hochladen':'Upload file', 'Verbinden':'Connect',
+'Neu suchen':'Scan again', 'Abbrechen':'Cancel', 'Speichern':'Save',
+'Zeit uebernehmen':'Apply time', 'Schliessen':'Close',
+'Werte des Images':'Image defaults',
+'Auf Standard zuruecksetzen':'Reset to defaults',
+
+'Zeit auf den KNX-Bus senden':'Send time to the KNX bus',
+'Gruppenadresse Datum+Zeit (DPT 19.001)':'Group address date+time (DPT 19.001)',
+'Gruppenadresse Uhrzeit (DPT 10.001)':'Group address time (DPT 10.001)',
+'Gruppenadresse Datum (DPT 11.001)':'Group address date (DPT 11.001)',
+'Sendeintervall (Minuten)':'Transmission interval (minutes)',
+'Zeit per NTP holen':'Get time via NTP',
+'NTP-Server vom DHCP beziehen':'Obtain NTP server from DHCP',
+'NTP-Server (Fallback, wenn DHCP keinen liefert)':
+  'NTP server (fallback when DHCP supplies none)',
+'Zeitzone (POSIX TZ)':'Time zone (POSIX TZ)',
+'Zeit manuell setzen':'Set time manually',
+'KNX \u2013 UART-Nummer / RX / TX':'KNX \u2013 UART number / RX / TX',
+'Programmier-LED / Taster (\u22121 = nicht bestueckt)':
+  'Programming LED / button (\u22121 = not fitted)',
+'LED low-aktiv':'LED active low',
+'RTC ueber I2C anschliessen':'Connect an RTC via I2C',
+'Ethernet W5500 anschliessen':'Connect an Ethernet W5500',
+'CS / IRQ / RST (\u22121 = ungenutzt)':'CS / IRQ / RST (\u22121 = unused)',
+'SHA-256 der Datei (optional, aus':'SHA-256 of the file (optional, from',
+
+'Aenderungen werden erst nach einem Neustart aktiv.':
+  'Changes take effect after a restart.',
+'Nach dem Verbinden startet das Geraet neu.':
+  'The device restarts after connecting.',
+['Ohne Internetzugang NTP abschalten und die Zeit per Browser oder manuell '
++ 'setzen. Mit RV-3028 bleibt sie ueber einen Stromausfall erhalten.']:
+  'Without internet access, switch NTP off and set the time from the browser '
++ 'or by hand. With an RV-3028 it survives a power failure.',
+['Ungueltige Pins werden abgewiesen. Startet das Geraet mit einem neuen Profil '
++ 'zweimal nicht durch, faellt es automatisch auf die Werte des Images '
++ 'zurueck. Taster beim Einschalten gedrueckt halten erzwingt das ebenfalls.']:
+  'Invalid pins are rejected. If the device fails to boot twice with a new '
++ 'profile, it falls back to the image defaults on its own. Holding the '
++ 'button while powering up forces the same.',
+
+'Passwort':'Password', 'leer = aus':'empty = off',
+'z.B. 0/0/1 \u2013 leer = aus':'e.g. 0/0/1 \u2013 empty = off',
+'64 Hex-Zeichen \u2013 leer = ungeprueft':
+  '64 hex characters \u2013 empty = unverified',
+'Netzwerke suchen...':'Searching for networks...',
+
+'Fehler':'Error', 'nicht programmiert':'not programmed', 'aktiv':'active',
+'aus':'off', 'Programmiermodus starten':'Start programming mode',
+'Programmiermodus beenden':'Stop programming mode',
+'verbunden':'connected', 'kein Link':'no link',
+'keine IP-Adresse':'no IP address', 'nicht gefunden':'not found',
+'nicht konfiguriert':'not configured', 'WLAN':'Wi-Fi',
+'AP-Modus aktiv':'AP mode active', 'getrennt':'disconnected',
+'manuell':'manual', 'keine':'none', 'nicht gesetzt':'not set',
+'keiner':'none', 'nicht bestueckt':'not fitted', 'deaktiviert':'disabled',
+'Image-Standard':'image defaults',
+'ungueltig &rarr; Standard':'invalid &rarr; defaults',
+'Startfehler &rarr; Standard':'boot failure &rarr; defaults',
+'Taster &rarr; Standard':'button &rarr; defaults',
+'gespeichertes Profil':'stored profile',
+'(Neustart noetig)':'(restart required)', 'kein':'none',
+'pruefe...':'checking...', 'berechne Pruefsumme...':'computing checksum...',
+'lade hoch...':'uploading...',
+'erfolgreich, Neustart...':'successful, restarting...',
+'fehlgeschlagen':'failed', 'Uebertragung abgebrochen':'transfer aborted',
+'abgelehnt':'rejected', 'Suche laeuft...':'Scanning...',
+'Kein Netz gefunden':'No network found',
+'Zeitueberschreitung':'Timed out', 'Version %s verfuegbar':'version %s available',
+
+'Zeit konnte nicht gesetzt werden.':'Could not set the time.',
+'Bitte Datum und Uhrzeit eingeben.':'Please enter a date and a time.',
+'Senden nicht moeglich - Uhr nicht gesetzt?':
+  'Cannot send - is the clock set?',
+'Profil gespeichert. Jetzt neu starten?':'Profile saved. Restart now?',
+'Gespeichertes Profil verwerfen und die Werte des Images verwenden?':
+  'Discard the stored profile and use the image defaults?',
+'Zurueckgesetzt. Jetzt neu starten?':'Reset done. Restart now?',
+'Keine gueltige JSON-Datei.':'Not a valid JSON file.',
+'Neustart laeuft. Die Seite in einigen Sekunden neu laden.':
+  'Restarting. Reload the page in a few seconds.',
+'Das Geraet laeuft ueber Ethernet. WLAN ist nicht aktiv.':
+  'The device runs over Ethernet. Wi-Fi is not active.',
+'Zugangsdaten gespeichert. Das Geraet startet neu.':
+  'Credentials saved. The device restarts.',
+'Firmware jetzt installieren? Das Geraet startet danach neu.':
+  'Install the firmware now? The device restarts afterwards.',
+'Kein SHA-256 angegeben. Firmware ungeprueft uebertragen?':
+  'No SHA-256 given. Transfer the firmware unverified?',
+'Zur\u00fccksetzen fehlgeschlagen.':'Reset failed.',
+'KNX-Konfiguration gel\u00f6scht. Das Ger\u00e4t startet neu.':
+  'KNX configuration cleared. The device restarts.',
+['KNX-Konfiguration zur\u00fccksetzen?\n\nPhysikalische Adresse und '
++ 'Tunnel-Adressen gehen verloren, das Ger\u00e4t startet neu und muss in der '
++ 'ETS neu programmiert werden.\n\nWLAN und Hardware-Profil bleiben erhalten.']:
+  'Reset the KNX configuration?\n\nThe individual address and the tunnel '
++ 'addresses are lost, the device restarts and has to be programmed again in '
++ 'the ETS.\n\nWi-Fi and the hardware profile are kept.',
+'Wird beim Hochladen automatisch berechnet.':
+  'Computed automatically during upload.',
+['Automatische Berechnung braucht HTTPS und entfaellt hier. Selbst ermitteln '
++ 'mit "Get-FileHash firmware.bin" bzw. "sha256sum firmware.bin", oder leer '
++ 'lassen.']:
+  'Automatic computation needs HTTPS and is unavailable here. Obtain it with '
++ '"Get-FileHash firmware.bin" or "sha256sum firmware.bin", or leave empty.'
+};
+
+/** Translate a single string. Unknown text stays German. */
+const t = s => (LANG === 'en' && EN[s]) || s;
+
+// Everything static lives in one of these; dynamic values sit in the second
+// span of a row or carry data-dyn, and are never touched here.
+const I18N_SEL = 'h2,.row>span:first-child,button,label,small:not([data-dyn]),option';
+
+function applyLang(){
+  document.documentElement.lang = LANG;
+
+  document.querySelectorAll(I18N_SEL).forEach(el => {
+    el.childNodes.forEach(n => {
+      if(n.nodeType !== 3) return;                    // text nodes only, so
+      if(n.de === undefined) n.de = n.nodeValue;      // nested tags survive
+      const m = n.de.match(/^(\s*)([\s\S]*?)(\s*)$/);
+      if(!m[2]) return;
+      const en = EN[m[2].replace(/\s+/g, ' ')];
+      n.nodeValue = (LANG === 'en' && en) ? m[1] + en + m[3] : n.de;
+    });
+  });
+
+  document.querySelectorAll('[placeholder]').forEach(el => {
+    if(el.dePh === undefined) el.dePh = el.placeholder;
+    el.placeholder = (LANG === 'en' && EN[el.dePh]) || el.dePh;
+  });
+
+  $('langBtn').textContent = LANG === 'de' ? 'EN' : 'DE';
+  $('hashNote').textContent = t(CAN_HASH
+    ? 'Wird beim Hochladen automatisch berechnet.'
+    : 'Automatische Berechnung braucht HTTPS und entfaellt hier. Selbst '
+    + 'ermitteln mit "Get-FileHash firmware.bin" bzw. "sha256sum '
+    + 'firmware.bin", oder leer lassen.');
+
+  refresh(); refreshTime(); refreshHw();
+}
+
+function toggleLang(){
+  LANG = LANG === 'de' ? 'en' : 'de';
+  localStorage.setItem('sbip-lang', LANG);
+  applyLang();
+}
+
+const dot = ok => `<span class="dot ${ok?'ok':'err'}"></span>${t(ok?'OK':'Fehler')}`;
+
+// Dim a group while its leading checkbox is off, so the fields read as
+// belonging to the switch above them rather than standing on their own.
+function syncGroups(){
+  document.querySelectorAll('.grp').forEach(g => {
+    const cb = g.querySelector('label.chk input');
+    if(cb) g.classList.toggle('off', !cb.checked);
+  });
+}
+document.addEventListener('change', e => {
+  if(e.target.type === 'checkbox') syncGroups();
+});
+
+let last = null;
 
 async function refresh(){
   let s;
   try { s = await (await fetch('/api/status')).json(); }
   catch(e){ $('netBadge').textContent = 'offline'; return; }
+  last = s;
 
   $('uptime').textContent = s.uptime;
   $('pa').textContent     = s.knx_pa;
   $('cfg').innerHTML      = s.knx_configured ? dot(true)
-                          : '<span class="dot err"></span>nicht programmiert';
+                          : '<span class="dot err"></span>' + t('nicht programmiert');
   $('tun').textContent    = s.knx_max_tunnels;
-  $('pmBtn').textContent  = s.prog_mode ? 'Programmiermodus AUS' : 'Programmiermodus EIN';
+
+  // Label the action, not the state - "Programmiermodus EIN" could be read
+  // either way. The state lives in its own row above.
+  $('pm').innerHTML       = s.prog_mode
+                          ? '<span class="dot warn"></span>' + t('aktiv')
+                          : '<span class="dot off"></span>' + t('aus');
+  $('pmBtn').textContent  = t(s.prog_mode ? 'Programmiermodus beenden'
+                                          : 'Programmiermodus starten');
+  $('pmBtn').className    = s.prog_mode ? 'on' : '';
 
   $('tpConn').innerHTML = dot(s.tp.connected);
   $('tpType').textContent = s.tp.type;
@@ -292,14 +535,15 @@ async function refresh(){
 
   const ES = {ready:'verbunden', no_link:'kein Link', no_ip:'keine IP-Adresse',
               absent:'nicht gefunden', disabled:'nicht konfiguriert'};
+  const est = t(ES[s.eth.state] || s.eth.state);
   const eok = s.eth.state === 'ready';
   $('ethSt').innerHTML = (s.eth.state === 'disabled' || s.eth.state === 'absent')
-      ? '<span class="dim">' + (ES[s.eth.state]||s.eth.state) + '</span>'
+      ? '<span class="dim">' + est + '</span>'
       : (eok ? dot(true) + ' ' + s.eth.speed + ' Mbit/s ' + s.eth.duplex
-             : '<span class="dot err"></span>' + (ES[s.eth.state]||s.eth.state));
+             : '<span class="dot err"></span>' + est);
 
   const ifn = {ethernet:'Ethernet', wifi:'WLAN'};
-  $('ifc').textContent = ifn[s.iface] || s.iface;
+  $('ifc').textContent = t(ifn[s.iface] || s.iface);
 
   $('chip').textContent = s.hardware.chip_model + ' rev ' + s.hardware.chip_rev;
   $('cpu').textContent  = s.hardware.cpu_freq + ' MHz';
@@ -310,9 +554,9 @@ async function refresh(){
   $('build').textContent= '#' + s.build.number + ' / ' + s.build.git;
 
   const b = $('netBadge');
-  b.textContent = s.is_ap_mode ? 'AP-Modus aktiv'
+  b.textContent = s.is_ap_mode ? t('AP-Modus aktiv')
                 : (s.iface === 'ethernet' ? 'Ethernet'
-                : (s.wifi_connected ? s.ssid : 'getrennt'));
+                : (s.wifi_connected ? s.ssid : t('getrennt')));
   b.className   = 'badge ' + (s.is_ap_mode ? 'warn' : (s.wifi_connected ? 'ok' : ''));
   b.style.cursor = (s.iface === 'ethernet') ? 'default' : 'pointer';
 }
@@ -322,36 +566,50 @@ async function toggleProg(){
   setTimeout(refresh, 300);
 }
 
+async function resetKnx(){
+  if(!confirm(t('KNX-Konfiguration zur\u00fccksetzen?\n\n'
+            + 'Physikalische Adresse und Tunnel-Adressen gehen verloren, '
+            + 'das Ger\u00e4t startet neu und muss in der ETS neu programmiert '
+            + 'werden.\n\nWLAN und Hardware-Profil bleiben erhalten.'))) return;
+  try {
+    const r = await fetch('/api/knx/reset', {method:'POST'});
+    if(!r.ok){ alert(t('Zur\u00fccksetzen fehlgeschlagen.')); return; }
+    alert(t('KNX-Konfiguration gel\u00f6scht. Das Ger\u00e4t startet neu.'));
+  } catch(e){ alert(t('Zur\u00fccksetzen fehlgeschlagen.')); }
+}
+
 // --- Zeitserver ---
 const SRC = {ntp:'NTP', rtc:'RTC', manual:'manuell', none:'keine'};
 
 async function refreshTime(){
-  let t;
-  try { t = await (await fetch('/api/time')).json(); } catch(e){ return; }
-  $('tsNow').textContent  = t.local_time;
-  $('tsSrc').innerHTML    = t.clock_valid ? dot(true) + ' ' + (SRC[t.source]||t.source)
-                                          : '<span class="dot err"></span>nicht gesetzt';
-  $('tsNtpAct').innerHTML = t.ntp_enabled
-      ? (t.ntp_active ? t.ntp_active + (t.ntp_dhcp_active ? ' <small>(DHCP)</small>' : '')
-                      : '<span class="dim">keiner</span>')
-      : '<span class="dim">aus</span>';
-  $('tsRtc').innerHTML    = t.rtc_present ? dot(true) : '<span class="dim">nicht bestueckt</span>';
-  $('tsNext').textContent = t.enabled ? (t.next_send_s + ' s') : 'deaktiviert';
-  return t;
+  let ts;
+  try { ts = await (await fetch('/api/time')).json(); } catch(e){ return; }
+  $('tsNow').textContent  = ts.local_time;
+  $('tsSrc').innerHTML    = ts.clock_valid ? dot(true) + ' ' + t(SRC[ts.source]||ts.source)
+                                           : '<span class="dot err"></span>' + t('nicht gesetzt');
+  $('tsNtpAct').innerHTML = ts.ntp_enabled
+      ? (ts.ntp_active ? ts.ntp_active + (ts.ntp_dhcp_active ? ' <small>(DHCP)</small>' : '')
+                       : '<span class="dim">' + t('keiner') + '</span>')
+      : '<span class="dim">' + t('aus') + '</span>';
+  $('tsRtc').innerHTML    = ts.rtc_present ? dot(true)
+                          : '<span class="dim">' + t('nicht bestueckt') + '</span>';
+  $('tsNext').textContent = ts.enabled ? (ts.next_send_s + ' s') : t('deaktiviert');
+  syncGroups();
+  return ts;
 }
 
 async function openTime(){
-  const t = await refreshTime();
-  if(!t) return;
-  $('tsEn').checked     = t.enabled;
-  $('tsGaDt').value     = t.ga_datetime;
-  $('tsGaT').value      = t.ga_time;
-  $('tsGaD').value      = t.ga_date;
-  $('tsIvl').value      = t.interval_min;
-  $('tsNtpEn').checked  = t.ntp_enabled;
-  $('tsNtpDhcp').checked= t.ntp_from_dhcp;
-  $('tsNtpSrv').value   = t.ntp_server;
-  $('tsTz').value       = t.tz;
+  const ts = await refreshTime();
+  if(!ts) return;
+  $('tsEn').checked     = ts.enabled;
+  $('tsGaDt').value     = ts.ga_datetime;
+  $('tsGaT').value      = ts.ga_time;
+  $('tsGaD').value      = ts.ga_date;
+  $('tsIvl').value      = ts.interval_min;
+  $('tsNtpEn').checked  = ts.ntp_enabled;
+  $('tsNtpDhcp').checked= ts.ntp_from_dhcp;
+  $('tsNtpSrv').value   = ts.ntp_server;
+  $('tsTz').value       = ts.tz;
   const d = new Date(Date.now() - new Date().getTimezoneOffset()*60000);
   $('tsManual').value   = d.toISOString().slice(0,19);
   timeDlg.showModal();
@@ -377,24 +635,24 @@ async function saveTime(){
 async function syncBrowser(){
   const body = new URLSearchParams({epoch: Math.floor(Date.now()/1000)});
   const r = await fetch('/api/time/set', {method:'POST', body});
-  if(!r.ok) alert('Zeit konnte nicht gesetzt werden.');
+  if(!r.ok) alert(t('Zeit konnte nicht gesetzt werden.'));
   setTimeout(refreshTime, 600);
 }
 
 // Manuelle Eingabe: datetime-local ist Ortszeit, daher in UTC umrechnen.
 async function setManual(){
   const v = $('tsManual').value;
-  if(!v){ alert('Bitte Datum und Uhrzeit eingeben.'); return; }
+  if(!v){ alert(t('Bitte Datum und Uhrzeit eingeben.')); return; }
   const epoch = Math.floor(new Date(v).getTime()/1000);
   const body = new URLSearchParams({epoch});
   const r = await fetch('/api/time/set', {method:'POST', body});
-  if(!r.ok) alert('Zeit konnte nicht gesetzt werden.');
+  if(!r.ok) alert(t('Zeit konnte nicht gesetzt werden.'));
   setTimeout(refreshTime, 600);
 }
 
 async function sendTime(){
   const r = await fetch('/api/time/send', {method:'POST'});
-  if(!r.ok) alert('Senden nicht moeglich - Uhr nicht gesetzt?');
+  if(!r.ok) alert(t('Senden nicht moeglich - Uhr nicht gesetzt?'));
   setTimeout(refreshTime, 600);
 }
 
@@ -417,18 +675,19 @@ async function refreshHw(){
   const a = hwState.active;
 
   $('hwSrc').innerHTML = hwState.using_defaults
-      ? '<span class="dot err"></span>' + (FBR[hwState.fallback]||hwState.fallback)
-      : dot(true) + ' gespeichertes Profil';
+      ? '<span class="dot err"></span>' + t(FBR[hwState.fallback]||hwState.fallback)
+      : dot(true) + ' ' + t('gespeichertes Profil');
   if(hwState.reboot_pending)
-    $('hwSrc').innerHTML += ' <small>(Neustart noetig)</small>';
+    $('hwSrc').innerHTML += ' <small>' + t('(Neustart noetig)') + '</small>';
 
   $('hwKnx').textContent = 'UART' + a.knx_uart + ', RX ' + a.knx_rx + ', TX ' + a.knx_tx;
   $('hwLed').textContent = 'GPIO ' + a.led + (a.led_active_low ? ' (low)' : '')
-                         + ' / ' + (a.button < 0 ? 'kein' : 'GPIO ' + a.button);
-  $('hwI2c').textContent = a.i2c_enabled ? ('SDA ' + a.i2c_sda + ', SCL ' + a.i2c_scl) : 'aus';
+                         + ' / ' + (a.button < 0 ? t('kein') : 'GPIO ' + a.button);
+  $('hwI2c').textContent = a.i2c_enabled ? ('SDA ' + a.i2c_sda + ', SCL ' + a.i2c_scl)
+                                         : t('aus');
   $('hwEth').textContent = a.eth_enabled
       ? ('SCK ' + a.eth_sck + ', MISO ' + a.eth_miso + ', MOSI ' + a.eth_mosi + ', CS ' + a.eth_cs)
-      : 'aus';
+      : t('aus');
 }
 
 function hwFill(p){
@@ -436,6 +695,7 @@ function hwFill(p){
   $('hwLedLow').checked = p.led_active_low;
   $('hwI2cEn').checked  = p.i2c_enabled;
   $('hwEthEn').checked  = p.eth_enabled;
+  syncGroups();
 }
 
 async function openHw(){
@@ -467,10 +727,10 @@ async function hwPost(profile){
   if(r.ok){
     hwDlg.close();
     refreshHw();
-    if(confirm('Profil gespeichert. Jetzt neu starten?')) doReboot();
+    if(confirm(t('Profil gespeichert. Jetzt neu starten?'))) doReboot();
     return true;
   }
-  let msg = 'abgelehnt';
+  let msg = t('abgelehnt');
   try { const j = await r.json(); if(j.error) msg = j.error; } catch(e){}
   $('hwErr').textContent = msg;
   return false;
@@ -479,11 +739,11 @@ async function hwPost(profile){
 function hwSave(){ return hwPost(hwCollect()); }
 
 async function hwReset(){
-  if(!confirm('Gespeichertes Profil verwerfen und die Werte des Images verwenden?')) return;
+  if(!confirm(t('Gespeichertes Profil verwerfen und die Werte des Images verwenden?'))) return;
   await fetch('/api/hwconfig/reset', {method:'POST'});
   hwDlg.close();
   refreshHw();
-  if(confirm('Zurueckgesetzt. Jetzt neu starten?')) doReboot();
+  if(confirm(t('Zurueckgesetzt. Jetzt neu starten?'))) doReboot();
 }
 
 function hwDownload(){
@@ -502,19 +762,19 @@ async function hwUpload(){
   if(!f) return;
   let p;
   try { p = JSON.parse(await f.text()); }
-  catch(e){ alert('Keine gueltige JSON-Datei.'); return; }
+  catch(e){ alert(t('Keine gueltige JSON-Datei.')); return; }
   if(!await hwPost(p)) { hwDlg.showModal(); hwFill(p); }
 }
 
 async function doReboot(){
   await fetch('/api/reboot', {method:'POST'});
-  alert('Neustart laeuft. Die Seite in einigen Sekunden neu laden.');
+  alert(t('Neustart laeuft. Die Seite in einigen Sekunden neu laden.'));
 }
 
 function openWifi(){
   // Im Ethernet-Betrieb ist das WLAN gar nicht gestartet.
-  if($('ifc').textContent === 'Ethernet'){
-    alert('Das Geraet laeuft ueber Ethernet. WLAN ist nicht aktiv.');
+  if(last && last.iface === 'ethernet'){
+    alert(t('Das Geraet laeuft ueber Ethernet. WLAN ist nicht aktiv.'));
     return;
   }
   wifiDlg.showModal(); scan();
@@ -522,7 +782,7 @@ function openWifi(){
 
 async function scan(){
   const sel = $('ssidSel');
-  sel.innerHTML = '<option>Suche laeuft...</option>';
+  sel.innerHTML = '<option>' + t('Suche laeuft...') + '</option>';
   await fetch('/api/wifi/scan?start=1');
   for(let i=0;i<20;i++){
     await new Promise(r=>setTimeout(r,900));
@@ -530,28 +790,28 @@ async function scan(){
     if(Array.isArray(r)){
       sel.innerHTML = r.length
         ? r.map(n=>`<option value="${n.ssid}">${n.ssid} (${n.rssi} dBm)</option>`).join('')
-        : '<option>Kein Netz gefunden</option>';
+        : '<option>' + t('Kein Netz gefunden') + '</option>';
       return;
     }
   }
-  sel.innerHTML = '<option>Zeitueberschreitung</option>';
+  sel.innerHTML = '<option>' + t('Zeitueberschreitung') + '</option>';
 }
 
 async function connect(){
   const body = new URLSearchParams({ssid:$('ssidSel').value, password:$('pw').value});
   await fetch('/api/wifi/connect', {method:'POST', body});
   wifiDlg.close();
-  alert('Zugangsdaten gespeichert. Das Geraet startet neu.');
+  alert(t('Zugangsdaten gespeichert. Das Geraet startet neu.'));
 }
 
 async function checkUpdate(){
-  $('updState').textContent = 'pruefe...';
+  $('updState').textContent = t('pruefe...');
   await fetch('/api/update/check');
   pollUpdate();
 }
 
 async function installUpdate(){
-  if(!confirm('Firmware jetzt installieren? Das Geraet startet danach neu.')) return;
+  if(!confirm(t('Firmware jetzt installieren? Das Geraet startet danach neu.'))) return;
   await fetch('/api/update/install', {method:'POST'});
   pollUpdate();
 }
@@ -560,7 +820,7 @@ async function pollUpdate(){
   const u = await (await fetch('/api/update/status')).json();
   let text = u.state;
   if(u.error) text += ' - ' + u.error;
-  else if(u.available) text = 'Version ' + u.latest + ' verfuegbar';
+  else if(u.available) text = t('Version %s verfuegbar').replace('%s', u.latest);
   $('updState').textContent = text;
   $('instBtn').disabled = !u.available;
 
@@ -584,10 +844,6 @@ async function pollUpdate(){
  */
 const CAN_HASH = !!(window.crypto && window.crypto.subtle);
 
-$('hashNote').textContent = CAN_HASH
-  ? 'Wird beim Hochladen automatisch berechnet.'
-  : 'Automatische Berechnung nicht moeglich (kein HTTPS). Hash ggf. manuell eintragen.';
-
 async function sha256Hex(file){
   const buf = await file.arrayBuffer();
   const dig = await crypto.subtle.digest('SHA-256', buf);
@@ -597,37 +853,41 @@ async function sha256Hex(file){
 async function upload(){
   const file = $('fw').files[0];
   if(!file) return;
+  // Clear the picker, otherwise choosing the same file after a failed attempt
+  // fires no change event and the button appears dead.
+  $('fw').value = '';
 
   let hash = $('fwHash').value.trim().toLowerCase();
 
   if(!hash && CAN_HASH){
-    $('updState').textContent = 'berechne Pruefsumme...';
+    $('updState').textContent = t('berechne Pruefsumme...');
     try { hash = await sha256Hex(file); $('fwHash').value = hash; }
     catch(e){ hash = ''; }
   }
 
-  if(!hash && !confirm('Kein SHA-256 angegeben. Firmware ungeprueft uebertragen?')) return;
+  if(!hash && !confirm(t('Kein SHA-256 angegeben. Firmware ungeprueft uebertragen?'))) return;
 
-  $('updState').textContent = 'lade hoch...';
+  $('updState').textContent = t('lade hoch...');
   const fd = new FormData();
   fd.append('firmware', file);
 
   const headers = {};
   if(/^[0-9a-f]{64}$/.test(hash)) headers['X-SHA256'] = hash;
 
-  const r = await fetch('/api/ota', {method:'POST', body:fd, headers});
+  let r;
+  try { r = await fetch('/api/ota', {method:'POST', body:fd, headers}); }
+  catch(e){ $('updState').textContent = t('Uebertragung abgebrochen'); return; }
+
   if(r.ok){
-    $('updState').textContent = 'erfolgreich, Neustart...';
+    $('updState').textContent = t('erfolgreich, Neustart...');
   } else {
-    let msg = 'fehlgeschlagen';
+    let msg = t('fehlgeschlagen');
     try { const j = await r.json(); if(j.error) msg += ' - ' + j.error; } catch(e){}
     $('updState').textContent = msg;
   }
 }
 
-refresh();
-refreshTime();
-refreshHw();
+applyLang();
 setInterval(refresh, 2000);
 setInterval(refreshTime, 5000);
 </script>

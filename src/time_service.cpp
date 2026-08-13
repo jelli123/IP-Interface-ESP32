@@ -216,7 +216,7 @@ void TimeService::startNtp()
     esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
 
 #if LWIP_DHCP_GET_NTP_SRV
-    sntp_servermode_dhcp(_config.ntpFromDhcp ? 1 : 0);
+    esp_sntp_servermode_dhcp(_config.ntpFromDhcp);
     _dhcpServerActive = _config.ntpFromDhcp;
 #else
     if (_config.ntpFromDhcp)
