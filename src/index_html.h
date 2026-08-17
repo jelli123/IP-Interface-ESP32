@@ -95,11 +95,18 @@ small{color:var(--dim)}
     <div class="row"><span>Physikalische Adresse</span><span id="pa">-</span></div>
     <div class="row"><span>ETS-Konfiguration</span><span id="cfg">-</span></div>
     <div class="row"><span>Tunnel (max.)</span><span id="tun">-</span></div>
+    <div class="row"><span>Tunnel-Adressen</span><span id="tunPa">-</span></div>
     <div class="row"><span>Programmiermodus</span><span id="pm">-</span></div>
     <div class="actions">
       <button id="pmBtn" onclick="toggleProg()">Programmiermodus</button>
       <button class="sec" onclick="resetKnx()">KNX zur&uuml;cksetzen</button>
     </div>
+    <label class="chk" style="margin-top:14px">
+      <input type="checkbox" id="rtAll" onchange="setRouting()">
+      Ohne Filtertabelle alles weiterleiten</label>
+    <p><small>Ein unprogrammierter Koppler sperrt jedes Gruppentelegramm.
+    Nur einschalten, wenn dieses Ger&auml;t die einzige Verbindung zwischen
+    Linie und IP ist &ndash; sonst drohen Telegrammschleifen.</small></p>
   </section>
 
   <section class="card">
@@ -141,6 +148,10 @@ small{color:var(--dim)}
     <div class="row"><span>Schnittstelle</span><span id="ifc">-</span></div>
     <div class="row"><span>SSID</span><span id="ssid">-</span></div>
     <div class="row"><span>IP-Adresse</span><span id="ip">-</span></div>
+    <div class="row"><span>IP-Bezug</span><span id="ipSrc">-</span></div>
+    <div class="row"><span>Netzmaske</span><span id="mask">-</span></div>
+    <div class="row"><span>Gateway</span><span id="gw">-</span></div>
+    <div class="row"><span>DNS</span><span id="dns">-</span></div>
     <div class="row"><span>MAC</span><span id="mac">-</span></div>
     <div class="row"><span>Signal</span><span id="rssi">-</span></div>
     <div class="row"><span>Ethernet (W5500)</span><span id="ethSt">-</span></div>
@@ -313,7 +324,7 @@ const EN = {
 'Telegramme':'Telegrams', 'Zeitserver':'Time server', 'Netzwerk':'Network',
 'Hardware-Profil':'Hardware profile', 'WLAN einrichten':'Set up Wi-Fi',
 'Laufzeit':'Uptime', 'Physikalische Adresse':'Individual address',
-'ETS-Konfiguration':'ETS configuration', 'Tunnel (max.)':'Tunnels (max.)',
+'ETS-Konfiguration':'ETS configuration', 'Tunnel (max.)':'Tunnels (max.)', 'Tunnel-Adressen':'Tunnel addresses',
 'Programmiermodus':'Programming mode', 'Verbindung':'Connection',
 'Schnittstelle':'Interface', 'Baudrate':'Baud rate', 'Selbsttest':'Self test',
 'Buslast':'Bus load', 'TP empfangen':'TP received',
@@ -321,7 +332,10 @@ const EN = {
 'TP gesendet':'TP sent', 'IP empfangen':'IP received', 'IP gesendet':'IP sent',
 'Aktuelle Zeit':'Current time', 'Zeitquelle':'Time source',
 'NTP-Server':'NTP server', 'Naechstes Senden':'Next transmission',
-'IP-Adresse':'IP address', 'Takt':'Clock', 'Freier Speicher':'Free memory',
+'IP-Adresse':'IP address', 'Netzmaske':'Subnet mask',
+'IP-Bezug':'Address source', 'fest, aus der ETS':'fixed, from the ETS',
+'automatisch (DHCP)':'automatic (DHCP)',
+'Takt':'Clock', 'Freier Speicher':'Free memory',
 'Quelle':'Source', 'LED / Taster':'LED / button',
 
 'KNX zur\u00fccksetzen':'Reset KNX', 'Einstellungen':'Settings',
@@ -335,6 +349,13 @@ const EN = {
 'Auf Standard zuruecksetzen':'Reset to defaults',
 
 'Zeit auf den KNX-Bus senden':'Send time to the KNX bus',
+'Ohne Filtertabelle alles weiterleiten':'Forward everything without a filter table',
+['Ein unprogrammierter Koppler sperrt jedes Gruppentelegramm. Nur einschalten, '
++ 'wenn dieses Ger\u00e4t die einzige Verbindung zwischen Linie und IP ist '
++ '\u2013 sonst drohen Telegrammschleifen.']:
+  'An unprogrammed coupler blocks every group telegram. Only turn this on when '
++ 'this device is the sole path between the line and IP \u2013 otherwise you '
++ 'invite telegram loops.',
 'Gruppenadresse Datum+Zeit (DPT 19.001)':'Group address date+time (DPT 19.001)',
 'Gruppenadresse Uhrzeit (DPT 10.001)':'Group address time (DPT 10.001)',
 'Gruppenadresse Datum (DPT 11.001)':'Group address date (DPT 11.001)',
@@ -384,6 +405,7 @@ const EN = {
 'AP-Modus aktiv':'AP mode active', 'getrennt':'disconnected',
 'manuell':'manual', 'keine':'none', 'nicht gesetzt':'not set',
 'keiner':'none', 'nicht bestueckt':'not fitted', 'deaktiviert':'disabled',
+'noch keine vergeben':'none assigned yet',
 'Image-Standard':'image defaults',
 'ungueltig &rarr; Standard':'invalid &rarr; defaults',
 'Startfehler &rarr; Standard':'boot failure &rarr; defaults',
@@ -479,6 +501,15 @@ function toggleLang(){
 
 const dot = ok => `<span class="dot ${ok?'ok':'err'}"></span>${t(ok?'OK':'Fehler')}`;
 
+// An unset address reads better as a dash than as 0.0.0.0.
+const orDash = v => (!v || v === '0.0.0.0') ? '-' : v;
+
+/** Prefix length of a dotted netmask: 255.255.254.0 -> 23. */
+function prefixLen(mask){
+  return mask.split('.')
+             .reduce((n, o) => n + ((+o).toString(2).match(/1/g) || []).length, 0);
+}
+
 // Dim a group while its leading checkbox is off, so the fields read as
 // belonging to the switch above them rather than standing on their own.
 function syncGroups(){
@@ -504,6 +535,9 @@ async function refresh(){
   $('cfg').innerHTML      = s.knx_configured ? dot(true)
                           : '<span class="dot err"></span>' + t('nicht programmiert');
   $('tun').textContent    = s.knx_max_tunnels;
+  $('tunPa').textContent  = (s.knx_tunnel_pa && s.knx_tunnel_pa.length)
+                          ? s.knx_tunnel_pa.join(', ')
+                          : t('noch keine vergeben');
 
   // Label the action, not the state - "Programmiermodus EIN" could be read
   // either way. The state lives in its own row above.
@@ -513,6 +547,7 @@ async function refresh(){
   $('pmBtn').textContent  = t(s.prog_mode ? 'Programmiermodus beenden'
                                           : 'Programmiermodus starten');
   $('pmBtn').className    = s.prog_mode ? 'on' : '';
+  $('rtAll').checked      = s.knx_route_all;
 
   $('tpConn').innerHTML = dot(s.tp.connected);
   $('tpType').textContent = s.tp.type;
@@ -530,6 +565,10 @@ async function refresh(){
 
   $('ssid').textContent = s.ssid;
   $('ip').textContent   = s.ip;
+  $('ipSrc').textContent = t(s.ip_from_ets ? 'fest, aus der ETS' : 'automatisch (DHCP)');
+  $('mask').textContent = s.netmask ? s.netmask + ' /' + prefixLen(s.netmask) : '-';
+  $('gw').textContent   = orDash(s.gateway);
+  $('dns').textContent  = orDash(s.dns);
   $('mac').textContent  = s.mac;
   $('rssi').textContent = (s.is_ap_mode || s.iface === 'ethernet') ? '-' : s.rssi + ' dBm';
 
@@ -563,6 +602,12 @@ async function refresh(){
 
 async function toggleProg(){
   await fetch('/api/progmode', {method:'POST'});
+  setTimeout(refresh, 300);
+}
+
+async function setRouting(){
+  const body = new URLSearchParams({unfiltered: $('rtAll').checked ? '1' : '0'});
+  await fetch('/api/knx/routing', {method:'POST', body});
   setTimeout(refresh, 300);
 }
 

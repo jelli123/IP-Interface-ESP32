@@ -58,6 +58,60 @@ public:
     /** @return the individual address assigned by ETS */
     uint16_t individualAddress() const;
 
+    /**
+     * Read the tunnel addresses stored in the device.
+     *
+     * These are the addresses ETS and other clients appear under when they
+     * The stack keeps them in PID_ADDITIONAL_INDIVIDUAL_ADDRESSES of the
+     * KNXnet/IP parameter object; they are derived from the device address on
+     * the first connection and can be overwritten from the ETS connection
+     * manager afterwards.
+     *
+     * Read only, so calling it from the web server task is fine - same as
+     * configured() and individualAddress(). A tunnel connecting at that very
+     * moment can make the result one refresh stale, which is harmless.
+     *
+     * @param out      receives up to @p max addresses
+     * @param max      capacity of @p out
+     * @return number of addresses written
+     */
+    uint8_t tunnelAddresses(uint16_t* out, uint8_t max) const;
+
+    /**
+     * Forward group telegrams even though no filter table was downloaded.
+     *
+     * A coupler without an ETS download blocks every group telegram, which is
+     * correct per spec but leaves the device useless as a plain TP-to-IP
+     * gateway. With this on it forwards everything instead.
+     *
+     * Not KNX conformant: in an installation with a second coupler or another
+     * IP gateway this invites telegram loops. Safe where this device is the
+     * only path between the line and IP.
+     *
+     * Has no effect once ETS has downloaded a filter table - that one wins.
+     *
+     * Persisted, so it survives a restart.
+     */
+    void routeUnfiltered(bool enable);
+    bool routeUnfiltered() const;
+
+    /**
+     * Read a fixed IP configuration programmed by ETS.
+     *
+     * The KNXnet/IP parameter object carries PID_IP_ASSIGNMENT_METHOD next to
+     * the address, mask and gateway. Bit 0 means "manual": the installer
+     * entered an address in the ETS device properties and expects the device
+     * to use it. Everything else, DHCP included, leaves the addressing to us.
+     *
+     * Read only, safe from the web server task.
+     *
+     * @param ip    receives the address in host byte order
+     * @param mask  receives the subnet mask
+     * @param gw    receives the default gateway, 0 when none was entered
+     * @return true if ETS asked for a fixed address
+     */
+    bool etsIpConfig(uint32_t& ip, uint32_t& mask, uint32_t& gw) const;
+
     /** @return true if programming mode is active */
     bool progMode() const;
 
@@ -113,6 +167,7 @@ public:
 
 private:
     static void activityTrampoline(uint8_t info);
+    void applyIdentity();
     void onActivity(uint8_t info);
     void updateBusLoad();
     void superviseTpLink();

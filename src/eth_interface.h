@@ -58,8 +58,19 @@ public:
     uint32_t gateway() const;
     void     macAddress(uint8_t* out) const;
 
+    /**
+     * Switch to a fixed address, for a configuration programmed by ETS.
+     *
+     * The gateway doubles as the DNS server: KNX has no field for one, and
+     * the gateway is right in most networks.
+     *
+     * @return true if the interface accepted the configuration
+     */
+    bool configure(uint32_t ip, uint32_t mask, uint32_t gw);
+
     String   ipString() const;
     String   macString() const;
+    String   dnsString() const;
     uint16_t linkSpeed() const;
     bool     fullDuplex() const;
 

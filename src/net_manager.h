@@ -48,6 +48,23 @@ public:
     String currentSsid() const;
     String currentIp() const;
     String currentMac() const;
+    String currentNetmask() const;
+    String currentGateway() const;
+    String currentDns() const;
+
+    /**
+     * Switch the active interface to a fixed address.
+     *
+     * Used for a configuration programmed by ETS, which takes precedence over
+     * DHCP. Ignored in access point mode, where the device owns its own
+     * address anyway.
+     *
+     * @return true if the interface accepted the configuration
+     */
+    bool applyStaticIp(uint32_t ip, uint32_t mask, uint32_t gw);
+
+    /** @return true if the address came from ETS rather than from DHCP. */
+    bool addressFromEts() const { return _etsAddress; }
 
     /** Switch to the provisioning access point and stay there. */
     void startAccessPoint();
@@ -76,6 +93,7 @@ private:
     int      _buttonState    = HIGH;
     uint32_t _lastCheck      = 0;
     bool     _wasOnline      = false;
+    bool     _etsAddress     = false;
     uint32_t _downSince      = 0;
     uint32_t _lastKick       = 0;
 };

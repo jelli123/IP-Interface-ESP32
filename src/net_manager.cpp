@@ -459,3 +459,57 @@ String NetManager::currentMac() const
     }
     return _apMode ? WiFi.softAPmacAddress() : WiFi.macAddress();
 }
+
+bool NetManager::applyStaticIp(uint32_t ip, uint32_t mask, uint32_t gw)
+{
+    if (_apMode) return false;
+
+    IPAddress address(ip);
+    IPAddress netmask(mask);
+    IPAddress gateway(gw);
+
+    // No DNS from ETS - keep the gateway, which is right in most networks and
+    // harmless where it is not: the device only resolves the update host.
+    bool ok = _ethMode ? ethInterface.configure(ip, mask, gw)
+                       : WiFi.config(address, gateway, netmask, gateway);
+
+    if (!ok)
+    {
+        Serial.printf("ETS address %s rejected by the interface\n",
+                      address.toString().c_str());
+        return false;
+    }
+
+    _etsAddress = true;
+    Serial.printf("ETS address applied: %s/%s via %s\n",
+                  address.toString().c_str(), netmask.toString().c_str(),
+                  gateway.toString().c_str());
+    return true;
+}
+
+String NetManager::currentNetmask() const
+{    if (_ethMode)
+    {
+        return IPAddress(ethInterface.subnetMask()).toString();
+    }
+    return _apMode ? WiFi.softAPSubnetMask().toString() : WiFi.subnetMask().toString();
+}
+
+String NetManager::currentGateway() const
+{
+    if (_ethMode)
+    {
+        return IPAddress(ethInterface.gateway()).toString();
+    }
+    // In AP mode we are the gateway ourselves.
+    return _apMode ? WiFi.softAPIP().toString() : WiFi.gatewayIP().toString();
+}
+
+String NetManager::currentDns() const
+{
+    if (_ethMode)
+    {
+        return ethInterface.dnsString();
+    }
+    return _apMode ? String("0.0.0.0") : WiFi.dnsIP().toString();
+}

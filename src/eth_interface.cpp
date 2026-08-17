@@ -227,8 +227,14 @@ void EthInterface::macAddress(uint8_t* out) const
     ETH.macAddress(out);
 }
 
+bool EthInterface::configure(uint32_t ip, uint32_t mask, uint32_t gw)
+{
+    return ETH.config(IPAddress(ip), IPAddress(gw), IPAddress(mask), IPAddress(gw));
+}
+
 String   EthInterface::ipString() const   { return ETH.localIP().toString(); }
 String   EthInterface::macString() const  { return ETH.macAddress(); }
+String   EthInterface::dnsString() const  { return ETH.dnsIP().toString(); }
 uint16_t EthInterface::linkSpeed() const  { return ETH.linkSpeed(); }
 bool     EthInterface::fullDuplex() const { return ETH.fullDuplex(); }
 
@@ -250,8 +256,10 @@ uint32_t EthInterface::ipAddress() const  { return 0; }
 uint32_t EthInterface::subnetMask() const { return 0; }
 uint32_t EthInterface::gateway() const    { return 0; }
 void     EthInterface::macAddress(uint8_t* out) const { memset(out, 0, 6); }
+bool     EthInterface::configure(uint32_t, uint32_t, uint32_t) { return false; }
 String   EthInterface::ipString() const   { return String("0.0.0.0"); }
 String   EthInterface::macString() const  { return String(""); }
+String   EthInterface::dnsString() const  { return String("0.0.0.0"); }
 uint16_t EthInterface::linkSpeed() const  { return 0; }
 bool     EthInterface::fullDuplex() const { return false; }
 

@@ -130,6 +130,11 @@ static String statusJson()
     json += "\"is_ap_mode\":" + String(netManager.isApMode() ? "true" : "false") + ",";
     json += "\"ssid\":\"" + jsonEscape(netManager.currentSsid()) + "\",";
     json += "\"ip\":\"" + netManager.currentIp() + "\",";
+    json += "\"netmask\":\"" + netManager.currentNetmask() + "\",";
+    json += "\"gateway\":\"" + netManager.currentGateway() + "\",";
+    json += "\"dns\":\"" + netManager.currentDns() + "\",";
+    json += "\"ip_from_ets\":" +
+            String(netManager.addressFromEts() ? "true" : "false") + ",";
     json += "\"mac\":\"" + netManager.currentMac() + "\",";
     json += "\"wifi_connected\":" +
             String((netManager.isApMode() || netManager.isOnline()) ? "true" : "false") + ",";
@@ -149,12 +154,30 @@ static String statusJson()
     json += "},";
 
     json += "\"knx_configured\":" + String(knxLink.configured() ? "true" : "false") + ",";
+    json += "\"knx_route_all\":" + String(knxLink.routeUnfiltered() ? "true" : "false") + ",";
     json += "\"prog_mode\":" + String(knxLink.progMode() ? "true" : "false") + ",";
 
     uint16_t pa = knxLink.individualAddress();
     json += "\"knx_pa\":\"" + String((pa >> 12) & 0x0F) + "." +
             String((pa >> 8) & 0x0F) + "." + String(pa & 0xFF) + "\",";
     json += "\"knx_max_tunnels\":" + String(KNX_TUNNELING) + ",";
+
+    // The addresses clients appear under when they talk through us. Worth
+    // showing: they are what ETS assigns, and there is no other way to see
+    // what actually ended up in the device.
+    uint16_t tunnelPa[KNX_TUNNELING];
+    uint8_t  tunnelCount = knxLink.tunnelAddresses(tunnelPa, KNX_TUNNELING);
+    json += "\"knx_tunnel_pa\":[";
+
+    for (uint8_t i = 0; i < tunnelCount; i++)
+    {
+        if (i) json += ",";
+        json += "\"" + String((tunnelPa[i] >> 12) & 0x0F) + "." +
+                String((tunnelPa[i] >> 8) & 0x0F) + "." +
+                String(tunnelPa[i] & 0xFF) + "\"";
+    }
+
+    json += "],";
 
     // The TP1 side. No NCN512x rail or crystal telemetry here: the Selfbus
     // SB-Interface emulates a plain TP-UART 2 and has no such registers.
@@ -376,6 +399,27 @@ static void registerKnxRoutes()
         // The stack keeps its tables in RAM, so only a restart makes the wipe
         // effective.
         netManager.scheduleReboot();
+    });
+
+    /*
+     * Forward group telegrams without a downloaded filter table. Takes effect
+     * immediately, no restart needed - the flag is read per telegram.
+     */
+    server.on("/api/knx/routing", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        if (!request->hasParam("unfiltered", true))
+        {
+            request->send(400, "application/json",
+                          "{\"error\":\"parameter 'unfiltered' missing\"}");
+            return;
+        }
+
+        bool enable = request->getParam("unfiltered", true)->value() == "1";
+        knxLink.routeUnfiltered(enable);
+        Serial.printf("KNX: unfiltered routing %s\n", enable ? "on" : "off");
+
+        request->send(200, "application/json", "{\"status\":\"ok\"}");
     });
 }
 

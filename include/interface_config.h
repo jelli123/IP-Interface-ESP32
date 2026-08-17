@@ -21,6 +21,63 @@
  * ------------------------------------------------------------------------- */
 
 #define FIRMWARE_VERSION      "0.1.0"
+
+/* ------------------------------------------------------------------------- *
+ * KNX device identity
+ *
+ * ETS matches a device against its product database by these values, so they
+ * decide which knxprod can commission this device. Selected with
+ * SBIP_KNX_PRODUCT from platformio.ini - see the [knx_product] section there.
+ *
+ *   0  own identity. Manufacturer 0x00FA is the thelsing/knx default and
+ *      belongs to no registered vendor, so ETS finds no product data. Fine
+ *      for tunnelling, which needs none, and the starting point for an own
+ *      knxprod built with Kaenx or OpenKNXproducer.
+ *
+ *   1  ABB i-bus KNX IP Router IPR/S 3.1.1, application "IP-Router/2.0a".
+ *      Read from docs/ABB ABB IPRS 3.1.1/IPRS_311_VD-TP_XX_V2-0a_*.knxprod,
+ *      file M-0002/M-0002_A-A0A9-10-AA35.xml:
+ *          ApplicationNumber="41129" ApplicationVersion="16"
+ *          MaskVersion="MV-091A" AdditionalAddressesCount="5"
+ *      and Hardware.xml: SerialNumber="2CDG 110 175 R0011" VersionNumber="2"
+ *      The mask version matches what this firmware already builds, so the
+ *      coupler behaviour needs no change - only the identity does.
+ * ------------------------------------------------------------------------- */
+#ifndef SBIP_KNX_PRODUCT
+#define SBIP_KNX_PRODUCT 0
+#endif
+
+#if SBIP_KNX_PRODUCT == 1
+
+#define SBIP_KNX_PRODUCT_NAME    "ABB IPR/S 3.1.1"
+#define SBIP_KNX_MANUFACTURER_ID 0x0002
+#define SBIP_KNX_APP_NUMBER      0xA0A9
+#define SBIP_KNX_APP_VERSION     0x10
+#define SBIP_KNX_DEVICE_VERSION  0x0002
+#define SBIP_KNX_TUNNELS         5
+
+#else
+
+#define SBIP_KNX_PRODUCT_NAME    "Selfbus KNX/IP"
+#define SBIP_KNX_MANUFACTURER_ID 0x00FA
+#define SBIP_KNX_APP_NUMBER      0x0000
+#define SBIP_KNX_APP_VERSION     0x01
+#define SBIP_KNX_DEVICE_VERSION  0x0001
+#define SBIP_KNX_TUNNELS         10
+
+#endif
+
+/**
+ * Hardware type, six octets.
+ *
+ * ETS compares this against the product data before a download. The ABB
+ * knxprod does not spell it out, so it stays zero until a real device or a
+ * failed download tells us otherwise - that is the first thing to check if
+ * ETS rejects the application.
+ */
+#ifndef SBIP_KNX_HARDWARE_TYPE
+#define SBIP_KNX_HARDWARE_TYPE 0, 0, 0, 0, 0, 0
+#endif
 #define DEVICE_NAME           "Selfbus KNX/IP"
 /** mDNS host name, reachable as http://<MDNS_HOSTNAME>.local */
 #define MDNS_HOSTNAME         "sbip"

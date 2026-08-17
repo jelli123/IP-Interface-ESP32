@@ -4,6 +4,8 @@
 
 #include <Arduino.h>
 #include <HardwareSerial.h>
+#include <Preferences.h>
+#include <esp_partition.h>
 #include <knx.h>
 #include <knx/bau091A.h>
 #include <knx/cemi_frame.h>
@@ -18,6 +20,17 @@
 #include "knx_link.h"
 
 KnxLink knxLink;
+
+/*
+ * Set by scripts/patch_knx.py inside RouterObject::isGroupAddressInFilterTable().
+ * Declared here so a build without the patch fails to link rather than
+ * silently ignoring the setting.
+ */
+extern bool sbipRouteUnfiltered;
+
+static Preferences  knxPrefs;
+static const char*  KNX_NS       = "sbip-knx";
+static const char*  KEY_ROUTEALL = "routeall";
 
 /*
  * Platform with a runtime-selectable network interface.
@@ -49,6 +62,108 @@ class SbipPlatform : public Esp32Platform
 public:
     explicit SbipPlatform(HardwareSerial* serial) : Esp32Platform(serial) {}
 
+    /*
+     * KNX non volatile memory, backed by the dedicated knxcfg partition.
+     *
+     * Esp32Platform stores it in an NVS blob through the Arduino EEPROM
+     * library. That works for a kilobyte, but a filter table for main groups
+     * 0-31 alone is 8 KiB, and NVS keeps a second copy while rewriting - the
+     * 20 KiB nvs partition cannot do that next to the WiFi credentials and
+     * the hardware profile. An own partition sidesteps the whole question.
+     *
+     * The header matters: adding a partition to the table does not erase the
+     * flash behind it. knxcfg reuses the address the coredump partition had,
+     * so without this check the stack restores its objects from an old core
+     * dump - which is ELF formatted and produced a null property table and a
+     * LoadProhibited panic. A size change has the same effect, hence the
+     * length is part of the header.
+     */
+    uint8_t* getEepromBuffer(uint32_t size) override
+    {
+        if (_knxMemory != nullptr) return _knxMemory;
+
+        _knxPartition = esp_partition_find_first(
+            ESP_PARTITION_TYPE_DATA, (esp_partition_subtype_t)0x40, "knxcfg");
+
+        if (_knxPartition == nullptr || _knxPartition->size < size + HEADER_SIZE)
+        {
+            Serial.println("KNX: knxcfg partition missing or too small");
+            return nullptr;
+        }
+
+        _knxMemory = (uint8_t*)malloc(size);
+
+        if (_knxMemory == nullptr)
+        {
+            Serial.printf("KNX: could not allocate %u bytes of config memory\n",
+                          (unsigned)size);
+            return nullptr;
+        }
+
+        _knxSize = size;
+
+        uint8_t header[HEADER_SIZE] = {0};
+        bool    ours = false;
+
+        if (esp_partition_read(_knxPartition, 0, header, sizeof(header)) == ESP_OK)
+        {
+            uint32_t storedSize = (uint32_t)header[8] | ((uint32_t)header[9] << 8) |
+                                  ((uint32_t)header[10] << 16) |
+                                  ((uint32_t)header[11] << 24);
+
+            ours = memcmp(header, MAGIC, sizeof(MAGIC)) == 0 && storedSize == size;
+        }
+
+        if (ours && esp_partition_read(_knxPartition, HEADER_SIZE, _knxMemory,
+                                       size) == ESP_OK)
+        {
+            return _knxMemory;
+        }
+
+        // Blank or foreign content. 0xFF is what an unprogrammed device looks
+        // like, so the stack starts from scratch instead of from rubbish.
+        Serial.println("KNX: knxcfg holds no valid configuration, starting empty");
+        memset(_knxMemory, 0xFF, size);
+        return _knxMemory;
+    }
+
+    void commitToEeprom() override
+    {
+        if (_knxMemory == nullptr || _knxPartition == nullptr) return;
+
+        uint8_t header[HEADER_SIZE] = {0};
+        memcpy(header, MAGIC, sizeof(MAGIC));
+        header[8]  = (uint8_t)(_knxSize & 0xFF);
+        header[9]  = (uint8_t)((_knxSize >> 8) & 0xFF);
+        header[10] = (uint8_t)((_knxSize >> 16) & 0xFF);
+        header[11] = (uint8_t)((_knxSize >> 24) & 0xFF);
+
+        // erase_range insists on whole 4 KiB sectors; anything else fails with
+        // ESP_ERR_INVALID_SIZE and the configuration is silently lost.
+        const uint32_t SECTOR = 4096;
+        uint32_t erase = (_knxSize + HEADER_SIZE + SECTOR - 1) / SECTOR * SECTOR;
+
+        if (erase > _knxPartition->size)
+        {
+            Serial.println("KNX: knxcfg partition too small to write");
+            return;
+        }
+
+        esp_err_t err = esp_partition_erase_range(_knxPartition, 0, erase);
+
+        if (err == ESP_OK)
+            err = esp_partition_write(_knxPartition, 0, header, sizeof(header));
+
+        if (err == ESP_OK)
+            err = esp_partition_write(_knxPartition, HEADER_SIZE, _knxMemory, _knxSize);
+
+        if (err != ESP_OK)
+        {
+            Serial.printf("KNX: writing the knxcfg partition failed: %s\n",
+                          esp_err_to_name(err));
+        }
+    }
+
     uint32_t currentIpAddress() override
     {
         return ethInterface.active() ? ethInterface.ipAddress()
@@ -78,7 +193,19 @@ public:
             Esp32Platform::macAddress(addr);
         }
     }
+
+private:
+    // Erase granularity is 4 KiB, so the header costs nothing beyond a
+    // rounding of the erase range.
+    static const uint32_t HEADER_SIZE = 16;
+    static constexpr const char MAGIC[8] = {'S', 'B', 'I', 'P', 'K', 'N', 'X', '1'};
+
+    const esp_partition_t* _knxPartition = nullptr;
+    uint8_t*               _knxMemory    = nullptr;
+    uint32_t               _knxSize      = 0;
 };
+
+constexpr const char SbipPlatform::MAGIC[8];
 
 /*
  * The KNX facade. Created here instead of relying on the library's automatic
@@ -111,9 +238,61 @@ static const uint32_t BUS_LOAD_WINDOW_MS = 1000;
  */
 static const uint32_t BUS_LOAD_FRAMES_PER_SEC = 50;
 
+/*
+ * Tell ETS what this device claims to be.
+ *
+ * Must run before knx.start(): the values end up in the device object and in
+ * the application program object, both of which ETS reads during a download.
+ */
+void KnxLink::applyIdentity()
+{
+    // ETS manages exactly as many tunnel addresses as the product data
+    // declares, so a mismatch would leave addresses unaccounted for.
+    static_assert(KNX_TUNNELING == SBIP_KNX_TUNNELS,
+                  "KNX_TUNNELING must match the selected product profile - "
+                  "see the [knx_product] section in platformio.ini");
+
+    DeviceObject& dev = knxBau.deviceObject();
+
+    dev.manufacturerId(SBIP_KNX_MANUFACTURER_ID);
+    dev.version(SBIP_KNX_DEVICE_VERSION);
+
+    const uint8_t hardwareType[LEN_HARDWARE_TYPE] = {SBIP_KNX_HARDWARE_TYPE};
+    dev.hardwareType(hardwareType);
+
+    // PID_PROG_VERSION is manufacturer, application number and application
+    // version in five octets. Written through the public property API so no
+    // private stack member is needed.
+    uint8_t progVersion[5] = {
+        (uint8_t)(SBIP_KNX_MANUFACTURER_ID >> 8),
+        (uint8_t)(SBIP_KNX_MANUFACTURER_ID & 0xFF),
+        (uint8_t)(SBIP_KNX_APP_NUMBER >> 8),
+        (uint8_t)(SBIP_KNX_APP_NUMBER & 0xFF),
+        (uint8_t)SBIP_KNX_APP_VERSION,
+    };
+
+    uint8_t count = 1;
+    knxBau.propertyValueWrite(OT_APPLICATION_PROG, 1, PID_PROG_VERSION,
+                              count, 1, progVersion, sizeof(progVersion));
+
+    Serial.printf("KNX: %s - manufacturer 0x%04X, application 0x%04X v%u\n",
+                  SBIP_KNX_PRODUCT_NAME,
+                  (unsigned)SBIP_KNX_MANUFACTURER_ID,
+                  (unsigned)SBIP_KNX_APP_NUMBER,
+                  (unsigned)SBIP_KNX_APP_VERSION);
+}
+
 bool KnxLink::begin()
 {
     s_instance = this;
+
+    applyIdentity();
+
+    if (knxPrefs.begin(KNX_NS, true))
+    {
+        sbipRouteUnfiltered = knxPrefs.getBool(KEY_ROUTEALL, false);
+        knxPrefs.end();
+    }
 
     const HwProfile& hw = hwConfig.active();
 
@@ -286,9 +465,115 @@ uint16_t KnxLink::individualAddress() const
     return knx.individualAddress();
 }
 
+uint8_t KnxLink::tunnelAddresses(uint16_t* out, uint8_t max) const
+{
+    if (out == nullptr || max == 0) return 0;
+
+    // Same route the cEMI server takes, so no private stack member is needed.
+    // Start index 0 answers with the element count rather than with data.
+    uint8_t  count  = 1;
+    uint32_t length = 0;
+    uint8_t* data   = nullptr;
+
+    knxBau.propertyValueRead(OT_IP_PARAMETER, 1, PID_ADDITIONAL_INDIVIDUAL_ADDRESSES,
+                             count, 0, &data, length);
+    if (data == nullptr) return 0;
+
+    uint8_t stored = (length >= 2) ? data[1] : 0;
+    delete[] data;
+
+    if (stored == 0) return 0;
+    if (stored > max) stored = max;
+
+    count  = stored;
+    length = 0;
+    data   = nullptr;
+
+    knxBau.propertyValueRead(OT_IP_PARAMETER, 1, PID_ADDITIONAL_INDIVIDUAL_ADDRESSES,
+                             count, 1, &data, length);
+    if (data == nullptr) return 0;
+
+    uint8_t written = 0;
+    for (uint8_t i = 0; i < count && (i * 2 + 1) < length; i++)
+    {
+        out[written++] = ((uint16_t)data[i * 2] << 8) | data[i * 2 + 1];
+    }
+
+    delete[] data;
+    return written;
+}
+
 bool KnxLink::progMode() const
 {
     return knx.progMode();
+}
+
+void KnxLink::routeUnfiltered(bool enable)
+{
+    sbipRouteUnfiltered = enable;
+
+    if (knxPrefs.begin(KNX_NS, false))
+    {
+        knxPrefs.putBool(KEY_ROUTEALL, enable);
+        knxPrefs.end();
+    }
+}
+
+bool KnxLink::routeUnfiltered() const
+{
+    return sbipRouteUnfiltered;
+}
+
+/** Read one unsigned long property of the KNXnet/IP parameter object. */
+static uint32_t readIpParamLong(uint8_t propertyId)
+{
+    uint8_t  count  = 1;
+    uint32_t length = 0;
+    uint8_t* data   = nullptr;
+
+    knxBau.propertyValueRead(OT_IP_PARAMETER, 1, propertyId, count, 1,
+                             &data, length);
+    if (data == nullptr) return 0;
+
+    uint32_t value = 0;
+
+    if (length >= 4)
+    {
+        value = ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) |
+                ((uint32_t)data[2] << 8) | data[3];
+    }
+
+    delete[] data;
+    return value;
+}
+
+bool KnxLink::etsIpConfig(uint32_t& ip, uint32_t& mask, uint32_t& gw) const
+{
+    uint8_t  count  = 1;
+    uint32_t length = 0;
+    uint8_t* data   = nullptr;
+
+    knxBau.propertyValueRead(OT_IP_PARAMETER, 1, PID_IP_ASSIGNMENT_METHOD,
+                             count, 1, &data, length);
+    if (data == nullptr) return false;
+
+    uint8_t method = (length >= 1) ? data[0] : 0;
+    delete[] data;
+
+    // Bit 0 is manual assignment. An unprogrammed device reads 0xFF here, so
+    // the address has to be plausible as well before we believe it.
+    if ((method & 0x01) == 0) return false;
+
+    ip = readIpParamLong(PID_IP_ADDRESS);
+    if (ip == 0 || ip == 0xFFFFFFFF) return false;
+
+    mask = readIpParamLong(PID_SUBNET_MASK);
+    if (mask == 0 || mask == 0xFFFFFFFF) return false;
+
+    gw = readIpParamLong(PID_DEFAULT_GATEWAY);
+    if (gw == 0xFFFFFFFF) gw = 0;
+
+    return true;
 }
 
 void KnxLink::requestProgMode(bool active)

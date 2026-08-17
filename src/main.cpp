@@ -123,6 +123,18 @@ void setup()
         Serial.println("WARNING: no answer from the SB-Interface on the KNX UART");
     }
 
+    /*
+     * A fixed address entered in the ETS device properties wins over DHCP.
+     * Only readable once the KNX stack has restored its memory, hence here
+     * and not in netManager.begin().
+     */
+    uint32_t etsIp = 0, etsMask = 0, etsGateway = 0;
+
+    if (knxLink.etsIpConfig(etsIp, etsMask, etsGateway))
+    {
+        netManager.applyStaticIp(etsIp, etsMask, etsGateway);
+    }
+
     timeService.begin();
     webServerBegin();
 

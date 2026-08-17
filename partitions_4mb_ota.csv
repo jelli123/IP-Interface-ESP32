@@ -3,4 +3,9 @@ nvs,      data, nvs,     0x9000,   0x5000,
 otadata,  data, ota,     0xe000,   0x2000,
 app0,     app,  ota_0,   0x10000,  0x1F0000,
 app1,     app,  ota_1,   0x200000, 0x1F0000,
-coredump, data, coredump,0x3F0000, 0x10000,
+# KNX non volatile memory. Own partition rather than the NVS blob the Arduino
+# EEPROM library would use: a filter table for main groups 0-31 alone is 8 KiB,
+# and NVS needs room for a second copy while rewriting - 20 KiB of nvs cannot
+# hold that next to the WiFi credentials and the hardware profile.
+knxcfg,   data, 0x40,    0x3F0000, 0x8000,
+coredump, data, coredump,0x3F8000, 0x8000,

@@ -16,5 +16,7 @@ src/build_info.h
 __pycache__/
 *.pyc
 
+docs/
+
 # Build- und Diagnoseprotokolle
 *.log

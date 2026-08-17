@@ -654,11 +654,111 @@ läuft:
   `PID_ADDITIONAL_INDIVIDUAL_ADDRESSES`)
 * Als Schnittstelle für Inbetriebnahme und Diagnose verwenden
 
+### Adressen vergeben, ohne Gerät im Projekt
+
+Zuständig ist der **Verbindungsmanager**, erreichbar über das Aufklappmenü in
+der **Hauptsymbolleiste**. Nicht über ein Panel, nicht über die Statuszeile –
+und die Menüleiste erscheint erst, wenn ein Projekt geöffnet ist.
+
+1. Aufklappmenü öffnen. In der Mitte stehen die gefundenen Schnittstellen; das
+   Interface meldet sich per Multicast selbst an.
+2. Auf das **Zahnradsymbol** neben dem Eintrag klicken.
+3. Rechts erscheinen die Eigenschaften.
+
+Dort gibt es zwei Adressfelder:
+
+| Feld | Bedeutung |
+| --- | --- |
+| *Host Individual Address* | Adresse des Geräts selbst – nur Anzeige |
+| *Individual Address* | Adresse der genutzten Tunnelverbindung |
+
+Das zweite Feld ist editierbar, weil dieses Gerät ein Plain-Device ohne KNX
+Secure ist; bei secure-fähigen Geräten ginge es nur im Projekt. Genau dieses
+Feld schreibt in `PID_ADDITIONAL_INDIVIDUAL_ADDRESSES`. Empfehlung der
+KNX-Doku: Bereich und Linie an den Einbauort anpassen, als Gerätenummer eine
+im Projekt unbenutzte wählen – typischerweise 255.
+
+Ein roter Punkt neben dem Symbol zeigt an, dass die Schnittstelle im
+Programmiermodus ist (Aktualisierung etwa alle 3 s). Praktisch, um den
+Dashboard-Knopf gegenzuprüfen.
+
+Zwei Dinge gehen dort **nicht**:
+
+* Die Geräteadresse (*Host Individual Address*) ändern – das setzt einen
+  Projekteintrag und damit eine Produktdatenbank voraus.
+* Ein Dummy-Gerät als Ersatz nehmen – die ETS lädt in ein Dummy grundsätzlich
+  nichts. Es taugt nur als Platzhalter in der Topologie, damit die Adresse
+  nicht ein zweites Mal vergeben wird.
+
+Der Diagnose-Dialog *Physikalische Adressen* vergibt ebenfalls keine Adressen.
+Er findet nur Geräte im Programmiermodus, prüft die Erreichbarkeit einer
+Adresse und scannt Linien.
+
+Auf die Reihenfolge achten: Der Stack leitet die Tunnel-Adressen beim ersten
+Verbindungsaufbau **einmalig** aus der Geräteadresse ab und legt sie in
+`PID_ADDITIONAL_INDIVIDUAL_ADDRESSES` ab (`ip_data_link_layer.cpp`). War das
+Gerät dabei noch unprogrammiert, bleiben dort dauerhaft `15.15.x` stehen; eine
+spätere Programmierung zieht nicht nach. Die Adressen im Verbindungsmanager
+explizit zu vergeben löst das unabhängig von der Geräteadresse und überlebt
+jede Neuprogrammierung. Notfalls hilft *KNX zurücksetzen* im Dashboard.
+
 Was ein knxprod bräuchte: Filtertabelle, Routing-Parameter des Kopplers und
 sämtliche anwendungsspezifischen Einstellungen – hier also Zeitserver und
 Gruppenadressen.
 
-Drei Gründe, warum das aktuell nicht sinnvoll ist:
+### Ohne knxprod kein Routing
+
+Das ist keine Feinheit, sondern die Grenze zwischen Schnittstelle und Koppler.
+`RouterObject::isGroupAddressInFilterTable()` beginnt mit
+
+```cpp
+if (loadState() != LS_LOADED)
+    return false;
+```
+
+und der Ladezustand wird nur durch einen vollständigen ETS-Download gesetzt.
+Ohne Produktdatenbank verwirft der Koppler daher **jedes** Gruppentelegramm
+zwischen TP1 und IP-Multicast, obwohl `-DKNX_ROUTING` einkompiliert ist. Die
+Kopplerparameter `PID_MAIN_LCCONFIG` und `PID_SUB_LCCONFIG` sind ebenfalls
+reine Download-Inhalte.
+
+Tunneling ist davon nicht betroffen und funktioniert unprogrammiert.
+
+### Fremde Produktdatenbank verwenden
+
+Statt eine eigene Produktdatenbank zu erstellen, kann sich die Firmware als
+vorhandenes Gerät ausgeben, dessen Verhalten sie nachbildet.
+
+Ausgewählt wird das Profil in `platformio.ini`, Abschnitt `[knx_product]` –
+es ist genau eine Zeile zu tauschen. Die Werte selbst stehen in
+`include/interface_config.h`.
+
+| Profil | Gerät |
+| --- | --- |
+| `0` | Eigene Kennung, Hersteller `0x00FA`. Nur Tunneling, Basis für ein eigenes knxprod (Kaenx, OpenKNXproducer). |
+| `1` | ABB i-bus KNX IP-Router **IPR/S 3.1.1**, Applikation *IP-Router/2.0a* |
+
+Die ABB-Applikation passt, weil sie dieselbe Maskenversion `091A` verwendet,
+die diese Firmware ohnehin baut – die Kopplerlogik bleibt unberührt, nur die
+Identität wechselt. Sie kennt keine Kommunikationsobjekte, und ihre 25
+Parameter sind Standard-Linienkopplereinstellungen, die `NetworkLayerCoupler`
+bereits auswertet. `AdditionalAddressesCount="5"` gibt die fünf Tunnel vor,
+deshalb setzt das Profil `KNX_TUNNELING=5`; ein `static_assert` bricht ab,
+wenn beides auseinanderläuft.
+
+**Die Unterlagen liegen bewusst nicht im Repository.** Produkthandbuch und
+knxprod sind urheberrechtlich geschützt.
+Beides gibt es kostenlos bei ABB unter der Bestellnummer `2CDG 110 175 R0011`
+([Produktseite](https://new.abb.com/products/2CDG110175R0011/ipr-s3-1-1)) sowie
+im KNX-Online-Katalog. Zum Nachvollziehen genügt die knxprod – sie ist ein
+ZIP-Archiv, die Kennungen stehen in `M-0002/M-0002_A-A0A9-10-AA35.xml`.
+
+Offen ist die Hardwarekennung `PID_HARDWARE_TYPE`: sechs Oktette, die weder im
+Handbuch noch in der knxprod stehen. Sie bleibt vorerst null.
+
+### Eine eigene Produktdatenbank
+
+Drei Gründe, warum das bisher nicht beschritten wurde:
 
 1. **Herstellerkennung.** Ein importierbares knxprod braucht eine bei der KNX
    Association registrierte Manufacturer-ID. Der Stack meldet sich mit `0xFA`
