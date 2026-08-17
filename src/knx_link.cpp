@@ -220,7 +220,22 @@ constexpr const char SbipPlatform::MAGIC[8];
  */
 static HardwareSerial* knxSerial = nullptr;
 static SbipPlatform   knxPlatform(nullptr);
-static Bau091A        knxBau(knxPlatform);
+/*
+ * Bau091A keeps its interface objects private and getInterfaceObject()
+ * protected. Deriving is enough to reach them - no library patch needed.
+ */
+class SbipBau : public Bau091A
+{
+public:
+    using Bau091A::Bau091A;
+
+    InterfaceObject* interfaceObject(ObjectType type, uint16_t instance)
+    {
+        return getInterfaceObject(type, instance);
+    }
+};
+
+static SbipBau        knxBau(knxPlatform);
 KnxFacade<Esp32Platform, Bau091A> knx(knxBau);
 
 /** Pointer used by the static activity trampoline. */
@@ -548,8 +563,7 @@ static uint32_t readIpParamLong(uint8_t propertyId)
 }
 
 bool KnxLink::etsIpConfig(uint32_t& ip, uint32_t& mask, uint32_t& gw) const
-{
-    uint8_t  count  = 1;
+{    uint8_t  count  = 1;
     uint32_t length = 0;
     uint8_t* data   = nullptr;
 
@@ -574,6 +588,28 @@ bool KnxLink::etsIpConfig(uint32_t& ip, uint32_t& mask, uint32_t& gw) const
     if (gw == 0xFFFFFFFF) gw = 0;
 
     return true;
+}
+
+bool KnxLink::filterTable(uint16_t* out, uint16_t max, uint16_t& total) const
+{
+    total = 0;
+
+    RouterObject* router = (RouterObject*)knxBau.interfaceObject(OT_ROUTER, 1);
+    if (router == nullptr) return false;
+
+    // Group address 0 is the broadcast address and never sits in the table.
+    for (uint32_t address = 1; address <= 0xFFFF; address++)
+    {
+        if (!router->isGroupAddressInFilterTable((uint16_t)address)) continue;
+
+        if (total < max) out[total] = (uint16_t)address;
+        total++;
+    }
+
+    // An unprogrammed coupler answers "not in the table" for every address,
+    // which is indistinguishable from an empty one - report the load state so
+    // the dashboard can tell the two apart.
+    return knx.configured();
 }
 
 void KnxLink::requestProgMode(bool active)

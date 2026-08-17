@@ -112,6 +112,21 @@ public:
      */
     bool etsIpConfig(uint32_t& ip, uint32_t& mask, uint32_t& gw) const;
 
+    /**
+     * Read the group addresses the filter table lets through.
+     *
+     * Only meaningful after an ETS download - an unprogrammed coupler has no
+     * table and blocks everything. Walking the whole address space costs a
+     * few tens of milliseconds, so this is meant for an explicit request,
+     * not for the status poll.
+     *
+     * @param out    receives up to @p max addresses, ascending
+     * @param max    capacity of @p out
+     * @param total  receives the full count, which may exceed @p max
+     * @return true if a filter table is loaded
+     */
+    bool filterTable(uint16_t* out, uint16_t max, uint16_t& total) const;
+
     /** @return true if programming mode is active */
     bool progMode() const;
 

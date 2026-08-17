@@ -125,6 +125,24 @@
 #define BUTTON_AP_HOLD_MS     2000
 
 /* ------------------------------------------------------------------------- *
+ * Addressable status LED (WS2812 / SK6812)
+ *
+ * A single data line carries the whole chain, so only the pin, the number of
+ * LEDs and the chip type need to be known. -1 means the board has none.
+ * ------------------------------------------------------------------------- */
+
+#ifndef SBIP_RGB_PIN
+#define SBIP_RGB_PIN           -1
+#endif
+#ifndef SBIP_RGB_COUNT
+#define SBIP_RGB_COUNT          1
+#endif
+/** 0 = WS2812, 1 = SK6812 (SK68xx). Selects the bit timing. */
+#ifndef SBIP_RGB_TYPE
+#define SBIP_RGB_TYPE           0
+#endif
+
+/* ------------------------------------------------------------------------- *
  * Networking
  * ------------------------------------------------------------------------- */
 

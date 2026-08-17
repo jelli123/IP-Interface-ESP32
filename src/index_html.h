@@ -99,7 +99,8 @@ small{color:var(--dim)}
     <div class="row"><span>Programmiermodus</span><span id="pm">-</span></div>
     <div class="actions">
       <button id="pmBtn" onclick="toggleProg()">Programmiermodus</button>
-      <button class="sec" onclick="resetKnx()">KNX zur&uuml;cksetzen</button>
+      <button class="sec" onclick="showFilter()">Filtertabelle</button>
+      <button class="sec" onclick="resetKnx()">ETS-Programmierung l&ouml;schen</button>
     </div>
     <label class="chk" style="margin-top:14px">
       <input type="checkbox" id="rtAll" onchange="setRouting()">
@@ -165,7 +166,6 @@ small{color:var(--dim)}
     <div class="row"><span>Chip</span><span id="chip">-</span></div>
     <div class="row"><span>Takt</span><span id="cpu">-</span></div>
     <div class="row"><span>Freier Speicher</span><span id="heap">-</span></div>
-    <div class="row"><span>Partition</span><span id="part">-</span></div>
   </section>
 
   <section class="card">
@@ -173,6 +173,7 @@ small{color:var(--dim)}
     <div class="row"><span>Quelle</span><span id="hwSrc">-</span></div>
     <div class="row"><span>KNX-UART</span><span id="hwKnx">-</span></div>
     <div class="row"><span>LED / Taster</span><span id="hwLed">-</span></div>
+    <div class="row"><span>Status-LED</span><span id="hwRgb">-</span></div>
     <div class="row"><span>I2C (RTC)</span><span id="hwI2c">-</span></div>
     <div class="row"><span>SPI (W5500)</span><span id="hwEth">-</span></div>
     <div class="actions">
@@ -181,13 +182,18 @@ small{color:var(--dim)}
       <button class="sec" onclick="hwDownload()">JSON speichern</button>
       <input type="file" id="hwFile" accept=".json" style="display:none" onchange="hwUpload()">
     </div>
-    <p><small>Aenderungen werden erst nach einem Neustart aktiv.</small></p>
+    <label class="chk" id="beatRow" style="margin-top:14px;display:none">
+      <input type="checkbox" id="beat" onchange="setBeat()">
+      Herzschlag &ndash; alle 2 Sekunden ein weisser Blitz</label>
+    <p><small>Aenderungen am Profil werden erst nach einem Neustart aktiv.</small></p>
   </section>
 
   <section class="card">
     <h2>Firmware</h2>
     <div class="row"><span>Version</span><span id="ver">-</span></div>
     <div class="row"><span>Build</span><span id="build">-</span></div>
+    <div class="row"><span>Aktiver Speicherplatz</span><span id="partRun">-</span></div>
+    <div class="row"><span>Zweiter Speicherplatz</span><span id="partAlt">-</span></div>
     <div class="row"><span>Update</span><span id="updState">-</span></div>
     <div class="bar" id="updBar" style="display:none"><i id="updFill"></i></div>
     <div class="actions">
@@ -195,6 +201,7 @@ small{color:var(--dim)}
       <button class="sec" id="instBtn" onclick="installUpdate()" disabled>Installieren</button>
       <button class="sec" onclick="fw.click()">Datei hochladen</button>
       <input type="file" id="fw" accept=".bin" style="display:none" onchange="upload()">
+      <button class="sec" id="swBtn" onclick="switchPart()" disabled>Partition wechseln</button>
     </div>
     <label style="display:block;margin-top:10px;font-size:12px;color:var(--dim)">
       SHA-256 der Datei (optional, aus <code>sha256sum</code>)</label>
@@ -215,8 +222,17 @@ small{color:var(--dim)}
   <p><small>Nach dem Verbinden startet das Geraet neu.</small></p>
 </dialog>
 
-<dialog id="timeDlg">
-  <h2>Zeitserver</h2>
+<dialog id="filterDlg">
+  <h2>Filtertabelle</h2>
+  <p><small id="filterInfo"></small></p>
+  <div id="filterList" style="max-height:50vh;overflow:auto;font-size:13px;
+       font-variant-numeric:tabular-nums;line-height:1.7"></div>
+  <div class="actions">
+    <button class="sec" onclick="filterDlg.close()">Schliessen</button>
+  </div>
+</dialog>
+
+<dialog id="timeDlg">  <h2>Zeitserver</h2>
   <div class="grp">
     <label class="chk"><input type="checkbox" id="tsEn"> Zeit auf den KNX-Bus senden</label>
     <label>Gruppenadresse Datum+Zeit (DPT 19.001)</label>
@@ -265,6 +281,21 @@ small{color:var(--dim)}
     <input id="hwBtn"    type="number" min="-1">
     <label class="chk" style="align-self:center">
       <input type="checkbox" id="hwLedLow"> LED low-aktiv</label>
+  </div>
+
+  <div class="grp">
+    <label>Status-LED &ndash; GPIO / Anzahl / Typ (&minus;1 = nicht bestueckt)</label>
+    <div class="trio">
+      <input id="hwRgbPin" type="number" min="-1">
+      <input id="hwRgbCnt" type="number" min="1" max="64">
+      <select id="hwRgbTyp">
+        <option value="0">WS2812</option>
+        <option value="1">SK6812 / SK68xx</option>
+      </select>
+    </div>
+    <p><small>Adressierbare LED an einer Datenleitung. Mehrere kaskadierte
+    LEDs zeigen dasselbe Bild. Beide Typen erwarten dieselbe Reihenfolge
+    (Gruen, Rot, Blau) und unterscheiden sich nur in der Bitdauer.</small></p>
   </div>
 
   <div class="grp">
@@ -336,9 +367,37 @@ const EN = {
 'IP-Bezug':'Address source', 'fest, aus der ETS':'fixed, from the ETS',
 'automatisch (DHCP)':'automatic (DHCP)',
 'Takt':'Clock', 'Freier Speicher':'Free memory',
-'Quelle':'Source', 'LED / Taster':'LED / button',
+'Quelle':'Source', 'LED / Taster':'LED / button', 'Status-LED':'Status LED',
 
 'KNX zur\u00fccksetzen':'Reset KNX', 'Einstellungen':'Settings',
+'ETS-Programmierung l\u00f6schen':'Erase the ETS programming',
+'Filtertabelle':'Filter table', 'Partition wechseln':'Switch partition',
+'L\u00e4uft aus':'Running from', 'Zweiter Speicherplatz':'Second slot',
+'Aktiver Speicherplatz':'Active slot',
+'geprueft':'verified', 'auf Bewaehrung':'on probation', 'neu':'new',
+'ungueltig':'invalid', 'abgebrochen':'aborted',
+'ohne OTA-Vermerk':'no OTA record', 'unbekannt':'unknown',
+'leer':'empty',
+'lese Filtertabelle...':'reading the filter table...',
+'Lesen fehlgeschlagen.':'Could not read it.',
+['Keine Filtertabelle geladen \u2013 das Geraet ist nicht programmiert und '
++ 'sperrt jedes Gruppentelegramm.']:
+  'No filter table loaded \u2013 the device is unprogrammed and blocks every '
++ 'group telegram.',
+'%s Gruppenadressen werden weitergeleitet.':'%s group addresses are forwarded.',
+'Angezeigt: die ersten %s.':'Showing the first %s.',
+'Die Tabelle ist geladen, laesst aber nichts durch.':
+  'The table is loaded but lets nothing through.',
+['Beim naechsten Start die andere Partition verwenden? Das Geraet startet '
++ 'neu.']:
+  'Boot from the other slot next time? The device restarts.',
+['Achtung: Der Inhalt ist unbekannt. Dieser Speicherplatz hat unter der '
++ 'aktuellen Firmware noch nie gelaufen, dort liegt vermutlich ein aelterer '
++ 'Stand.']:
+  'Careful: the contents are unknown. This slot has never run under the '
++ 'current firmware, so it most likely holds an older build.',
+'Umgeschaltet. Das Geraet startet neu.':'Switched. The device restarts.',
+'Umschalten nicht moeglich.':'Cannot switch.',
 'Zeit vom Browser':'Time from browser', 'Jetzt senden':'Send now',
 'Bearbeiten':'Edit', 'JSON laden':'Load JSON', 'JSON speichern':'Save JSON',
 'Online pruefen':'Check online', 'Installieren':'Install',
@@ -369,14 +428,24 @@ const EN = {
 'KNX \u2013 UART-Nummer / RX / TX':'KNX \u2013 UART number / RX / TX',
 'Programmier-LED / Taster (\u22121 = nicht bestueckt)':
   'Programming LED / button (\u22121 = not fitted)',
+'Status-LED \u2013 GPIO / Anzahl / Typ (\u22121 = nicht bestueckt)':
+  'Status LED \u2013 GPIO / count / type (\u22121 = not fitted)',
+'Herzschlag \u2013 alle 2 Sekunden ein weisser Blitz':
+  'Heartbeat \u2013 a white flash every 2 seconds',
+['Adressierbare LED an einer Datenleitung. Mehrere kaskadierte LEDs zeigen '
++ 'dasselbe Bild. Beide Typen erwarten dieselbe Reihenfolge (Gruen, Rot, '
++ 'Blau) und unterscheiden sich nur in der Bitdauer.']:
+  'An addressable LED on a single data line. Cascaded LEDs all show the same '
++ 'colour. Both types expect the same byte order (green, red, blue) and '
++ 'differ only in bit timing.',
 'LED low-aktiv':'LED active low',
 'RTC ueber I2C anschliessen':'Connect an RTC via I2C',
 'Ethernet W5500 anschliessen':'Connect an Ethernet W5500',
 'CS / IRQ / RST (\u22121 = ungenutzt)':'CS / IRQ / RST (\u22121 = unused)',
 'SHA-256 der Datei (optional, aus':'SHA-256 of the file (optional, from',
 
-'Aenderungen werden erst nach einem Neustart aktiv.':
-  'Changes take effect after a restart.',
+'Aenderungen am Profil werden erst nach einem Neustart aktiv.':
+  'Profile changes take effect after a restart.',
 'Nach dem Verbinden startet das Geraet neu.':
   'The device restarts after connecting.',
 ['Ohne Internetzugang NTP abschalten und die Zeit per Browser oder manuell '
@@ -549,6 +618,9 @@ async function refresh(){
   $('pmBtn').className    = s.prog_mode ? 'on' : '';
   $('rtAll').checked      = s.knx_route_all;
 
+  $('beatRow').style.display = s.led_present ? '' : 'none';
+  $('beat').checked          = s.led_heartbeat;
+
   $('tpConn').innerHTML = dot(s.tp.connected);
   $('tpType').textContent = s.tp.type;
   $('tpBaud').textContent = s.tp.baud + ' Bd, 8E1';
@@ -588,7 +660,19 @@ async function refresh(){
   $('cpu').textContent  = s.hardware.cpu_freq + ' MHz';
   $('heap').textContent = Math.round(s.hardware.heap_free/1024) + ' / '
                         + Math.round(s.hardware.heap_total/1024) + ' KiB';
-  $('part').textContent = s.build.partition + ' (' + s.build.ota_state + ')';
+  // Both application slots with what is stored in each, so "switch" is an
+  // informed decision rather than a leap.
+  const PST = {valid:'geprueft', pending_verify:'auf Bewaehrung',
+               new:'neu', invalid:'ungueltig', aborted:'abgebrochen',
+               undefined:'ohne OTA-Vermerk'};
+  const slot = p => p.label + ' \u00b7 '
+      + (p.firmware || t(p.valid ? 'unbekannt' : 'leer'))
+      + ' \u00b7 ' + t(PST[p.state] || p.state);
+
+  const parts = s.build.partitions || [];
+  $('partRun').textContent = parts[0] ? slot(parts[0]) : '-';
+  $('partAlt').textContent = parts[1] ? slot(parts[1]) : '-';
+  $('swBtn').disabled = !(parts[1] && parts[1].valid);
   $('ver').textContent  = s.build.version;
   $('build').textContent= '#' + s.build.number + ' / ' + s.build.git;
 
@@ -609,6 +693,57 @@ async function setRouting(){
   const body = new URLSearchParams({unfiltered: $('rtAll').checked ? '1' : '0'});
   await fetch('/api/knx/routing', {method:'POST', body});
   setTimeout(refresh, 300);
+}
+
+async function setBeat(){
+  const body = new URLSearchParams({enabled: $('beat').checked ? '1' : '0'});
+  await fetch('/api/led/heartbeat', {method:'POST', body});
+  setTimeout(refresh, 300);
+}
+
+async function showFilter(){
+  $('filterInfo').textContent = t('lese Filtertabelle...');
+  $('filterList').textContent = '';
+  filterDlg.showModal();
+
+  let f;
+  try { f = await (await fetch('/api/knx/filter')).json(); }
+  catch(e){ $('filterInfo').textContent = t('Lesen fehlgeschlagen.'); return; }
+
+  if(!f.loaded){
+    $('filterInfo').textContent = t('Keine Filtertabelle geladen \u2013 das Geraet '
+      + 'ist nicht programmiert und sperrt jedes Gruppentelegramm.');
+    return;
+  }
+
+  $('filterInfo').textContent = f.total
+    ? t('%s Gruppenadressen werden weitergeleitet.').replace('%s', f.total)
+      + (f.total > f.addresses.length
+         ? ' ' + t('Angezeigt: die ersten %s.').replace('%s', f.addresses.length)
+         : '')
+    : t('Die Tabelle ist geladen, laesst aber nichts durch.');
+
+  $('filterList').textContent = f.addresses.join('   ');
+}
+
+async function switchPart(){
+  const p = ((last && last.build.partitions) || [])[1];
+
+  let msg = t('Beim naechsten Start die andere Partition verwenden? '
+            + 'Das Geraet startet neu.');
+
+  // A slot holding a bootable image we have never run is fair game, but the
+  // user should know they are jumping to something unidentified.
+  if(p && !p.firmware){
+    msg += '\n\n' + t('Achtung: Der Inhalt ist unbekannt. Dieser Speicherplatz '
+         + 'hat unter der aktuellen Firmware noch nie gelaufen, dort liegt '
+         + 'vermutlich ein aelterer Stand.');
+  }
+
+  if(!confirm(msg)) return;
+  const r = await fetch('/api/ota/switch', {method:'POST'});
+  alert(t(r.ok ? 'Umgeschaltet. Das Geraet startet neu.'
+              : 'Umschalten nicht moeglich.'));
 }
 
 async function resetKnx(){
@@ -702,11 +837,12 @@ async function sendTime(){
 }
 
 // --- Hardware-Profil ---
-const HWF = ['knx_uart','knx_rx','knx_tx','led','button',
-             'i2c_sda','i2c_scl','eth_sck','eth_miso','eth_mosi',
+const HWF = ['knx_uart','knx_rx','knx_tx','led','button','rgb_pin','rgb_count',
+             'rgb_type','i2c_sda','i2c_scl','eth_sck','eth_miso','eth_mosi',
              'eth_cs','eth_irq','eth_rst','eth_spi_mhz'];
 const HWID = {knx_uart:'hwUart', knx_rx:'hwRx', knx_tx:'hwTx',
               led:'hwLedPin', button:'hwBtn', i2c_sda:'hwSda', i2c_scl:'hwScl',
+              rgb_pin:'hwRgbPin', rgb_count:'hwRgbCnt', rgb_type:'hwRgbTyp',
               eth_sck:'hwSck', eth_miso:'hwMiso', eth_mosi:'hwMosi',
               eth_cs:'hwCs', eth_irq:'hwIrq', eth_rst:'hwRst'};
 let hwState = null;
@@ -728,6 +864,9 @@ async function refreshHw(){
   $('hwKnx').textContent = 'UART' + a.knx_uart + ', RX ' + a.knx_rx + ', TX ' + a.knx_tx;
   $('hwLed').textContent = 'GPIO ' + a.led + (a.led_active_low ? ' (low)' : '')
                          + ' / ' + (a.button < 0 ? t('kein') : 'GPIO ' + a.button);
+  $('hwRgb').textContent = a.rgb_pin < 0 ? t('aus')
+      : 'GPIO ' + a.rgb_pin + ', ' + a.rgb_count + ' x '
+        + (a.rgb_type == 1 ? 'SK6812' : 'WS2812');
   $('hwI2c').textContent = a.i2c_enabled ? ('SDA ' + a.i2c_sda + ', SCL ' + a.i2c_scl)
                                          : t('aus');
   $('hwEth').textContent = a.eth_enabled

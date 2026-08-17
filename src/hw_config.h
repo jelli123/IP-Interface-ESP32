@@ -26,6 +26,12 @@ struct HwProfile
     bool    ledActiveLow = false;
     int8_t  buttonPin    = -1;
 
+    // Addressable status LED (WS2812 / SK6812), one data line for the chain.
+    // rgbType selects the bit timing: 0 = WS2812, 1 = SK6812.
+    int8_t  rgbPin       = -1;
+    uint8_t rgbCount     = 1;
+    uint8_t rgbType      = 0;
+
     // RV-3028-C7 real time clock
     bool    i2cEnabled   = false;
     int8_t  i2cSdaPin    = -1;

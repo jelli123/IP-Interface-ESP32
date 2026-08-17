@@ -3,10 +3,12 @@
  */
 
 #include <HTTPClient.h>
+#include <Preferences.h>
 #include <Update.h>
 #include <WiFiClientSecure.h>
 #include <esp_ota_ops.h>
 
+#include "build_info.h"
 #include "fw_hash.h"
 #include "interface_config.h"
 #include "json_util.h"
@@ -83,6 +85,12 @@ int OtaService::compareVersions(const String& a, const String& b)
 
 void OtaService::loop()
 {
+    if (!_slotRecorded)
+    {
+        _slotRecorded = true;
+        recordOwnSlot();
+    }
+
     if (!_validationPending || millis() < OTA_VALIDATE_AFTER_MS)
     {
         return;
@@ -404,9 +412,183 @@ const char* OtaService::runningPartitionState()
     return "?";
 }
 
-String OtaService::statusJson() const
+/*
+ * Which firmware sits in which slot. The image's own descriptor cannot answer
+ * that (see ota_service.h), so every boot writes its own details here under
+ * the label of the slot it runs from.
+ */
+static Preferences prefs;
+static const char* FW_NS = "sbip-fw";
+
+/*
+ * The notes, read once.
+ *
+ * A note only changes when a firmware boots from that slot, which means a
+ * restart - so re-reading them per status poll bought nothing and printed an
+ * NVS error line for every slot that has none yet. isKey() answers the same
+ * question without the log noise, getString() logs at error level on a miss.
+ */
+static String s_slotLabel[2];
+static String s_slotRecord[2];
+static bool   s_slotsLoaded = false;
+
+static const esp_partition_t* otherSlot();
+
+static void loadSlotRecords()
 {
-    String json = "{";
+    if (s_slotsLoaded) return;
+    s_slotsLoaded = true;
+
+    const esp_partition_t* slots[2] = {esp_ota_get_running_partition(), otherSlot()};
+
+    if (!prefs.begin(FW_NS, true)) return;
+
+    for (int i = 0; i < 2; i++)
+    {
+        if (slots[i] == nullptr) continue;
+
+        s_slotLabel[i] = slots[i]->label;
+
+        if (prefs.isKey(slots[i]->label))
+        {
+            s_slotRecord[i] = prefs.getString(slots[i]->label, "");
+        }
+    }
+
+    prefs.end();
+}
+
+/** The note for a slot, or an empty string when there is none. */
+static String slotRecord(const char* label)
+{
+    loadSlotRecords();
+
+    for (int i = 0; i < 2; i++)
+    {
+        if (s_slotLabel[i] == label) return s_slotRecord[i];
+    }
+
+    return String();
+}
+
+/*
+ * The slot a firmware upload would land in - which is always the one we are
+ * not executing from. esp_ota_get_next_update_partition() picks exactly that.
+ */
+static const esp_partition_t* otherSlot()
+{
+    return esp_ota_get_next_update_partition(nullptr);
+}
+
+/** One slot as a JSON object. */
+static String partitionJson(const esp_partition_t* part, bool running)
+{
+    if (part == nullptr) return String("null");
+
+    String json = "{\"label\":\"" + String(part->label) + "\",";
+    json += "\"running\":" + String(running ? "true" : "false") + ",";
+
+    esp_ota_img_states_t state;
+    const char*          stateName = "?";
+
+    if (esp_ota_get_state_partition(part, &state) == ESP_OK)
+    {
+        switch (state)
+        {
+        case ESP_OTA_IMG_NEW:            stateName = "new";            break;
+        case ESP_OTA_IMG_PENDING_VERIFY: stateName = "pending_verify"; break;
+        case ESP_OTA_IMG_VALID:          stateName = "valid";          break;
+        case ESP_OTA_IMG_INVALID:        stateName = "invalid";        break;
+        case ESP_OTA_IMG_ABORTED:        stateName = "aborted";        break;
+        case ESP_OTA_IMG_UNDEFINED:      stateName = "undefined";      break;
+        }
+    }
+
+    json += "\"state\":\"" + String(stateName) + "\",";
+
+    // Does the slot hold a bootable image at all? That much the IDF descriptor
+    // still tells us reliably, even though its contents do not.
+    esp_app_desc_t desc;
+    bool           valid = esp_ota_get_partition_description(part, &desc) == ESP_OK;
+
+    json += "\"valid\":" + String(valid ? "true" : "false") + ",";
+    json += "\"firmware\":\"" + jsonEscape(slotRecord(part->label)) + "\"}";
+    return json;
+}
+
+void OtaService::recordOwnSlot()
+{
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    if (running == nullptr) return;
+
+    // Our own translation unit, so these really are this firmware's numbers -
+    // unlike esp_app_desc_t, which the prebuilt IDF fills with its own.
+    String record = String(FIRMWARE_VERSION) + " #" + String(BUILD_NUMBER) +
+                    " " + BUILD_GIT + ", " + __DATE__ " " __TIME__;
+
+    loadSlotRecords();
+
+    if (slotRecord(running->label) != record && prefs.begin(FW_NS, false))
+    {
+        prefs.putString(running->label, record);
+        prefs.end();
+        Serial.printf("OTA: %s holds %s\n", running->label, record.c_str());
+    }
+
+    // Keep the cache in step so the dashboard shows it without a restart.
+    for (int i = 0; i < 2; i++)
+    {
+        if (s_slotLabel[i] == running->label) s_slotRecord[i] = record;
+    }
+}
+
+String OtaService::partitionsJson()
+{
+    /*
+     * esp_partition_read() has to disable the flash cache, which stalls both
+     * cores. Harmless once, but the dashboard asks every two seconds, so the
+     * answer is kept and only refreshed occasionally - the rollback state is
+     * the only part that changes while running.
+     */
+    static String   cached;
+    static uint32_t cachedAt = 0;
+
+    if (cached.length() && (millis() - cachedAt) < 10000) return cached;
+
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    const esp_partition_t* other   = otherSlot();
+
+    cached = "[" + partitionJson(running, true) + "," +
+             partitionJson(other, false) + "]";
+    cachedAt = millis();
+
+    return cached;
+}
+
+bool OtaService::switchPartition()
+{
+    const esp_partition_t* other = otherSlot();
+    esp_app_desc_t         desc;
+
+    if (other == nullptr ||
+        esp_ota_get_partition_description(other, &desc) != ESP_OK)
+    {
+        Serial.println("OTA: the other slot holds no valid firmware");
+        return false;
+    }
+
+    if (esp_ota_set_boot_partition(other) != ESP_OK)
+    {
+        Serial.println("OTA: could not switch the boot partition");
+        return false;
+    }
+
+    Serial.printf("OTA: next boot from %s (%s)\n", other->label, desc.version);
+    return true;
+}
+
+String OtaService::statusJson() const
+{    String json = "{";
     json += "\"state\":\"" + String(stateName(g_state)) + "\",";
     json += "\"current\":\"" FIRMWARE_VERSION "\",";
     json += "\"latest\":\"" + jsonEscape(g_latest) + "\",";

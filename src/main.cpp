@@ -18,6 +18,7 @@
 #include "knx_link.h"
 #include "net_manager.h"
 #include "ota_service.h"
+#include "status_led.h"
 #include "time_service.h"
 #include "web_server.h"
 
@@ -48,6 +49,10 @@ void setup()
      * within the two seconds ESP Web Tools waits for.
      */
     hwConfig.begin();
+
+    // Needs the profile for its pin, and comes before the noisy parts so the
+    // heartbeat is available while the rest boots.
+    statusLed.begin();
 
     // Improv early: ESP Web Tools resets the board by opening the port and
     // then probes for roughly two seconds. Anything slower here and the
@@ -163,4 +168,5 @@ void loop()
     timeService.loop();
     otaService.loop();
     hwConfig.loop();
+    statusLed.loop();
 }

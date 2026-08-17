@@ -54,6 +54,10 @@ HwProfile HwConfig::defaults()
     p.ledActiveLow = (SBIP_LED_ACTIVE_LOW != 0);
     p.buttonPin    = SBIP_BUTTON_PIN;
 
+    p.rgbPin       = SBIP_RGB_PIN;
+    p.rgbCount     = SBIP_RGB_COUNT;
+    p.rgbType      = SBIP_RGB_TYPE;
+
     p.i2cEnabled   = (SBIP_I2C_ENABLED != 0) && (SBIP_I2C_SDA_PIN >= 0);
     p.i2cSdaPin    = SBIP_I2C_SDA_PIN;
     p.i2cSclPin    = SBIP_I2C_SCL_PIN;
@@ -140,6 +144,7 @@ bool HwConfig::validate(const HwProfile& p, String& error)
         { "knx_rx",   p.knxRxPin,   false, true  },
         { "knx_tx",   p.knxTxPin,   true,  true  },
         { "led",      p.ledPin,     true,  false },
+        { "rgb",      p.rgbPin,     true,  false },
         { "button",   p.buttonPin,  false, false },
         { "i2c_sda",  p.i2cEnabled ? p.i2cSdaPin : (int8_t)-1, true, p.i2cEnabled },
         { "i2c_scl",  p.i2cEnabled ? p.i2cSclPin : (int8_t)-1, true, p.i2cEnabled },
@@ -212,6 +217,18 @@ bool HwConfig::validate(const HwProfile& p, String& error)
         return false;
     }
 
+    if (p.rgbPin >= 0 && (p.rgbCount < 1 || p.rgbCount > 64))
+    {
+        error = "rgb_count out of range (1..64)";
+        return false;
+    }
+
+    if (p.rgbType > 1)
+    {
+        error = "rgb_type must be 0 (WS2812) or 1 (SK6812)";
+        return false;
+    }
+
     error = "";
     return true;
 }
@@ -240,6 +257,9 @@ void HwConfig::load()
         _stored.ledPin       = prefs.getChar("led",  d.ledPin);
         _stored.ledActiveLow = prefs.getBool("ledlo", d.ledActiveLow);
         _stored.buttonPin    = prefs.getChar("btn",  d.buttonPin);
+        _stored.rgbPin       = prefs.getChar("rgb",  d.rgbPin);
+        _stored.rgbCount     = (uint8_t)prefs.getUChar("rgbn", d.rgbCount);
+        _stored.rgbType      = (uint8_t)prefs.getUChar("rgbt", d.rgbType);
         _stored.i2cEnabled   = prefs.getBool("i2cen", d.i2cEnabled);
         _stored.i2cSdaPin    = prefs.getChar("sda",  d.i2cSdaPin);
         _stored.i2cSclPin    = prefs.getChar("scl",  d.i2cSclPin);
@@ -269,6 +289,9 @@ void HwConfig::store(const HwProfile& p)
     prefs.putChar("led",  p.ledPin);
     prefs.putBool("ledlo", p.ledActiveLow);
     prefs.putChar("btn",  p.buttonPin);
+    prefs.putChar("rgb",  p.rgbPin);
+    prefs.putUChar("rgbn", p.rgbCount);
+    prefs.putUChar("rgbt", p.rgbType);
     prefs.putBool("i2cen", p.i2cEnabled);
     prefs.putChar("sda",  p.i2cSdaPin);
     prefs.putChar("scl",  p.i2cSclPin);
@@ -441,6 +464,9 @@ bool HwConfig::applyJson(const String& json, String& error)
 
     p.ledPin       = (int8_t)jsonGetInt(json, "led",      p.ledPin);
     p.ledActiveLow = jsonGetBool(json, "led_active_low",  p.ledActiveLow);
+    p.rgbPin       = (int8_t)jsonGetInt(json, "rgb_pin",   p.rgbPin);
+    p.rgbCount     = (uint8_t)jsonGetInt(json, "rgb_count", p.rgbCount);
+    p.rgbType      = (uint8_t)jsonGetInt(json, "rgb_type",  p.rgbType);
     p.buttonPin    = (int8_t)jsonGetInt(json, "button",   p.buttonPin);
 
     p.i2cEnabled   = jsonGetBool(json, "i2c_enabled",     p.i2cEnabled);
@@ -474,6 +500,9 @@ String HwConfig::profileToJson(const HwProfile& p)
     j += "\"knx_tx\":" + String(p.knxTxPin) + ",";
     j += "\"led\":" + String(p.ledPin) + ",";
     j += "\"led_active_low\":" + String(p.ledActiveLow ? "true" : "false") + ",";
+    j += "\"rgb_pin\":" + String(p.rgbPin) + ",";
+    j += "\"rgb_count\":" + String(p.rgbCount) + ",";
+    j += "\"rgb_type\":" + String(p.rgbType) + ",";
     j += "\"button\":" + String(p.buttonPin) + ",";
     j += "\"i2c_enabled\":" + String(p.i2cEnabled ? "true" : "false") + ",";
     j += "\"i2c_sda\":" + String(p.i2cSdaPin) + ",";

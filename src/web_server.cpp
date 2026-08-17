@@ -5,6 +5,7 @@
 #include <ESPAsyncWebServer.h>
 #include <Update.h>
 #include <WiFi.h>
+#include <new>
 
 #include "build_info.h"
 #include "eth_interface.h"
@@ -16,6 +17,7 @@
 #include "knx_link.h"
 #include "net_manager.h"
 #include "ota_service.h"
+#include "status_led.h"
 #include "time_service.h"
 #include "web_server.h"
 
@@ -155,6 +157,8 @@ static String statusJson()
 
     json += "\"knx_configured\":" + String(knxLink.configured() ? "true" : "false") + ",";
     json += "\"knx_route_all\":" + String(knxLink.routeUnfiltered() ? "true" : "false") + ",";
+    json += "\"led_present\":" + String(statusLed.present() ? "true" : "false") + ",";
+    json += "\"led_heartbeat\":" + String(statusLed.heartbeat() ? "true" : "false") + ",";
     json += "\"prog_mode\":" + String(knxLink.progMode() ? "true" : "false") + ",";
 
     uint16_t pa = knxLink.individualAddress();
@@ -204,7 +208,8 @@ static String statusJson()
     json += "\"number\":" + String(BUILD_NUMBER) + ",";
     json += "\"git\":\"" BUILD_GIT "\",";
     json += "\"partition\":\"" + String(OtaService::runningPartition()) + "\",";
-    json += "\"ota_state\":\"" + String(OtaService::runningPartitionState()) + "\"";
+    json += "\"ota_state\":\"" + String(OtaService::runningPartitionState()) + "\",";
+    json += "\"partitions\":" + OtaService::partitionsJson();
     json += "},";
 
     json += "\"hardware\":{";
@@ -420,6 +425,44 @@ static void registerKnxRoutes()
         Serial.printf("KNX: unfiltered routing %s\n", enable ? "on" : "off");
 
         request->send(200, "application/json", "{\"status\":\"ok\"}");
+    });
+
+    /*
+     * The group addresses the filter table lets through. Capped because the
+     * response is built in RAM and a full table can hold thousands.
+     */
+    server.on("/api/knx/filter", HTTP_GET, [](AsyncWebServerRequest* request) {
+        static const uint16_t LIMIT = 400;
+
+        uint16_t* addresses = new (std::nothrow) uint16_t[LIMIT];
+
+        if (addresses == nullptr)
+        {
+            request->send(500, "application/json", "{\"error\":\"out of memory\"}");
+            return;
+        }
+
+        uint16_t total  = 0;
+        bool     loaded = knxLink.filterTable(addresses, LIMIT, total);
+        uint16_t shown  = (total < LIMIT) ? total : LIMIT;
+
+        String json = "{\"loaded\":";
+        json += loaded ? "true" : "false";
+        json += ",\"total\":" + String(total);
+        json += ",\"addresses\":[";
+
+        for (uint16_t i = 0; i < shown; i++)
+        {
+            if (i) json += ",";
+            json += "\"" + String((addresses[i] >> 11) & 0x1F) + "/" +
+                    String((addresses[i] >> 8) & 0x07) + "/" +
+                    String(addresses[i] & 0xFF) + "\"";
+        }
+
+        json += "]}";
+        delete[] addresses;
+
+        request->send(200, "application/json", json);
     });
 }
 
@@ -852,6 +895,51 @@ static void registerOtaRoutes()
 
     server.on("/api/update/status", HTTP_GET, [](AsyncWebServerRequest* request) {
         request->send(200, "application/json", otaService.statusJson());
+    });
+
+    /*
+     * Boot from the other slot next time. Not an upload target choice - an
+     * upload always lands in the slot that is not executing.
+     */
+    server.on("/api/ota/switch", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        if (!OtaService::switchPartition())
+        {
+            request->send(409, "application/json",
+                          "{\"error\":\"the other slot holds no valid firmware\"}");
+            return;
+        }
+
+        request->send(200, "application/json",
+                      "{\"status\":\"ok\",\"reboot\":true}");
+        netManager.scheduleReboot();
+    });
+
+    /* Heartbeat on the addressable status LED. Persisted, so it sticks. */
+    server.on("/api/led/heartbeat", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        if (!statusLed.present())
+        {
+            request->send(409, "application/json",
+                          "{\"error\":\"no RGB LED configured\"}");
+            return;
+        }
+
+        bool enable = true;
+
+        if (request->hasParam("enabled", true))
+        {
+            String v = request->getParam("enabled", true)->value();
+            enable = (v == "1" || v == "true");
+        }
+
+        statusLed.heartbeat(enable);
+
+        request->send(200, "application/json",
+                      String("{\"status\":\"ok\",\"heartbeat\":") +
+                          (enable ? "true" : "false") + "}");
     });
 }
 
