@@ -140,3 +140,117 @@ String jsonGetNestedString(const String& body, const String& outer,
 
     return jsonGetString(body.substring(open, close + 1), field);
 }
+
+bool jsonHasKey(const String& body, const String& key)
+{
+    return findValueStart(body, key) >= 0;
+}
+
+/*
+ * Both helpers below walk the text character by character instead of using
+ * indexOf(). A bracket inside a string value is ordinary text, and a scanner
+ * that cannot tell the two apart is exactly how a crafted document makes a
+ * parser read past its own array.
+ */
+
+bool jsonGetArray(const String& body, const String& key, String& out)
+{
+    out = "";
+
+    int i = findValueStart(body, key);
+    if (i < 0) return false;
+
+    while (i < (int)body.length() && isspace((int)body[i]))
+    {
+        i++;
+    }
+    if (i >= (int)body.length() || body[i] != '[') return false;
+
+    int  start = i + 1;
+    int  depth = 0;
+    bool inStr = false;
+    bool esc   = false;
+
+    for (; i < (int)body.length(); i++)
+    {
+        char c = body[i];
+
+        if (inStr)
+        {
+            if (esc)            esc = false;
+            else if (c == '\\') esc = true;
+            else if (c == '"')  inStr = false;
+            continue;
+        }
+
+        if (c == '"')                  inStr = true;
+        else if (c == '[' || c == '{') depth++;
+        else if (c == ']' || c == '}')
+        {
+            depth--;
+            if (depth == 0)
+            {
+                out = body.substring(start, i);
+                return true;
+            }
+        }
+    }
+
+    return false; // unterminated
+}
+
+bool jsonSplitObjects(const String& array, String* out, uint8_t max,
+                      uint8_t& count)
+{
+    count = 0;
+
+    int  depth = 0;
+    int  start = 0;
+    bool inStr = false;
+    bool esc   = false;
+
+    for (int i = 0; i < (int)array.length(); i++)
+    {
+        char c = array[i];
+
+        if (inStr)
+        {
+            if (esc)            esc = false;
+            else if (c == '\\') esc = true;
+            else if (c == '"')  inStr = false;
+            continue;
+        }
+
+        if (c == '"')
+        {
+            inStr = true;
+        }
+        else if (c == '{')
+        {
+            if (depth == 0) start = i;
+            depth++;
+        }
+        else if (c == '}')
+        {
+            depth--;
+            if (depth < 0) return false; // stray closing brace
+
+            if (depth == 0)
+            {
+                if (count < max)
+                {
+                    out[count] = array.substring(start, i + 1);
+                }
+                // Counting past max is deliberate: the caller rejects an
+                // oversized list rather than storing a silently cut one.
+                if (count < 255) count++;
+            }
+        }
+        else if (c == '[' || c == ']')
+        {
+            return false; // nested arrays are not part of this format
+        }
+    }
+
+    return depth == 0 && !inStr;
+}

@@ -8,6 +8,7 @@
 #include <esp_wifi.h>
 
 #include "eth_interface.h"
+#include "button_service.h"
 #include "hw_config.h"
 #include "improv_service.h"
 #include "interface_config.h"
@@ -36,26 +37,23 @@ static Preferences  netPrefs;
 static const char*  NET_NS   = "sbip-net";
 static const char*  KEY_SSID = "ssid";
 static const char*  KEY_PASS = "pass";
+static const char*  KEY_WIFI = "wifien";
 
-static void ledWrite(bool on)
+void NetManager::setWifiEnabled(bool enable)
 {
-    const HwProfile& hw = hwConfig.active();
-    if (hw.ledPin < 0)
-    {
-        return;
-    }
-    bool level = hw.ledActiveLow ? !on : on;
-    digitalWrite(hw.ledPin, level ? HIGH : LOW);
+    _wifiEnabled = enable;
+    netPrefs.begin(NET_NS, false);
+    netPrefs.putBool(KEY_WIFI, enable);
+    netPrefs.end();
 }
 
 void NetManager::begin()
 {
     _bootTime = millis();
 
-    if (hwConfig.active().buttonPin >= 0)
-    {
-        pinMode(hwConfig.active().buttonPin, INPUT_PULLUP);
-    }
+    netPrefs.begin(NET_NS, true);
+    _wifiEnabled = netPrefs.getBool(KEY_WIFI, true);
+    netPrefs.end();
 
     // NVS was already initialised by HwConfig::begin(), which has to run
     // first anyway to know which pins to use.
@@ -90,6 +88,12 @@ void NetManager::begin()
     String storedSsid = netPrefs.getString(KEY_SSID, "");
     String storedPass = netPrefs.getString(KEY_PASS, "");
     netPrefs.end();
+
+    if (!_wifiEnabled)
+    {
+        Serial.println("WiFi is switched off in the settings");
+        return;
+    }
 
     Serial.printf("Stored SSID: %s\n",
                   storedSsid.length() ? storedSsid.c_str() : "(none)");
@@ -195,7 +199,7 @@ void NetManager::waitForConnection(void (*keepAlive)())
             dnsServer.processNextRequest();
         }
 
-        handleButton();
+        buttonService.loop();
         delay(10);
     }
 
@@ -230,93 +234,18 @@ void NetManager::loop()
     if (_ethMode)
     {
         ethInterface.loop();
-        handleButton();
-        handleLed();
         return; // no WiFi watchdog, no captive portal
     }
 
     improvService.loop();
-    handleButton();
 
     if (_apMode)
     {
         dnsServer.processNextRequest();
-        handleLed();
         return; // no station watchdog while providing the AP
     }
 
     handleWifiWatchdog();
-    handleLed();
-}
-
-void NetManager::handleButton()
-{
-    int8_t pin = hwConfig.active().buttonPin;
-    if (pin < 0)
-    {
-        return; // no button on this board
-    }
-
-    int state = digitalRead(pin);
-
-    if (state == LOW && _buttonState == HIGH)
-    {
-        _buttonDownAt = millis();
-    }
-    else if (state == LOW && _buttonState == LOW)
-    {
-        // In Ethernet mode there is nothing to provision, so the button does
-        // not open an access point.
-        if (!_apMode && !_ethMode &&
-            (uint32_t)(millis() - _buttonDownAt) > BUTTON_AP_HOLD_MS)
-        {
-            Serial.println("Button held - starting provisioning AP");
-            WiFi.disconnect();
-            startAccessPoint();
-            if (knxLink.progMode())
-            {
-                knxLink.requestProgMode(false);
-            }
-        }
-    }
-
-    _buttonState = state;
-}
-
-/*
- * LED patterns:
- *   AP mode        double blink
- *   TP link down   fast blink
- *   online         steady on
- *   offline        off
- *
- * In Ethernet mode "online" means link plus address, so an unplugged cable
- * shows the same off state as a lost WiFi association.
- *
- * Programming mode overrides all of this - the KNX stack drives the same pin
- * directly while it is active, so we keep our hands off.
- */
-void NetManager::handleLed()
-{
-    if (knxLink.progMode())
-    {
-        return;
-    }
-
-    uint32_t t = millis() % 1000;
-
-    if (_apMode)
-    {
-        ledWrite(t < 100 || (t > 200 && t < 300));
-    }
-    else if (!knxLink.tpConnected())
-    {
-        ledWrite((millis() % 200) < 100);
-    }
-    else
-    {
-        ledWrite(isOnline());
-    }
 }
 
 bool NetManager::isOnline() const

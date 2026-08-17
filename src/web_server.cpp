@@ -158,7 +158,9 @@ static String statusJson()
     json += "\"knx_configured\":" + String(knxLink.configured() ? "true" : "false") + ",";
     json += "\"knx_route_all\":" + String(knxLink.routeUnfiltered() ? "true" : "false") + ",";
     json += "\"led_present\":" + String(statusLed.present() ? "true" : "false") + ",";
+    json += "\"led_beat_available\":" + String(statusLed.hasHeartbeat() ? "true" : "false") + ",";
     json += "\"led_heartbeat\":" + String(statusLed.heartbeat() ? "true" : "false") + ",";
+    json += "\"wifi_enabled\":" + String(netManager.wifiEnabled() ? "true" : "false") + ",";
     json += "\"prog_mode\":" + String(knxLink.progMode() ? "true" : "false") + ",";
 
     uint16_t pa = knxLink.individualAddress();
@@ -630,7 +632,7 @@ static void registerHardwareRoutes()
      * Applied on the next boot only - pins cannot be moved while the
      * peripherals using them are running.
      */
-    static const size_t HWCONFIG_MAX_BODY = 2048;
+    static const size_t HWCONFIG_MAX_BODY = 6144;
 
     server.on(
         "/api/hwconfig", HTTP_POST,
@@ -648,8 +650,13 @@ static void registerHardwareRoutes()
             }
 
             String* body = (String*)request->_tempObject;
-            if (body == nullptr)
+            if (body == nullptr || body->length() == 0)
             {
+                // Also covers a body the collector dropped for exceeding the
+                // cap, which would otherwise look like an empty patch and
+                // store the running profile again.
+                delete body;
+                request->_tempObject = nullptr;
                 request->send(400, "application/json", "{\"error\":\"empty body\"}");
                 return;
             }
@@ -688,6 +695,15 @@ static void registerHardwareRoutes()
 
             String* body = (String*)request->_tempObject;
             if (body == nullptr) return;
+
+            // total is what the client announced. A chunked request announces
+            // nothing, so the cap above can be passed with a Content-Length
+            // of zero - the accumulated length is the one that has to hold.
+            if (body->length() + len > HWCONFIG_MAX_BODY)
+            {
+                body->clear();
+                return;
+            }
 
             for (size_t i = 0; i < len; i++)
             {
@@ -920,10 +936,10 @@ static void registerOtaRoutes()
     server.on("/api/led/heartbeat", HTTP_POST, [](AsyncWebServerRequest* request) {
         if (!mutationAllowed(request)) return;
 
-        if (!statusLed.present())
+        if (!statusLed.hasHeartbeat())
         {
             request->send(409, "application/json",
-                          "{\"error\":\"no RGB LED configured\"}");
+                          "{\"error\":\"no LED is assigned to the heartbeat\"}");
             return;
         }
 

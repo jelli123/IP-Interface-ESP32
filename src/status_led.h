@@ -1,43 +1,41 @@
 /*
- *  status_led.h - Addressable RGB status LED (WS2812 / SK6812).
+ *  status_led.h - Status LEDs from the hardware profile.
  *
- *  The S3 and C6 DevKitC boards carry one of these on a single data line
- *  instead of a plain indicator LED, which is why SBIP_LED_PIN is -1 there:
- *  digitalWrite() does nothing visible on a chip that wants a timed bit
- *  stream. This drives it over the RMT peripheral, which produces the timing
- *  in hardware and needs no cycle-accurate bit banging.
+ *  Two kinds of LED live behind one interface. A plain one is a GPIO that is
+ *  either on or off. An addressable one is a position in a WS2812 / SK6812
+ *  chain, where a single data line carries every LED on it.
  *
- *  Pin, chain length and chip type come from the hardware profile, so a board
- *  with several cascaded LEDs works without a rebuild.
+ *  That difference matters more than it looks: a chain cannot be addressed
+ *  per LED. Each chip keeps the first colour it sees and passes the rest on,
+ *  so the whole chain has to be sent in one go whenever anything on it
+ *  changes. Everything here is therefore built around a per-chain frame
+ *  buffer that is flushed once per update.
  */
 #pragma once
 
 #include <Arduino.h>
 #include <stdint.h>
 
+#include "hw_config.h"
+
 class StatusLed
 {
 public:
-    /** Chip type. Only the bit timing differs; both use GRB byte order. */
-    enum Type : uint8_t
-    {
-        WS2812 = 0, //!< T0H 0.4 us, T1H 0.8 us
-        SK6812 = 1  //!< T0H 0.3 us, T1H 0.6 us
-    };
-
     /**
-     * Claim the pin from the hardware profile and clear the chain.
+     * Claim the pins from the hardware profile and switch everything off.
      *
-     * Does nothing when the profile has no LED pin, so every board can run
-     * the same firmware.
+     * Safe to call on a board that has no LEDs configured.
      */
     void begin();
 
-    /** Drives the heartbeat. Call from the main loop. */
+    /** Drives the assigned functions. Call from the main loop. */
     void loop();
 
-    /** @return true if a chain is configured and usable */
-    bool present() const { return _count > 0 && _pin >= 0; }
+    /** @return true if at least one LED is configured */
+    bool present() const { return _ledCount > 0; }
+
+    /** @return true if an LED carries the heartbeat function */
+    bool hasHeartbeat() const { return _heartbeatLed >= 0; }
 
     /**
      * A short white flash every two seconds, as a sign of life.
@@ -48,23 +46,36 @@ public:
     void heartbeat(bool enable);
     bool heartbeat() const { return _heartbeat; }
 
-    /**
-     * Paint the whole chain in one colour.
-     *
-     * Blocks for roughly 30 us per LED while the RMT peripheral clocks the
-     * bits out. Call from the main task only.
-     */
-    void show(uint8_t red, uint8_t green, uint8_t blue);
-
 private:
-    void writeChain(uint8_t red, uint8_t green, uint8_t blue);
+    /** One addressable chain, identified by its data pin. */
+    struct Chain
+    {
+        int8_t   pin     = -1;
+        uint8_t  type    = HW_RGB_WS2812;
+        uint8_t  length  = 0;
+        uint8_t* colours = nullptr; //!< length * 3 bytes, GRB order
+        bool     dirty   = false;
+    };
 
-    int8_t   _pin       = -1;
-    uint8_t  _count     = 0;
-    uint8_t  _type      = WS2812;
+    void   paint(int8_t led, uint8_t red, uint8_t green, uint8_t blue);
+    void   flush();
+    void   writeChain(Chain& chain);
+    int8_t chainFor(int8_t pin) const;
+
+    static const uint8_t MAX_CHAINS = 4;
+
+    Chain   _chains[MAX_CHAINS];
+    uint8_t _chainCount = 0;
+    uint8_t _ledCount   = 0;
+
+    int8_t _progLed      = -1;
+    int8_t _heartbeatLed = -1;
+
     bool     _heartbeat = false;
-    bool     _lit       = false;
+    bool     _beatLit   = false;
     uint32_t _lastBeat  = 0;
+    bool     _progLit   = false;
+    uint32_t _lastProg  = 0;
 };
 
 extern StatusLed statusLed;

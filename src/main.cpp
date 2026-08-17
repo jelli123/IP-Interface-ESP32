@@ -12,6 +12,7 @@
 #include <Network.h>
 
 #include "eth_interface.h"
+#include "button_service.h"
 #include "hw_config.h"
 #include "interface_config.h"
 #include "improv_service.h"
@@ -50,9 +51,10 @@ void setup()
      */
     hwConfig.begin();
 
-    // Needs the profile for its pin, and comes before the noisy parts so the
-    // heartbeat is available while the rest boots.
+    // Both need the profile for their pins, and come before the noisy parts
+    // so the indicators work while the rest boots.
     statusLed.begin();
+    buttonService.begin();
 
     // Improv early: ESP Web Tools resets the board by opening the port and
     // then probes for roughly two seconds. Anything slower here and the
@@ -69,11 +71,6 @@ void setup()
     }
 
     ArduinoPlatform::SerialDebug = &Serial;
-
-    if (hwConfig.active().ledPin >= 0)
-    {
-        pinMode(hwConfig.active().ledPin, OUTPUT);
-    }
 
     /*
      * Bring up esp_netif/lwIP before anything can open a socket.
@@ -168,5 +165,6 @@ void loop()
     timeService.loop();
     otaService.loop();
     hwConfig.loop();
+    buttonService.loop();
     statusLed.loop();
 }

@@ -13,6 +13,92 @@
 #include <Arduino.h>
 #include <stdint.h>
 
+/* ------------------------------------------------------------------------- *
+ * Buttons, LEDs and what they are wired to
+ *
+ * Both lists are addressed by name rather than by index, so reordering a row
+ * in the dashboard cannot silently re-point an assignment at a different
+ * piece of hardware.
+ * ------------------------------------------------------------------------- */
+
+/** Usable name characters, excluding the terminator. */
+static const uint8_t HW_NAME_MAX = 16;
+
+enum : uint8_t
+{
+    HW_MAX_BUTTONS = 8,
+    HW_MAX_LEDS    = 8,
+    HW_MAX_ASSIGN  = 8
+};
+
+/** When a button fires. Several rows may share a pin if the trigger differs. */
+enum HwTrigger : uint8_t
+{
+    HW_PRESS_SHORT = 0,
+    HW_PRESS_LONG,
+    HW_PRESS_VERY_LONG,
+    HW_PRESS_COUNT
+};
+
+/** How an LED is driven. */
+enum HwLedKind : uint8_t
+{
+    HW_LED_PLAIN = 0, //!< one GPIO, on or off
+    HW_LED_RGB,       //!< one position in an addressable chain
+    HW_LED_KIND_COUNT
+};
+
+/** Bit timing of an addressable LED. */
+enum HwRgbType : uint8_t
+{
+    HW_RGB_WS2812 = 0,
+    HW_RGB_SK6812,
+    HW_RGB_TYPE_COUNT
+};
+
+/** What an LED shows. */
+enum HwLedFunction : uint8_t
+{
+    HW_LEDF_PROG = 0,  //!< KNX programming mode
+    HW_LEDF_HEARTBEAT, //!< sign of life
+    HW_LEDF_COUNT
+};
+
+/** What a button does. */
+enum HwButtonFunction : uint8_t
+{
+    HW_BTNF_PROG_MODE = 0, //!< toggle KNX programming mode
+    HW_BTNF_FACTORY,       //!< erase every stored setting and restart
+    HW_BTNF_WIFI_SETUP,    //!< open the provisioning access point
+    HW_BTNF_REBOOT,        //!< restart the device
+    HW_BTNF_WIFI_TOGGLE,   //!< enable or disable WiFi, then restart
+    HW_BTNF_COUNT
+};
+
+struct HwButton
+{
+    char    name[HW_NAME_MAX + 1] = {0};
+    int8_t  pin                   = -1;
+    uint8_t trigger               = HW_PRESS_SHORT;
+};
+
+struct HwLed
+{
+    char    name[HW_NAME_MAX + 1] = {0};
+    int8_t  pin                   = -1;
+    uint8_t kind                  = HW_LED_PLAIN;
+    bool    activeLow             = false; //!< HW_LED_PLAIN only
+    uint8_t rgbType               = HW_RGB_WS2812; //!< HW_LED_RGB only
+    uint8_t rgbIndex              = 0;     //!< HW_LED_RGB: position in the chain
+};
+
+/** Ties one named button or LED to one function. */
+struct HwAssignment
+{
+    char    target[HW_NAME_MAX + 1] = {0};
+    uint8_t function                = 0;
+};
+
 /** A complete hardware description. Every pin may be -1 for "not fitted". */
 struct HwProfile
 {
@@ -21,16 +107,15 @@ struct HwProfile
     int8_t  knxRxPin     = -1;
     int8_t  knxTxPin     = -1;
 
-    // Programming LED and button
-    int8_t  ledPin       = -1;
-    bool    ledActiveLow = false;
-    int8_t  buttonPin    = -1;
-
-    // Addressable status LED (WS2812 / SK6812), one data line for the chain.
-    // rgbType selects the bit timing: 0 = WS2812, 1 = SK6812.
-    int8_t  rgbPin       = -1;
-    uint8_t rgbCount     = 1;
-    uint8_t rgbType      = 0;
+    // Buttons and LEDs, plus what each one is used for
+    uint8_t      buttonCount = 0;
+    HwButton     buttons[HW_MAX_BUTTONS];
+    uint8_t      ledCount    = 0;
+    HwLed        leds[HW_MAX_LEDS];
+    uint8_t      btnAssignCount = 0;
+    HwAssignment btnAssign[HW_MAX_ASSIGN];
+    uint8_t      ledAssignCount = 0;
+    HwAssignment ledAssign[HW_MAX_ASSIGN];
 
     // RV-3028-C7 real time clock
     bool    i2cEnabled   = false;
@@ -46,6 +131,18 @@ struct HwProfile
     int8_t  ethIrqPin    = -1;
     int8_t  ethRstPin    = -1;
     uint8_t ethSpiMhz    = 20;
+
+    /** @return index into leds[], or -1 when no LED carries @p function */
+    int8_t findLedFor(uint8_t function) const;
+
+    /** @return index into buttons[], or -1 when nothing is assigned */
+    int8_t findButtonFor(uint8_t function) const;
+
+    /** @return index into leds[], or -1 when @p name is unknown */
+    int8_t findLed(const char* name) const;
+
+    /** @return index into buttons[], or -1 when @p name is unknown */
+    int8_t findButton(const char* name) const;
 };
 
 class HwConfig
@@ -119,8 +216,19 @@ public:
     /** Serialise a profile as the document that applyJson() accepts. */
     static String profileToJson(const HwProfile& profile);
 
+    /**
+     * Check a button or LED name.
+     *
+     * Accepts 1..HW_NAME_MAX characters from [A-Za-z0-9_-]. The whitelist is
+     * not cosmetic: names are echoed into JSON and into the dashboard, and
+     * refusing quotes, backslashes and control characters at the boundary is
+     * what makes both safe without relying on every later escape being right.
+     */
+    static bool nameValid(const char* name);
+
 private:
     void load();
+    void loadLists(const HwProfile& fallbackProfile);
     void store(const HwProfile& profile);
 
     static bool pinIsFlash(int8_t pin);

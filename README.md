@@ -81,18 +81,17 @@ Kondensator-Ladezeit – diese Krücken sind hier bewusst nicht übernommen.
 | Env | Board | KNX-UART | RX / TX | LED | Taster |
 | --- | --- | --- | --- | --- | --- |
 | `esp32dev` | ESP32-WROOM | UART2 | 16 / 17 | 2 | 0 |
-| `esp32s3` | ESP32-S3-DevKitC | UART1 | 18 / 17 | – | 0 |
+| `esp32s3` | ESP32-S3-DevKitC | UART1 | 18 / 17 | 48 (SK6812) | 0 |
 | `esp32c3` | XIAO ESP32-C3 | UART1 | 20 / 21 | 4 (low-aktiv) | 9 |
 | `esp32c6` | ESP32-C6-DevKitC | UART1 | 5 / 4 | – | 9 |
 | `esp32s2` | ESP32-S2-Saola | UART1 | 18 / 17 | 15 | 0 |
 
-Auf dem **S3-** und dem **C6-DevKitC** ist die Status-LED abgeschaltet (`-1`).
-Beide Boards haben keine einfache LED, sondern eine **WS2812-RGB-LED** – am S3
-auf GPIO 48, am C6 auf GPIO 8. Die braucht ein getaktetes serielles Protokoll
-(`rgbLedWrite()`); `digitalWrite()` bleibt dort ohne sichtbare Wirkung. Wer
-eine Anzeige will, nimmt einen freien GPIO und eine LED mit Vorwiderstand.
-Beim XIAO C3 ist GPIO 4 herausgeführt, aber unbestückt – dort gehört ebenfalls
-eine eigene LED hin.
+Auf dem **S3-** und dem **C6-DevKitC** gibt es keine einfache LED, sondern
+eine **SK68/WS2812-RGB-LED** – am S3 auf GPIO 48, am C6 auf GPIO 8. Die
+braucht ein getaktetes serielles Protokoll; `digitalWrite()` bleibt dort ohne
+sichtbare Wirkung. Das Profil des S3 legt sie deshalb als adressierbare LED
+an, siehe *Taster und LEDs*. Beim XIAO C3 ist GPIO 4 herausgeführt, aber
+unbestückt – dort gehört eine eigene LED mit Vorwiderstand hin.
 
 I2C für die optionale RTC: `esp32dev` 21/22, `esp32s2`/`esp32s3` 8/9,
 `esp32c3`/`esp32c6` 6/7.
@@ -118,12 +117,15 @@ konfigurierbar. Das Dashboard bietet ein Formular, JSON-Upload und -Download.
 | Feld | Bedeutung |
 | --- | --- |
 | `knx_uart`, `knx_rx`, `knx_tx` | KNX-Anbindung zum SB-Interface |
-| `led`, `led_active_low`, `button` | Programmier-LED und Taster |
+| `buttons[]`, `leds[]` | vorhandene Taster und LEDs, siehe *Taster und LEDs* |
+| `button_assign[]`, `led_assign[]` | wozu sie dienen |
 | `i2c_enabled`, `i2c_sda`, `i2c_scl` | RV-3028-C7 |
 | `eth_enabled`, `eth_sck`, `eth_miso`, `eth_mosi`, `eth_cs`, `eth_irq`, `eth_rst`, `eth_spi_mhz` | W5500 |
 
-`-1` bedeutet durchgehend „nicht bestückt". Ein hochgeladenes JSON darf
-Teilmengen enthalten – fehlende Felder behalten ihren Wert.
+`-1` bedeutet bei den Peripherie-Pins „nicht bestückt". Ein hochgeladenes JSON
+darf Teilmengen enthalten – fehlende Felder behalten ihren Wert. Eine
+**angegebene Liste ersetzt** die bisherige vollständig; nur so lässt sich die
+letzte Zeile überhaupt löschen.
 
 Beispiel:
 
@@ -132,9 +134,20 @@ Beispiel:
   "knx_uart": 1,
   "knx_rx": 18,
   "knx_tx": 17,
-  "led": 48,
-  "led_active_low": false,
-  "button": 0,
+  "buttons": [
+    { "name": "prog",  "pin": 0, "trigger": 0 },
+    { "name": "setup", "pin": 0, "trigger": 1 }
+  ],
+  "leds": [
+    { "name": "rgb", "pin": 48, "kind": 1, "rgb_type": 1, "rgb_index": 0 }
+  ],
+  "button_assign": [
+    { "target": "prog",  "function": 0 },
+    { "target": "setup", "function": 2 }
+  ],
+  "led_assign": [
+    { "target": "rgb", "function": 0 }
+  ],
   "i2c_enabled": true,
   "i2c_sda": 8,
   "i2c_scl": 9,
@@ -143,6 +156,88 @@ Beispiel:
   "eth_irq": -1, "eth_rst": -1, "eth_spi_mhz": 20
 }
 ```
+
+---
+
+## Taster und LEDs
+
+Beide sind Listen mit höchstens **acht** Zeilen. Jede Zeile trägt einen Namen,
+über den eine zweite Liste ihr eine Funktion zuordnet. Die Zuordnung geht über
+den **Namen**, nicht über die Zeilennummer – Umsortieren im Dashboard kann
+deshalb nicht versehentlich auf andere Hardware zeigen.
+
+Namen dürfen 1 bis 16 Zeichen aus `A-Z a-z 0-9 _ -` enthalten. Die Beschränkung
+ist nicht kosmetisch: Namen landen in JSON und im Dashboard, und ein
+Anführungszeichen an der falschen Stelle wäre dort ein Loch.
+
+### Taster
+
+| Feld | Werte |
+| --- | --- |
+| `name` | 1–16 Zeichen |
+| `pin` | GPIO, muss als Eingang taugen |
+| `trigger` | `0` kurz, `1` lang, `2` sehr lang |
+
+Kurz ist ein Druck zwischen 40 ms und einer Sekunde und wird beim **Loslassen**
+ausgewertet. Lang ab 2 s, sehr lang ab 6 s – beide feuern, **während** der
+Taster noch gehalten wird. Das ist Absicht: Wer Werkeinstellungen auslöst,
+soll es merken, bevor er loslässt.
+
+Derselbe GPIO darf mehrfach vorkommen, solange sich die Auslösung
+unterscheidet. Genau so ist die Vorgabe gebaut – ein Taster, kurz für den
+Programmiermodus, lang für die WLAN-Einrichtung.
+
+**Funktionen** (`function` in `button_assign`):
+
+| Wert | Funktion | Wirkung |
+| --- | --- | --- |
+| 0 | Programmiermodus | schaltet den KNX-Programmiermodus um |
+| 1 | Werkeinstellungen | löscht **die gesamte** NVS-Partition und startet neu |
+| 2 | WLAN Grundeinstellung | öffnet den Provisioning-Accesspoint |
+| 3 | Gerät neu starten | Neustart |
+| 4 | WLAN ein/aus | schaltet das Funkmodul um, wirkt nach dem Neustart |
+
+> **Vorsicht bei 1 und 4.** Werkeinstellungen löscht auch die
+> WLAN-Zugangsdaten und das Hardware-Profil. „WLAN ein/aus" macht das Gerät
+> ohne Ethernet unerreichbar – zurück geht es dann nur über einen Taster.
+> Beides braucht physischen Zugang, was die Absicherung ist.
+
+### LEDs
+
+| Feld | Werte |
+| --- | --- |
+| `name` | 1–16 Zeichen |
+| `pin` | GPIO, muss als Ausgang taugen |
+| `kind` | `0` einfache LED, `1` adressierbare LED |
+| `active_low` | nur bei `kind` 0 |
+| `rgb_type` | nur bei `kind` 1: `0` WS2812, `1` SK6812 |
+| `rgb_index` | nur bei `kind` 1: Position in der Kette, 0–63 |
+
+Eine adressierbare LED ist **eine Position in einer Kette**. Zeilen mit
+demselben GPIO beschreiben dieselbe physische Leitung: Sie müssen denselben
+`rgb_type` und verschiedene `rgb_index` haben. Die Kettenlänge ergibt sich aus
+dem größten verwendeten Index – es gibt kein separates Anzahlfeld.
+
+WS2812 und SK6812 sind weitgehend austauschbar: beide erwarten drei Bytes in
+der Reihenfolge Grün, Rot, Blau bei 1,25 µs pro Bit. Unterschiedlich sind nur
+die High-Zeiten (WS2812 0,4/0,8 µs, SK6812 0,3/0,6 µs). Falsch gewählt läuft es
+meist trotzdem, nur mit weniger Reserve.
+
+**Funktionen** (`function` in `led_assign`):
+
+| Wert | Funktion | Anzeige |
+| --- | --- | --- |
+| 0 | Programmier-LED | blinkt im halben Sekundentakt, solange der Programmiermodus läuft |
+| 1 | Heartbeat-LED | alle 2 s ein 40 ms kurzer weißer Blitz |
+
+Der Heartbeat lässt sich auf der Startseite ein- und ausschalten und ist
+standardmäßig **aus**. Trägt eine LED beide Funktionen, hat der
+Programmiermodus Vorrang.
+
+> Die frühere Netzwerkanzeige (Doppelblinken im AP-Modus, schnelles Blinken bei
+> fehlender TP-Verbindung, Dauerlicht online) ist damit **entfallen** – dafür
+> gibt es derzeit keine Funktion. Falls sie fehlt, ist eine dritte
+> LED-Funktion die naheliegende Ergänzung.
 
 ### Änderungen brauchen einen Neustart
 
@@ -166,6 +261,15 @@ ab:
   sofort. Deshalb explizit geprüft.
 * doppelt belegte Pins – immer ein Fehler, und ein besonders unangenehmer:
   Zwei Peripherien am selben Pin erzeugen Symptome weit weg von der Ursache.
+  Ausgenommen sind zwei Fälle, in denen die Doppelung Absicht ist: mehrere
+  Tasterzeilen mit **verschiedener Auslösung** und mehrere LED-Zeilen auf
+  **derselben Kette**.
+* Namen außerhalb `A-Z a-z 0-9 _ -` oder länger als 16 Zeichen, doppelte
+  Namen, mehr als acht Zeilen je Liste
+* Zuordnungen auf unbekannte Namen, unbekannte Funktionsnummern und mehrere
+  Funktionen für denselben Taster bzw. dieselbe LED
+* LED-Zeilen auf einer Kette mit unterschiedlichem Chiptyp oder gleicher
+  Position
 * UART-Nummern außerhalb `0 … SOC_UART_NUM-1`
 
 **2. Crash-Loop-Erkennung.** Ein neu gespeichertes Profil gilt als
@@ -184,10 +288,18 @@ Datenblatt schauen.
 
 ### Speicherung
 
-Das Profil liegt als **einzelne NVS-Schlüssel**, nicht als JSON-Blob. JSON ist
-nur das Transportformat für das Dashboard: Geparst wird einmal beim Annehmen,
-nie im Startpfad. Ein abgeschnittener oder beschädigter Blob kann den Start
-daher nicht verhindern.
+Die Einzelfelder liegen als **einzelne NVS-Schlüssel**, nicht als JSON-Blob.
+JSON ist nur das Transportformat für das Dashboard: Geparst wird einmal beim
+Annehmen, nie im Startpfad. Ein abgeschnittener oder beschädigter Blob kann den
+Start daher nicht verhindern.
+
+Die vier Listen sind die Ausnahme – sie liegen als rohe Struktur-Arrays. Damit
+eine geänderte Struktur nicht als Pin-Nummern fehlgedeutet wird, trägt der
+Satz eine Layout-Kennung (`IO_VERSION`), und jede Blob-Länge wird gegen die
+erwartete Größe geprüft. Passt etwas nicht, fällt der **komplette** Satz auf
+die Image-Vorgaben zurück. Eine halb gelesene Liste wäre schlimmer als gar
+keine: Zähler und Array widersprächen sich, und `pinMode()` bekäme, was
+zufällig im Flash stand.
 
 ### Startreihenfolge
 
@@ -406,7 +518,8 @@ Bootloader-Rollback fängt ein defektes Image auf. Siehe
 4. Dashboard unter `http://sbip.local` oder der DHCP-Adresse.
 5. In der ETS als KNXnet/IP-Schnittstelle programmieren.
 
-**AP erzwingen:** Taster > 2 s halten.
+**AP erzwingen:** Taster halten, der auf *WLAN Grundeinstellung* zugeordnet
+ist – in der Vorgabe der Boot-Taster, ab 2 s. Siehe *Taster und LEDs*.
 
 ---
 
@@ -450,6 +563,7 @@ Abschaltbar mit `-DDISABLE_IMPROV` (spart rund 9 KB Flash und 2 s Bootzeit).
 | GET | `/api/hwconfig` | aktives, gespeichertes und Image-Profil |
 | POST | `/api/hwconfig` | JSON-Profil speichern (Teilfelder erlaubt) |
 | POST | `/api/hwconfig/reset` | gespeichertes Profil verwerfen |
+| POST | `/api/led/heartbeat` | `enabled=1\|0` → Herzschlag schalten |
 | POST | `/api/reboot` | Neustart auslösen |
 | GET | `/api/time` | Zustand und Konfiguration des Zeitservers |
 | POST | `/api/time/config` | Konfiguration schreiben (Teilfelder erlaubt) |
@@ -896,7 +1010,9 @@ gestartet.
 | [src/main.cpp](src/main.cpp) | Startreihenfolge, Hauptschleife |
 | [src/hw_config.cpp](src/hw_config.cpp) | Hardware-Profil, Validierung, Failsafe |
 | [src/knx_link.cpp](src/knx_link.cpp) | KNX-Stack, TP-Link-Überwachung, Statistik |
-| [src/net_manager.cpp](src/net_manager.cpp) | WLAN, AP, Captive Portal, Taster, LED |
+| [src/net_manager.cpp](src/net_manager.cpp) | WLAN, AP, Captive Portal |
+| [src/button_service.cpp](src/button_service.cpp) | Taster entprellen, Druckdauer, Funktionen |
+| [src/status_led.cpp](src/status_led.cpp) | LEDs, einfach und adressierbar |
 | [src/eth_interface.cpp](src/eth_interface.cpp) | W5500-Erkennung und Link-Überwachung |
 | [src/time_service.cpp](src/time_service.cpp) | Zeitquellen, DPT-Kodierung, Sendeplan |
 | [src/rv3028.cpp](src/rv3028.cpp) | Treiber für die optionale RTC |

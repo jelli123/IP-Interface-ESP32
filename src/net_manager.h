@@ -78,19 +78,27 @@ public:
     /** Ask for a reboot once the pending HTTP response has been flushed. */
     void scheduleReboot();
 
+    /**
+     * Whether the WiFi radio may come up at all.
+     *
+     * Applied during begin() only. Turning the radio off while the access
+     * point or the KNX multicast socket is running means a mode change at
+     * the worst possible moment, which this firmware has already crashed on
+     * once - so the switch takes effect on the next boot.
+     */
+    void setWifiEnabled(bool enable);
+    bool wifiEnabled() const { return _wifiEnabled; }
+
 private:
-    void handleButton();
-    void handleLed();
     void handleWifiWatchdog();
     String apName() const;
 
     bool     _apMode         = false;
     bool     _ethMode        = false;
+    bool     _wifiEnabled    = true;
     bool     _pendingReboot  = false;
     uint32_t _rebootAt       = 0;
     uint32_t _bootTime       = 0;
-    uint32_t _buttonDownAt   = 0;
-    int      _buttonState    = HIGH;
     uint32_t _lastCheck      = 0;
     bool     _wasOnline      = false;
     bool     _etsAddress     = false;

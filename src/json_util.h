@@ -21,6 +21,9 @@ String jsonEscape(const String& in);
 /** Read a flat "key": "value" pair. Returns an empty string if absent. */
 String jsonGetString(const String& body, const String& key);
 
+/** True when "key": is present, so a caller can tell absent from empty. */
+bool jsonHasKey(const String& body, const String& key);
+
 /**
  * Read a flat "key": <number> pair.
  *
@@ -39,3 +42,36 @@ bool jsonGetBool(const String& body, const String& key, bool fallback);
  */
 String jsonGetNestedString(const String& body, const String& outer,
                            const String& inner, const String& field);
+
+/**
+ * Read the body of "key": [ ... ] without the brackets.
+ *
+ * Tracks quoting and escapes, so a bracket inside a string value does not
+ * end the array early.
+ *
+ * The distinction between "absent or broken" and "present but empty" is the
+ * whole point of the return value: a caller that replaces a list has to be
+ * able to tell a deliberate clearing from a truncated document, or a
+ * half-received request quietly wipes the configuration.
+ *
+ * @param out receives the body, empty for []
+ * @return true when the key holds a well formed array
+ */
+bool jsonGetArray(const String& body, const String& key, String& out);
+
+/**
+ * Split an array body into its top level { ... } elements.
+ *
+ * The elements stay text and are read with the flat getters above, which is
+ * what keeps this a scanner rather than a parser.
+ *
+ * @param array array body from jsonGetArray()
+ * @param out   receives up to @p max elements
+ * @param max   capacity of @p out
+ * @param count receives the number of elements found, which may exceed
+ *              @p max - the caller can then reject the document instead of
+ *              silently applying a truncated list
+ * @return true if the array was well formed
+ */
+bool jsonSplitObjects(const String& array, String* out, uint8_t max,
+                      uint8_t& count);

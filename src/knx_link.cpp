@@ -324,9 +324,10 @@ bool KnxLink::begin()
     // parity bit for octet level error detection.
     knxPlatform.knxUartPins(hw.knxRxPin, hw.knxTxPin);
 
-    knx.ledPin(hw.ledPin);
-    knx.ledPinActiveOn(hw.ledActiveLow ? LOW : HIGH);
-    knx.buttonPin(-1); // the button is handled by NetManager, not by the stack
+    // StatusLed drives the programming indicator: it has to work for an
+    // addressable LED too, which the stack cannot switch on its own.
+    knx.ledPin(-1);
+    knx.buttonPin(-1); // the button is handled by ButtonService, not the stack
 
 #ifdef KNX_ACTIVITYCALLBACK
     knxBau.setActivityCallback(activityTrampoline);

@@ -127,15 +127,13 @@
 /* ------------------------------------------------------------------------- *
  * Addressable status LED (WS2812 / SK6812)
  *
- * A single data line carries the whole chain, so only the pin, the number of
- * LEDs and the chip type need to be known. -1 means the board has none.
+ * Only the default row of the profile is described here. The chain length
+ * follows from how many LED rows share the pin, so there is no count to set.
+ * -1 means the board has none.
  * ------------------------------------------------------------------------- */
 
 #ifndef SBIP_RGB_PIN
 #define SBIP_RGB_PIN           -1
-#endif
-#ifndef SBIP_RGB_COUNT
-#define SBIP_RGB_COUNT          1
 #endif
 /** 0 = WS2812, 1 = SK6812 (SK68xx). Selects the bit timing. */
 #ifndef SBIP_RGB_TYPE

@@ -77,6 +77,17 @@ font-size:13px;color:var(--fg)}
 input[type=checkbox]{width:auto;margin:0;flex:0 0 auto;accent-color:var(--acc)}
 .trio{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
 .trio input{margin:6px 0}
+/* Row editors. The selected row is what the minus button acts on, so it has
+ * to be obvious which one that is - a border alone is too quiet here. */
+table.rows{width:100%;border-collapse:collapse;margin:6px 0 4px}
+table.rows td{padding:2px 3px}
+table.rows tr{cursor:pointer}
+table.rows tr.sel td{background:rgba(94,168,255,.14)}
+table.rows tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--acc)}
+table.rows input,table.rows select{margin:2px 0;padding:6px;font-size:13px}
+table.rows input[type=checkbox]{margin:0 0 0 6px}
+.rowbtns{display:flex;gap:8px}
+button.ico{width:38px;padding:7px 0;font-size:16px;line-height:1;flex:0 0 auto}
 small{color:var(--dim)}
 </style>
 </head>
@@ -172,8 +183,8 @@ small{color:var(--dim)}
     <h2>Hardware-Profil</h2>
     <div class="row"><span>Quelle</span><span id="hwSrc">-</span></div>
     <div class="row"><span>KNX-UART</span><span id="hwKnx">-</span></div>
-    <div class="row"><span>LED / Taster</span><span id="hwLed">-</span></div>
-    <div class="row"><span>Status-LED</span><span id="hwRgb">-</span></div>
+    <div class="row"><span>Taster</span><span id="hwBtns">-</span></div>
+    <div class="row"><span>LEDs</span><span id="hwLeds">-</span></div>
     <div class="row"><span>I2C (RTC)</span><span id="hwI2c">-</span></div>
     <div class="row"><span>SPI (W5500)</span><span id="hwEth">-</span></div>
     <div class="actions">
@@ -275,27 +286,49 @@ small{color:var(--dim)}
     <input id="hwTx"   type="number" min="-1">
   </div>
 
-  <label>Programmier-LED / Taster (&minus;1 = nicht bestueckt)</label>
-  <div class="trio">
-    <input id="hwLedPin" type="number" min="-1">
-    <input id="hwBtn"    type="number" min="-1">
-    <label class="chk" style="align-self:center">
-      <input type="checkbox" id="hwLedLow"> LED low-aktiv</label>
+  <div class="grp">
+    <label>Taster</label>
+    <table class="rows" id="hwBtnTbl"></table>
+    <div class="rowbtns">
+      <button class="sec ico" onclick="rowAdd('btn')" title="Zeile hinzufuegen">+</button>
+      <button class="sec ico" onclick="rowDel('btn')" title="Markierte Zeile entfernen">&minus;</button>
+    </div>
+    <p><small>Kurz ist ein Druck unter einer Sekunde, lang ab zwei Sekunden,
+    sehr lang ab sechs. Derselbe GPIO darf mehrfach vorkommen, solange sich
+    die Auesloesung unterscheidet.</small></p>
   </div>
 
   <div class="grp">
-    <label>Status-LED &ndash; GPIO / Anzahl / Typ (&minus;1 = nicht bestueckt)</label>
-    <div class="trio">
-      <input id="hwRgbPin" type="number" min="-1">
-      <input id="hwRgbCnt" type="number" min="1" max="64">
-      <select id="hwRgbTyp">
-        <option value="0">WS2812</option>
-        <option value="1">SK6812 / SK68xx</option>
-      </select>
+    <label>LEDs</label>
+    <table class="rows" id="hwLedTbl"></table>
+    <div class="rowbtns">
+      <button class="sec ico" onclick="rowAdd('led')" title="Zeile hinzufuegen">+</button>
+      <button class="sec ico" onclick="rowDel('led')" title="Markierte Zeile entfernen">&minus;</button>
     </div>
-    <p><small>Adressierbare LED an einer Datenleitung. Mehrere kaskadierte
-    LEDs zeigen dasselbe Bild. Beide Typen erwarten dieselbe Reihenfolge
-    (Gruen, Rot, Blau) und unterscheiden sich nur in der Bitdauer.</small></p>
+    <p><small>Eine adressierbare LED ist eine Position in einer Kette. Zeilen
+    mit demselben GPIO gehoeren zur selben Kette und brauchen denselben Chiptyp,
+    aber verschiedene Positionen.</small></p>
+  </div>
+
+  <div class="grp">
+    <label>Zuordnung Taster</label>
+    <table class="rows" id="hwBaTbl"></table>
+    <div class="rowbtns">
+      <button class="sec ico" onclick="rowAdd('ba')" title="Zeile hinzufuegen">+</button>
+      <button class="sec ico" onclick="rowDel('ba')" title="Markierte Zeile entfernen">&minus;</button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <label>Zuordnung LEDs</label>
+    <table class="rows" id="hwLaTbl"></table>
+    <div class="rowbtns">
+      <button class="sec ico" onclick="rowAdd('la')" title="Zeile hinzufuegen">+</button>
+      <button class="sec ico" onclick="rowDel('la')" title="Markierte Zeile entfernen">&minus;</button>
+    </div>
+    <p><small>Werkeinstellungen loescht alles, auch die WLAN-Zugangsdaten.
+    WLAN ein/aus wirkt nach einem Neustart &ndash; ohne Ethernet ist das Geraet
+    danach nur noch ueber einen Taster erreichbar.</small></p>
   </div>
 
   <div class="grp">
@@ -368,6 +401,8 @@ const EN = {
 'automatisch (DHCP)':'automatic (DHCP)',
 'Takt':'Clock', 'Freier Speicher':'Free memory',
 'Quelle':'Source', 'LED / Taster':'LED / button', 'Status-LED':'Status LED',
+'Herzschlag \u2013 alle 2 Sekunden ein weisser Blitz':
+  'Heartbeat \u2013 a white flash every 2 seconds',
 
 'KNX zur\u00fccksetzen':'Reset KNX', 'Einstellungen':'Settings',
 'ETS-Programmierung l\u00f6schen':'Erase the ETS programming',
@@ -428,16 +463,34 @@ const EN = {
 'KNX \u2013 UART-Nummer / RX / TX':'KNX \u2013 UART number / RX / TX',
 'Programmier-LED / Taster (\u22121 = nicht bestueckt)':
   'Programming LED / button (\u22121 = not fitted)',
-'Status-LED \u2013 GPIO / Anzahl / Typ (\u22121 = nicht bestueckt)':
-  'Status LED \u2013 GPIO / count / type (\u22121 = not fitted)',
-'Herzschlag \u2013 alle 2 Sekunden ein weisser Blitz':
-  'Heartbeat \u2013 a white flash every 2 seconds',
-['Adressierbare LED an einer Datenleitung. Mehrere kaskadierte LEDs zeigen '
-+ 'dasselbe Bild. Beide Typen erwarten dieselbe Reihenfolge (Gruen, Rot, '
-+ 'Blau) und unterscheiden sich nur in der Bitdauer.']:
-  'An addressable LED on a single data line. Cascaded LEDs all show the same '
-+ 'colour. Both types expect the same byte order (green, red, blue) and '
-+ 'differ only in bit timing.',
+'Taster':'Buttons', 'LEDs':'LEDs',
+'Zuordnung Taster':'Button assignment', 'Zuordnung LEDs':'LED assignment',
+'kurzer Druck':'short press', 'langer Druck':'long press',
+'sehr langer Druck':'very long press',
+'RGB-LED':'RGB LED',
+'Programmiermodus':'Programming mode', 'Werkeinstellungen':'Factory reset',
+'WLAN Grundeinstellung':'WiFi setup', 'Geraet neu starten':'Restart the device',
+'WLAN ein/aus':'WiFi on/off',
+'Programmier-LED':'Programming LED', 'Heartbeat-LED':'Heartbeat LED',
+'keine':'none',
+'hoechstens 8 Zeilen':'at most 8 rows',
+'Bitte zuerst eine Zeile anklicken.':'Select a row first.',
+['Kurz ist ein Druck unter einer Sekunde, lang ab zwei Sekunden, sehr lang '
++ 'ab sechs. Derselbe GPIO darf mehrfach vorkommen, solange sich die '
++ 'Auesloesung unterscheidet.']:
+  'Short means under one second, long from two seconds, very long from six. '
++ 'The same GPIO may appear more than once as long as the trigger differs.',
+['Eine adressierbare LED ist eine Position in einer Kette. Zeilen mit '
++ 'demselben GPIO gehoeren zur selben Kette und brauchen denselben Chiptyp, '
++ 'aber verschiedene Positionen.']:
+  'An addressable LED is one position in a chain. Rows sharing a GPIO belong '
++ 'to the same chain and need the same chip type but different positions.',
+['Werkeinstellungen loescht alles, auch die WLAN-Zugangsdaten. WLAN ein/aus '
++ 'wirkt nach einem Neustart \u2013 ohne Ethernet ist das Geraet danach nur '
++ 'noch ueber einen Taster erreichbar.']:
+  'Factory reset erases everything, including the WiFi credentials. WiFi '
++ 'on/off takes effect after a restart - without Ethernet the device is then '
++ 'only reachable through a button.',
 'LED low-aktiv':'LED active low',
 'RTC ueber I2C anschliessen':'Connect an RTC via I2C',
 'Ethernet W5500 anschliessen':'Connect an Ethernet W5500',
@@ -446,6 +499,9 @@ const EN = {
 
 'Aenderungen am Profil werden erst nach einem Neustart aktiv.':
   'Profile changes take effect after a restart.',
+'Zeile hinzufuegen':'Add a row',
+'Markierte Zeile entfernen':'Remove the selected row',
+'low-aktiv':'active low',
 'Nach dem Verbinden startet das Geraet neu.':
   'The device restarts after connecting.',
 ['Ohne Internetzugang NTP abschalten und die Zeit per Browser oder manuell '
@@ -529,6 +585,11 @@ const EN = {
 /** Translate a single string. Unknown text stays German. */
 const t = s => (LANG === 'en' && EN[s]) || s;
 
+/** Escape for insertion into markup. Names are whitelisted by the firmware,
+ *  but the editor also shows what the user is still typing. */
+const esc = s => String(s).replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
 // Everything static lives in one of these; dynamic values sit in the second
 // span of a row or carry data-dyn, and are never touched here.
 const I18N_SEL = 'h2,.row>span:first-child,button,label,small:not([data-dyn]),option';
@@ -550,6 +611,11 @@ function applyLang(){
   document.querySelectorAll('[placeholder]').forEach(el => {
     if(el.dePh === undefined) el.dePh = el.placeholder;
     el.placeholder = (LANG === 'en' && EN[el.dePh]) || el.dePh;
+  });
+
+  document.querySelectorAll('[title]').forEach(el => {
+    if(el.deTitle === undefined) el.deTitle = el.title;
+    el.title = (LANG === 'en' && EN[el.deTitle]) || el.deTitle;
   });
 
   $('langBtn').textContent = LANG === 'de' ? 'EN' : 'DE';
@@ -581,9 +647,12 @@ function prefixLen(mask){
 
 // Dim a group while its leading checkbox is off, so the fields read as
 // belonging to the switch above them rather than standing on their own.
+// Only a checkbox that IS the group's first element counts - the row editors
+// contain checkboxes of their own, and those govern a single LED, not a box.
 function syncGroups(){
   document.querySelectorAll('.grp').forEach(g => {
-    const cb = g.querySelector('label.chk input');
+    const head = g.firstElementChild;
+    const cb = (head && head.matches('label.chk')) ? head.querySelector('input') : null;
     if(cb) g.classList.toggle('off', !cb.checked);
   });
 }
@@ -618,7 +687,7 @@ async function refresh(){
   $('pmBtn').className    = s.prog_mode ? 'on' : '';
   $('rtAll').checked      = s.knx_route_all;
 
-  $('beatRow').style.display = s.led_present ? '' : 'none';
+  $('beatRow').style.display = s.led_beat_available ? '' : 'none';
   $('beat').checked          = s.led_heartbeat;
 
   $('tpConn').innerHTML = dot(s.tp.connected);
@@ -837,15 +906,28 @@ async function sendTime(){
 }
 
 // --- Hardware-Profil ---
-const HWF = ['knx_uart','knx_rx','knx_tx','led','button','rgb_pin','rgb_count',
-             'rgb_type','i2c_sda','i2c_scl','eth_sck','eth_miso','eth_mosi',
+const HWF = ['knx_uart','knx_rx','knx_tx',
+             'i2c_sda','i2c_scl','eth_sck','eth_miso','eth_mosi',
              'eth_cs','eth_irq','eth_rst','eth_spi_mhz'];
 const HWID = {knx_uart:'hwUart', knx_rx:'hwRx', knx_tx:'hwTx',
-              led:'hwLedPin', button:'hwBtn', i2c_sda:'hwSda', i2c_scl:'hwScl',
-              rgb_pin:'hwRgbPin', rgb_count:'hwRgbCnt', rgb_type:'hwRgbTyp',
+              i2c_sda:'hwSda', i2c_scl:'hwScl',
               eth_sck:'hwSck', eth_miso:'hwMiso', eth_mosi:'hwMosi',
               eth_cs:'hwCs', eth_irq:'hwIrq', eth_rst:'hwRst'};
 let hwState = null;
+
+// Row editors. Order matches the enums in hw_config.h - the index is what
+// travels over the API, the text is only ever shown.
+const TRIG  = ['kurzer Druck','langer Druck','sehr langer Druck'];
+const LKIND = ['LED','RGB-LED'];
+const RGBT  = ['WS2812','SK6812'];
+const BFUNC = ['Programmiermodus','Werkeinstellungen','WLAN Grundeinstellung',
+               'Geraet neu starten','WLAN ein/aus'];
+const LFUNC = ['Programmier-LED','Heartbeat-LED'];
+
+const RTBL = {btn:'hwBtnTbl', led:'hwLedTbl', ba:'hwBaTbl', la:'hwLaTbl'};
+const RKEY = {btn:'buttons', led:'leds', ba:'button_assign', la:'led_assign'};
+const ROWS = {btn:[], led:[], ba:[], la:[]};
+const RSEL = {btn:-1, led:-1, ba:-1, la:-1};
 
 const FBR = {unconfigured:'Image-Standard', invalid:'ungueltig &rarr; Standard',
              crashloop:'Startfehler &rarr; Standard', button:'Taster &rarr; Standard'};
@@ -862,11 +944,14 @@ async function refreshHw(){
     $('hwSrc').innerHTML += ' <small>' + t('(Neustart noetig)') + '</small>';
 
   $('hwKnx').textContent = 'UART' + a.knx_uart + ', RX ' + a.knx_rx + ', TX ' + a.knx_tx;
-  $('hwLed').textContent = 'GPIO ' + a.led + (a.led_active_low ? ' (low)' : '')
-                         + ' / ' + (a.button < 0 ? t('kein') : 'GPIO ' + a.button);
-  $('hwRgb').textContent = a.rgb_pin < 0 ? t('aus')
-      : 'GPIO ' + a.rgb_pin + ', ' + a.rgb_count + ' x '
-        + (a.rgb_type == 1 ? 'SK6812' : 'WS2812');
+
+  const named = (list, fn) => list.length
+      ? list.map(fn).join(', ') : t('keine');
+  $('hwBtns').textContent = named(a.buttons || [],
+      b => b.name + ' (GPIO ' + b.pin + ', ' + t(TRIG[b.trigger] || '?') + ')');
+  $('hwLeds').textContent = named(a.leds || [],
+      l => l.name + ' (GPIO ' + l.pin
+         + (l.kind == 1 ? ', ' + RGBT[l.rgb_type] + ' #' + l.rgb_index : '') + ')');
   $('hwI2c').textContent = a.i2c_enabled ? ('SDA ' + a.i2c_sda + ', SCL ' + a.i2c_scl)
                                          : t('aus');
   $('hwEth').textContent = a.eth_enabled
@@ -876,10 +961,162 @@ async function refreshHw(){
 
 function hwFill(p){
   for(const k of HWF){ if(HWID[k]) $(HWID[k]).value = p[k]; }
-  $('hwLedLow').checked = p.led_active_low;
   $('hwI2cEn').checked  = p.i2c_enabled;
   $('hwEthEn').checked  = p.eth_enabled;
+  // Deep copy: editing a row must not change the document we compare against
+  // when the user hits "Standard" again.
+  for(const kind in RTBL){
+    ROWS[kind] = (p[RKEY[kind]] || []).map(o => Object.assign({}, o));
+    RSEL[kind] = -1;
+    rowRender(kind);
+  }
   syncGroups();
+}
+
+/* --- Zeileneditoren ------------------------------------------------------ *
+ * Die Zeilen leben in ROWS, die Tabelle ist nur die Anzeige. Vor jedem
+ * Neuzeichnen wird das DOM zurueckgeschrieben, sonst gingen Eingaben beim
+ * Hinzufuegen einer Zeile verloren.
+ * ------------------------------------------------------------------------ */
+
+function gpioOptions(list, sel){
+  return (list || []).map(p =>
+    '<option value="' + p + '"' + (p == sel ? ' selected' : '') + '>' + p + '</option>'
+  ).join('');
+}
+
+function pickOptions(texts, sel){
+  return texts.map((s, i) =>
+    '<option value="' + i + '"' + (i == sel ? ' selected' : '') + '>' + t(s) + '</option>'
+  ).join('');
+}
+
+function nameCell(v){
+  // maxlength und pattern spiegeln nur, was die Firmware ohnehin prueft.
+  return '<input maxlength="16" pattern="[A-Za-z0-9_-]{1,16}" value="' +
+         esc(v == null ? '' : v) + '">';
+}
+
+function rowRender(kind){
+  const tbl = $(RTBL[kind]);
+  const gin = hwState ? hwState.gpio_in : [];
+  const gout = hwState ? hwState.gpio_out : [];
+  let html = '';
+
+  ROWS[kind].forEach((r, i) => {
+    const sel = (RSEL[kind] === i) ? ' class="sel"' : '';
+    html += '<tr' + sel + ' onclick="rowPick(\'' + kind + '\',' + i + ')">';
+
+    if(kind === 'btn'){
+      html += '<td>' + nameCell(r.name) + '</td>';
+      html += '<td><select>' + gpioOptions(gin, r.pin) + '</select></td>';
+      html += '<td><select>' + pickOptions(TRIG, r.trigger) + '</select></td>';
+    }
+    else if(kind === 'led'){
+      html += '<td>' + nameCell(r.name) + '</td>';
+      html += '<td><select>' + gpioOptions(gout, r.pin) + '</select></td>';
+      html += '<td><select onchange="rowSync(\'led\');rowRender(\'led\')">'
+            + pickOptions(LKIND, r.kind) + '</select></td>';
+      if(r.kind == 1){
+        html += '<td><select>' + pickOptions(RGBT, r.rgb_type) + '</select></td>';
+        html += '<td><input type="number" min="0" max="63" value="'
+              + (r.rgb_index|0) + '"></td>';
+      } else {
+        html += '<td colspan="2"><label class="chk"><input type="checkbox"'
+              + (r.active_low ? ' checked' : '') + '> low-aktiv</label></td>';
+      }
+    }
+    else {
+      const names = (kind === 'ba' ? ROWS.btn : ROWS.led).map(x => x.name);
+      html += '<td><select>' + names.map(n =>
+                '<option' + (n === r.target ? ' selected' : '') + '>' + esc(n) + '</option>'
+              ).join('') + '</select></td>';
+      html += '<td><select>'
+            + pickOptions(kind === 'ba' ? BFUNC : LFUNC, r.function) + '</select></td>';
+    }
+    html += '</tr>';
+  });
+
+  tbl.innerHTML = html;
+}
+
+/** DOM zurueck in ROWS schreiben. */
+function rowSync(kind){
+  const rows = $(RTBL[kind]).querySelectorAll('tr');
+
+  rows.forEach((tr, i) => {
+    const r = ROWS[kind][i];
+    if(!r) return;
+    const f = tr.querySelectorAll('input,select');
+
+    if(kind === 'btn'){
+      r.name    = f[0].value.trim();
+      r.pin     = parseInt(f[1].value, 10);
+      r.trigger = parseInt(f[2].value, 10);
+    }
+    else if(kind === 'led'){
+      r.name = f[0].value.trim();
+      r.pin  = parseInt(f[1].value, 10);
+      r.kind = parseInt(f[2].value, 10);
+      if(r.kind == 1){
+        r.rgb_type  = parseInt(f[3].value, 10);
+        r.rgb_index = parseInt(f[4].value, 10);
+      } else {
+        r.active_low = f[3].checked;
+      }
+    }
+    else {
+      r.target   = f[0].value;
+      r.function = parseInt(f[1].value, 10);
+    }
+  });
+}
+
+function rowPick(kind, i){
+  // Kein Neuzeichnen: ein Klick ins Namensfeld wuerde sonst den Cursor
+  // verlieren, weil die Tabelle unter der Eingabe neu gebaut wird.
+  RSEL[kind] = i;
+  $(RTBL[kind]).querySelectorAll('tr')
+               .forEach((tr, n) => tr.classList.toggle('sel', n === i));
+}
+
+function rowAdd(kind){
+  rowSync(kind);
+  const max = (kind === 'btn' || kind === 'led') ? 8 : 8;
+  if(ROWS[kind].length >= max){
+    $('hwErr').textContent = t('hoechstens 8 Zeilen');
+    return;
+  }
+  if(kind === 'btn')
+    ROWS.btn.push({name:'', pin:(hwState.gpio_in||[0])[0], trigger:0});
+  else if(kind === 'led')
+    ROWS.led.push({name:'', pin:(hwState.gpio_out||[0])[0], kind:0,
+                   active_low:false, rgb_type:0, rgb_index:0});
+  else
+    ROWS[kind].push({target:(kind === 'ba' ? ROWS.btn : ROWS.led).map(x=>x.name)[0] || '',
+                     function:0});
+  RSEL[kind] = ROWS[kind].length - 1;
+  rowRender(kind);
+}
+
+function rowDel(kind){
+  rowSync(kind);
+  const i = RSEL[kind];
+  if(i < 0 || i >= ROWS[kind].length){
+    $('hwErr').textContent = t('Bitte zuerst eine Zeile anklicken.');
+    return;
+  }
+  ROWS[kind].splice(i, 1);
+  RSEL[kind] = -1;
+  rowRender(kind);
+  // Eine geloeschte LED oder Taste darf in keiner Zuordnung stehenbleiben.
+  if(kind === 'btn' || kind === 'led'){
+    const other = (kind === 'btn') ? 'ba' : 'la';
+    const names = ROWS[kind].map(x => x.name);
+    ROWS[other] = ROWS[other].filter(a => names.includes(a.target));
+    RSEL[other] = -1;
+    rowRender(other);
+  }
 }
 
 async function openHw(){
@@ -897,9 +1134,12 @@ function hwDefaults(){ if(hwState) hwFill(hwState.defaults); }
 function hwCollect(){
   const p = {};
   for(const k of HWF){ if(HWID[k]) p[k] = parseInt($(HWID[k]).value, 10); }
-  p.led_active_low = $('hwLedLow').checked;
   p.i2c_enabled    = $('hwI2cEn').checked;
   p.eth_enabled    = $('hwEthEn').checked;
+  for(const kind in RTBL){
+    rowSync(kind);
+    p[RKEY[kind]] = ROWS[kind];
+  }
   return p;
 }
 
