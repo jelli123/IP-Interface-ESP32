@@ -26,7 +26,7 @@ static const char* NS = "hwcfg";
  * random GPIO numbers to pinMode(), which is a good deal worse than losing
  * the configuration: bump this and the lists fall back to the defaults.
  */
-static const uint8_t IO_VERSION = 1;
+static const uint8_t IO_VERSION = 2;
 
 /** Copy a name into a fixed field, always terminated. */
 static void copyName(char* dst, const String& src)
@@ -79,22 +79,21 @@ int8_t HwProfile::findButton(const char* name) const
     return -1;
 }
 
-int8_t HwProfile::findLedFor(uint8_t function) const
+bool HwProfile::usesCondition(uint8_t condition) const
 {
-    for (uint8_t i = 0; i < ledAssignCount && i < HW_MAX_ASSIGN; i++)
+    for (uint8_t i = 0; i < ledAssignCount && i < HW_MAX_LED_ASSIGN; i++)
     {
-        if (ledAssign[i].function == function)
+        if (ledAssign[i].condition == condition && findLed(ledAssign[i].target) >= 0)
         {
-            int8_t at = findLed(ledAssign[i].target);
-            if (at >= 0) return at;
+            return true;
         }
     }
-    return -1;
+    return false;
 }
 
 int8_t HwProfile::findButtonFor(uint8_t function) const
 {
-    for (uint8_t i = 0; i < btnAssignCount && i < HW_MAX_ASSIGN; i++)
+    for (uint8_t i = 0; i < btnAssignCount && i < HW_MAX_BTN_ASSIGN; i++)
     {
         if (btnAssign[i].function == function)
         {
@@ -128,10 +127,6 @@ HwProfile HwConfig::defaults()
         led.pin       = SBIP_LED_PIN;
         led.kind      = HW_LED_PLAIN;
         led.activeLow = (SBIP_LED_ACTIVE_LOW != 0);
-
-        HwAssignment& a = p.ledAssign[p.ledAssignCount++];
-        copyName(a.target, "prog");
-        a.function = HW_LEDF_PROG;
     }
 #endif
 
@@ -143,15 +138,45 @@ HwProfile HwConfig::defaults()
         led.kind     = HW_LED_RGB;
         led.rgbType  = SBIP_RGB_TYPE;
         led.rgbIndex = 0;
-
-        // On a board whose only indicator is the RGB LED it shows the
-        // programming mode as well - that is the one signal a KNX installer
-        // actually needs at the device.
-        HwAssignment& a = p.ledAssign[p.ledAssignCount++];
-        copyName(a.target, "rgb");
-        a.function = (p.ledCount > 1) ? HW_LEDF_HEARTBEAT : HW_LEDF_PROG;
     }
 #endif
+
+    /*
+     * One LED shows everything, in falling priority. On a board whose only
+     * indicator is the RGB LED this is the whole user interface, so it has to
+     * carry the programming mode as well - that is the one signal a KNX
+     * installer actually needs while standing at the device.
+     */
+    if (p.ledCount > 0)
+    {
+        const char* first = p.leds[0].name;
+        const char* last  = p.leds[p.ledCount - 1].name;
+
+        struct Row
+        {
+            const char* target;
+            uint8_t     condition;
+            uint8_t     colour;
+            uint8_t     pattern;
+        };
+
+        const Row rows[] = {
+            { first, HW_COND_PROG_MODE, HW_COL_RED,    HW_PAT_BLINK_SLOW },
+            { last,  HW_COND_AP_MODE,   HW_COL_BLUE,   HW_PAT_DOUBLE     },
+            { last,  HW_COND_TP_DOWN,   HW_COL_YELLOW, HW_PAT_BLINK_FAST },
+            { last,  HW_COND_ONLINE,    HW_COL_GREEN,  HW_PAT_STEADY     },
+            { last,  HW_COND_HEARTBEAT, HW_COL_WHITE,  HW_PAT_FLASH      },
+        };
+
+        for (size_t i = 0; i < sizeof(rows) / sizeof(rows[0]); i++)
+        {
+            HwLedAssignment& a = p.ledAssign[p.ledAssignCount++];
+            copyName(a.target, rows[i].target);
+            a.condition = rows[i].condition;
+            a.colour    = rows[i].colour;
+            a.pattern   = rows[i].pattern;
+        }
+    }
 
 #if SBIP_BUTTON_PIN >= 0
     {
@@ -278,7 +303,7 @@ bool HwConfig::validate(const HwProfile& p, String& error)
     };
 
     if (p.buttonCount > HW_MAX_BUTTONS || p.ledCount > HW_MAX_LEDS ||
-        p.btnAssignCount > HW_MAX_ASSIGN || p.ledAssignCount > HW_MAX_ASSIGN)
+        p.btnAssignCount > HW_MAX_BTN_ASSIGN || p.ledAssignCount > HW_MAX_LED_ASSIGN)
     {
         error = "too many rows";
         return false;
@@ -458,11 +483,21 @@ bool HwConfig::validate(const HwProfile& p, String& error)
 
     for (uint8_t i = 0; i < p.ledAssignCount; i++)
     {
-        const HwAssignment& a = p.ledAssign[i];
+        const HwLedAssignment& a = p.ledAssign[i];
 
-        if (a.function >= HW_LEDF_COUNT)
+        if (a.condition >= HW_COND_COUNT)
         {
-            error = "unknown LED function";
+            error = "unknown LED state";
+            return false;
+        }
+        if (a.colour >= HW_COL_COUNT)
+        {
+            error = "unknown LED colour";
+            return false;
+        }
+        if (a.pattern >= HW_PAT_COUNT)
+        {
+            error = "unknown LED pattern";
             return false;
         }
         if (!nameValid(a.target) || p.findLed(a.target) < 0)
@@ -470,11 +505,15 @@ bool HwConfig::validate(const HwProfile& p, String& error)
             error = String("LED assignment refers to unknown LED");
             return false;
         }
+
+        // Several states per LED are the point of the list, but the same
+        // state twice on one LED means the lower row can never be reached.
         for (uint8_t j = i + 1; j < p.ledAssignCount; j++)
         {
-            if (strncmp(a.target, p.ledAssign[j].target, HW_NAME_MAX + 1) == 0)
+            if (a.condition == p.ledAssign[j].condition &&
+                strncmp(a.target, p.ledAssign[j].target, HW_NAME_MAX + 1) == 0)
             {
-                error = String("LED ") + a.target + " has more than one function";
+                error = String("LED ") + a.target + " has the same state twice";
                 return false;
             }
         }
@@ -648,8 +687,8 @@ void HwConfig::loadLists(const HwProfile& d)
     const Blob blobs[] = {
         { "btns", _stored.buttons,   sizeof(_stored.buttons),   &_stored.buttonCount,    "btnc", HW_MAX_BUTTONS },
         { "leds", _stored.leds,      sizeof(_stored.leds),      &_stored.ledCount,       "ledc", HW_MAX_LEDS    },
-        { "bact", _stored.btnAssign, sizeof(_stored.btnAssign), &_stored.btnAssignCount, "bacc", HW_MAX_ASSIGN  },
-        { "lact", _stored.ledAssign, sizeof(_stored.ledAssign), &_stored.ledAssignCount, "lacc", HW_MAX_ASSIGN  },
+        { "bact", _stored.btnAssign, sizeof(_stored.btnAssign), &_stored.btnAssignCount, "bacc", HW_MAX_BTN_ASSIGN },
+        { "lact", _stored.ledAssign, sizeof(_stored.ledAssign), &_stored.ledAssignCount, "lacc", HW_MAX_LED_ASSIGN },
     };
 
     bool ok = (prefs.getUChar("iover", 0) == IO_VERSION);
@@ -687,9 +726,9 @@ void HwConfig::loadLists(const HwProfile& d)
         _stored.buttons[i].name[HW_NAME_MAX] = '\0';
     for (uint8_t i = 0; i < HW_MAX_LEDS; i++)
         _stored.leds[i].name[HW_NAME_MAX] = '\0';
-    for (uint8_t i = 0; i < HW_MAX_ASSIGN; i++)
+    for (uint8_t i = 0; i < HW_MAX_BTN_ASSIGN; i++)
         _stored.btnAssign[i].target[HW_NAME_MAX] = '\0';
-    for (uint8_t i = 0; i < HW_MAX_ASSIGN; i++)
+    for (uint8_t i = 0; i < HW_MAX_LED_ASSIGN; i++)
         _stored.ledAssign[i].target[HW_NAME_MAX] = '\0';
 }
 
@@ -760,25 +799,6 @@ void HwConfig::begin()
     }
 
     /*
-     * Escape hatch.
-     *
-     * Uses the COMPILE-TIME button pin, never the stored one: if the stored
-     * profile is what locked the user out, its button pin cannot be trusted
-     * either. Only meaningful when the image was built with a button.
-     */
-#if SBIP_BUTTON_PIN >= 0
-    pinMode(SBIP_BUTTON_PIN, INPUT_PULLUP);
-    delay(5); // let the pull-up settle before sampling
-    if (digitalRead(SBIP_BUTTON_PIN) == LOW)
-    {
-        _active   = d;
-        _fallback = FB_BUTTON;
-        Serial.println("HW: button held at boot - using built-in defaults");
-        return;
-    }
-#endif
-
-    /*
      * Crash-loop guard.
      *
      * store() resets the counter, every boot increments it, and loop() clears
@@ -786,6 +806,12 @@ void HwConfig::begin()
      * crashing before that therefore counts up and is dropped - the same
      * pattern the OTA rollback uses, and the reason a bad pin assignment
      * cannot brick the device.
+     *
+     * This is the only automatic way back. Holding a button during startup
+     * cannot be one: the button every DevKit has is the boot strapping pin
+     * (GPIO 0 on ESP32/S2/S3, GPIO 9 on C3/C6), and holding it across reset
+     * puts the ROM into serial download mode instead of starting the
+     * application. At runtime the factory reset function does the job.
      */
     prefs.begin(NS, false);
     uint8_t attempts = prefs.getUChar("boots", 0);
@@ -862,7 +888,6 @@ const char* HwConfig::fallbackReason() const
     case FB_UNCONFIGURED: return "unconfigured";
     case FB_INVALID:      return "invalid";
     case FB_CRASHLOOP:    return "crashloop";
-    case FB_BUTTON:       return "button";
     }
     return "";
 }
@@ -957,15 +982,17 @@ bool HwConfig::applyJson(const String& json, String& error)
                      l.rgbType   = (uint8_t)jsonGetInt(e, "rgb_type", HW_RGB_WS2812);
                      l.rgbIndex  = (uint8_t)jsonGetInt(e, "rgb_index", 0);
                  }, error) &&
-        readList(json, "button_assign", HW_MAX_ASSIGN, p.btnAssignCount, p.btnAssign,
+        readList(json, "button_assign", HW_MAX_BTN_ASSIGN, p.btnAssignCount, p.btnAssign,
                  [](HwAssignment& a, const String& e) {
                      copyName(a.target, jsonGetString(e, "target"));
                      a.function = (uint8_t)jsonGetInt(e, "function", HW_BTNF_COUNT);
                  }, error) &&
-        readList(json, "led_assign", HW_MAX_ASSIGN, p.ledAssignCount, p.ledAssign,
-                 [](HwAssignment& a, const String& e) {
+        readList(json, "led_assign", HW_MAX_LED_ASSIGN, p.ledAssignCount, p.ledAssign,
+                 [](HwLedAssignment& a, const String& e) {
                      copyName(a.target, jsonGetString(e, "target"));
-                     a.function = (uint8_t)jsonGetInt(e, "function", HW_LEDF_COUNT);
+                     a.condition = (uint8_t)jsonGetInt(e, "condition", HW_COND_COUNT);
+                     a.colour    = (uint8_t)jsonGetInt(e, "colour", HW_COL_COUNT);
+                     a.pattern   = (uint8_t)jsonGetInt(e, "pattern", HW_PAT_COUNT);
                  }, error);
 
     if (!ok)
@@ -1013,18 +1040,20 @@ String HwConfig::profileToJson(const HwProfile& p)
         j += ",\"rgb_index\":" + String(p.leds[i].rgbIndex) + "}";
     }
     j += "],\"button_assign\":[";
-    for (uint8_t i = 0; i < p.btnAssignCount && i < HW_MAX_ASSIGN; i++)
+    for (uint8_t i = 0; i < p.btnAssignCount && i < HW_MAX_BTN_ASSIGN; i++)
     {
         if (i) j += ",";
         j += "{\"target\":\"" + jsonEscape(p.btnAssign[i].target) + "\"";
         j += ",\"function\":" + String(p.btnAssign[i].function) + "}";
     }
     j += "],\"led_assign\":[";
-    for (uint8_t i = 0; i < p.ledAssignCount && i < HW_MAX_ASSIGN; i++)
+    for (uint8_t i = 0; i < p.ledAssignCount && i < HW_MAX_LED_ASSIGN; i++)
     {
         if (i) j += ",";
         j += "{\"target\":\"" + jsonEscape(p.ledAssign[i].target) + "\"";
-        j += ",\"function\":" + String(p.ledAssign[i].function) + "}";
+        j += ",\"condition\":" + String(p.ledAssign[i].condition);
+        j += ",\"colour\":" + String(p.ledAssign[i].colour);
+        j += ",\"pattern\":" + String(p.ledAssign[i].pattern) + "}";
     }
     j += "],";
 

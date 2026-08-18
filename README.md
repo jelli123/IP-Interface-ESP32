@@ -146,7 +146,9 @@ Beispiel:
     { "target": "setup", "function": 2 }
   ],
   "led_assign": [
-    { "target": "rgb", "function": 0 }
+    { "target": "rgb", "condition": 0, "colour": 0, "pattern": 1 },
+    { "target": "rgb", "condition": 3, "colour": 1, "pattern": 0 },
+    { "target": "rgb", "condition": 5, "colour": 6, "pattern": 4 }
   ],
   "i2c_enabled": true,
   "i2c_sda": 8,
@@ -197,10 +199,18 @@ Programmiermodus, lang für die WLAN-Einrichtung.
 | 3 | Gerät neu starten | Neustart |
 | 4 | WLAN ein/aus | schaltet das Funkmodul um, wirkt nach dem Neustart |
 
-> **Vorsicht bei 1 und 4.** Werkeinstellungen löscht auch die
-> WLAN-Zugangsdaten und das Hardware-Profil. „WLAN ein/aus" macht das Gerät
-> ohne Ethernet unerreichbar – zurück geht es dann nur über einen Taster.
-> Beides braucht physischen Zugang, was die Absicherung ist.
+> **Vorsicht bei 1.** Werkeinstellungen löscht auch die WLAN-Zugangsdaten und
+> das Hardware-Profil. Das braucht physischen Zugang, was die Absicherung ist.
+
+**WLAN abschalten geht nur mit Ethernet-Hardware.** Voraussetzung ist, dass
+der W5500 beim Start geantwortet hat – ein Kabel oder eine IP-Adresse ist
+**nicht** nötig. Ein gesteckter, aber nicht verbundener Chip lässt einen Weg
+zurück offen; gar kein Chip nicht.
+
+Das wird an zwei Stellen geprüft: Der Taster verweigert das Abschalten, und
+`NetManager::begin()` schaltet das Funkmodul beim Start wieder ein, wenn kein
+W5500 antwortet. Damit sperrt auch ein ausgebautes Ethernet-Board niemanden
+aus – das Gerät kommt beim nächsten Start von selbst mit WLAN hoch.
 
 ### LEDs
 
@@ -225,19 +235,45 @@ meist trotzdem, nur mit weniger Reserve.
 
 **Funktionen** (`function` in `led_assign`):
 
-| Wert | Funktion | Anzeige |
-| --- | --- | --- |
-| 0 | Programmier-LED | blinkt im halben Sekundentakt, solange der Programmiermodus läuft |
-| 1 | Heartbeat-LED | alle 2 s ein 40 ms kurzer weißer Blitz |
+**Zuordnung** (`led_assign`): Jede Zeile verbindet eine LED mit **einem
+Zustand**, einer Farbe und einem Muster. Dieselbe LED darf beliebig oft
+vorkommen – genau darum geht es.
 
-Der Heartbeat lässt sich auf der Startseite ein- und ausschalten und ist
-standardmäßig **aus**. Trägt eine LED beide Funktionen, hat der
-Programmiermodus Vorrang.
+| Feld | Werte |
+| --- | --- |
+| `target` | Name aus `leds` |
+| `condition` | `0` Programmiermodus aktiv, `1` AP-Modus offen, `2` keine TP-Verbindung, `3` online, `4` offline, `5` Herzschlag |
+| `colour` | `0` rot, `1` grün, `2` blau, `3` gelb, `4` cyan, `5` magenta, `6` weiß |
+| `pattern` | `0` Dauerlicht, `1` langsam blinken (1 Hz), `2` schnell blinken (5 Hz), `3` Doppelblitz, `4` kurzer Blitz alle 2 s |
 
-> Die frühere Netzwerkanzeige (Doppelblinken im AP-Modus, schnelles Blinken bei
-> fehlender TP-Verbindung, Dauerlicht online) ist damit **entfallen** – dafür
-> gibt es derzeit keine Funktion. Falls sie fehlt, ist eine dritte
-> LED-Funktion die naheliegende Ergänzung.
+**Die Reihenfolge ist die Rangfolge.** Pro LED gilt die oberste Zeile, deren
+Zustand gerade zutrifft; alles darunter ist für diese LED verdeckt. Im
+Dashboard verschieben ↑ und ↓ die markierte Zeile. Damit zeigt eine
+**einzelne** LED nacheinander alles, was gerade wichtig ist – der
+Programmiermodus verdeckt den Netzzustand, dieser den Herzschlag.
+
+Die Vorgabe legt genau das an:
+
+| # | Zustand | Farbe | Muster |
+| --- | --- | --- | --- |
+| 1 | Programmiermodus aktiv | rot | langsam blinken |
+| 2 | AP-Modus offen | blau | Doppelblitz |
+| 3 | keine TP-Verbindung | gelb | schnell blinken |
+| 4 | online | grün | Dauerlicht |
+| 5 | Herzschlag | weiß | kurzer Blitz |
+
+Höchstens **zwölf** Zeilen. Derselbe Zustand zweimal auf derselben LED wird
+abgelehnt – die untere Zeile wäre unerreichbar.
+
+Die **Farbe** wirkt nur bei adressierbaren LEDs; eine einfache LED
+unterscheidet die Zustände allein am Muster. Statt eines freien Farbwerts gibt
+es eine feste Palette: Die Helligkeit muss ohnehin gedeckelt werden, und mehr
+als eine Handvoll klar unterscheidbarer Farben kann eine 5-mm-Anzeige nicht
+transportieren.
+
+Der **Herzschlag** ist der einzige Zustand mit einem Schalter auf der
+Startseite; er ist standardmäßig **aus**. Wie er aussieht, steht trotzdem im
+Profil.
 
 ### Änderungen brauchen einen Neustart
 
@@ -265,9 +301,10 @@ ab:
   Tasterzeilen mit **verschiedener Auslösung** und mehrere LED-Zeilen auf
   **derselben Kette**.
 * Namen außerhalb `A-Z a-z 0-9 _ -` oder länger als 16 Zeichen, doppelte
-  Namen, mehr als acht Zeilen je Liste
-* Zuordnungen auf unbekannte Namen, unbekannte Funktionsnummern und mehrere
-  Funktionen für denselben Taster bzw. dieselbe LED
+  Namen, zu viele Zeilen (acht je Liste, zwölf bei der LED-Zuordnung)
+* Zuordnungen auf unbekannte Namen, unbekannte Funktions-, Zustands-, Farb-
+  oder Musternummern, mehrere Funktionen für denselben Taster und derselbe
+  Zustand zweimal auf derselben LED
 * LED-Zeilen auf einer Kette mit unterschiedlichem Chiptyp oder gleicher
   Position
 * UART-Nummern außerhalb `0 … SOC_UART_NUM-1`
@@ -278,9 +315,17 @@ ab:
 durch, wird das Profil verworfen und die Image-Werte greifen. Dasselbe Muster
 wie beim OTA-Rollback.
 
-**3. Taster beim Einschalten.** Gedrückt halten → Image-Werte. Bewusst am
-**Compile-Zeit-Pin**, nicht am gespeicherten: Wenn das Profil den Nutzer
-ausgesperrt hat, ist dessen Taster-Pin ebenfalls nicht vertrauenswürdig.
+**3. Werkeinstellungen zur Laufzeit.** Ein Taster mit dieser Funktion löscht
+die gesamte NVS-Partition, siehe *Taster und LEDs*.
+
+> **Warum es keine Taster-Rettung beim Einschalten gibt.** Naheliegend wäre,
+> den Taster während des Starts gedrückt zu halten. Das kann auf keinem
+> ESP32 funktionieren: Der Taster, den jedes DevKit hat, ist der
+> **Boot-Strapping-Pin** – GPIO 0 bei ESP32, S2 und S3, **GPIO 9** bei C3 und
+> C6. Der wird beim Verlassen des Resets abgetastet; liegt er auf Masse, geht
+> der ROM in den seriellen Download-Modus und die Anwendung startet gar nicht
+> erst. Der Rettungsweg wäre also genau dann tot, wenn man ihn braucht.
+> Deshalb erledigen das die Crash-Loop-Erkennung und der Laufzeit-Taster.
 
 Auf S3-Modulen mit **Octal**-Flash/PSRAM sind zusätzlich GPIO 33–37 belegt.
 Das lässt sich zur Laufzeit nicht erkennen – bei diesen Modulen vorher ins
@@ -304,9 +349,15 @@ zufällig im Flash stand.
 ### Startreihenfolge
 
 `HwConfig::begin()` läuft als **Erstes** in `setup()` – vor Improv, vor
-Ethernet, vor KNX. Es bringt NVS hoch, entscheidet über die Pins und liest den
-Rettungstaster. Kostet rund 20 ms, das Improv-Fenster bleibt also innerhalb
-der zwei Sekunden, die ESP Web Tools abwartet.
+Ethernet, vor KNX. Es bringt NVS hoch und entscheidet über die Pins. Kostet
+rund 20 ms, das Improv-Fenster bleibt also innerhalb der zwei Sekunden, die
+ESP Web Tools abwartet.
+
+Direkt danach kommen `statusLed.begin()` und `buttonService.begin()`: Beide
+brauchen das Profil für ihre Pins, und die Anzeige soll stehen, solange der
+laute Teil des Starts läuft. `ethInterface.begin()` läuft vor
+`netManager.begin()` – nur deshalb kann dort geprüft werden, ob WLAN
+überhaupt abgeschaltet bleiben darf.
 
 Ein Detail: Die UART-Nummer ist ein **Konstruktor-Argument** von
 `HardwareSerial`. Statische Objekte entstehen aber vor `setup()` – also lange

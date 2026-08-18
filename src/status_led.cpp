@@ -8,6 +8,7 @@
 
 #include "hw_config.h"
 #include "knx_link.h"
+#include "net_manager.h"
 #include "status_led.h"
 
 StatusLed statusLed;
@@ -24,18 +25,25 @@ static const uint32_t RMT_HZ     = 10000000;
 static const uint16_t BIT_PERIOD = 12; //!< 1.25 us in ticks
 
 /** Flash length and how far apart the flashes are. */
-static const uint32_t BEAT_PERIOD_MS = 2000;
-static const uint32_t BEAT_ON_MS     = 40;
-
-/** Programming mode blinks at roughly the rate ETS shows next to the device. */
-static const uint32_t PROG_BLINK_MS = 500;
+static const uint32_t FLASH_PERIOD_MS = 2000;
+static const uint32_t FLASH_ON_MS     = 40;
 
 /*
  * Deliberately not full brightness. These chips are painfully bright at 255,
- * and the point here is a sign of life, not illumination.
+ * and the point here is an indicator, not illumination.
  */
-static const uint8_t BEAT_LEVEL = 40;
-static const uint8_t PROG_LEVEL = 60;
+static const uint8_t L = 48;
+
+/** Palette, indexed by HwLedColour. */
+static const uint8_t PALETTE[HW_COL_COUNT][3] = {
+    { L, 0, 0 }, // red
+    { 0, L, 0 }, // green
+    { 0, 0, L }, // blue
+    { L, L, 0 }, // yellow
+    { 0, L, L }, // cyan
+    { L, 0, L }, // magenta
+    { L, L, L }, // white
+};
 
 int8_t StatusLed::chainFor(int8_t pin) const
 {
@@ -51,8 +59,7 @@ void StatusLed::begin()
     const HwProfile& hw = hwConfig.active();
 
     _ledCount     = hw.ledCount;
-    _progLed      = hw.findLedFor(HW_LEDF_PROG);
-    _heartbeatLed = hw.findLedFor(HW_LEDF_HEARTBEAT);
+    _hasHeartbeat = hw.usesCondition(HW_COND_HEARTBEAT);
 
     if (ledPrefs.begin(LED_NS, true))
     {
@@ -118,11 +125,9 @@ void StatusLed::begin()
 
     flush();
 
-    Serial.printf("LEDs: %u configured, prog=%s, heartbeat=%s (%s)\n",
-                  (unsigned)_ledCount,
-                  _progLed >= 0 ? hw.leds[_progLed].name : "none",
-                  _heartbeatLed >= 0 ? hw.leds[_heartbeatLed].name : "none",
-                  _heartbeat ? "on" : "off");
+    Serial.printf("LEDs: %u configured, %u states, heartbeat %s\n",
+                  (unsigned)_ledCount, (unsigned)hw.ledAssignCount,
+                  _hasHeartbeat ? (_heartbeat ? "on" : "off") : "unassigned");
 }
 
 void StatusLed::heartbeat(bool enable)
@@ -134,58 +139,80 @@ void StatusLed::heartbeat(bool enable)
         ledPrefs.putBool(KEY_BEAT, enable);
         ledPrefs.end();
     }
+}
 
-    if (!enable && _beatLit)
+bool StatusLed::conditionHolds(uint8_t condition) const
+{
+    switch (condition)
     {
-        paint(_heartbeatLed, 0, 0, 0);
-        _beatLit = false;
-        flush();
+    case HW_COND_PROG_MODE: return knxLink.progMode();
+    case HW_COND_AP_MODE:   return netManager.isApMode();
+    case HW_COND_TP_DOWN:   return !knxLink.tpConnected();
+    case HW_COND_ONLINE:    return netManager.isOnline() && knxLink.tpConnected();
+    case HW_COND_OFFLINE:   return !netManager.isOnline() && !netManager.isApMode();
+    case HW_COND_HEARTBEAT: return _heartbeat;
+    default:                return false;
     }
 }
 
+bool StatusLed::patternOn(uint8_t pattern, uint32_t now)
+{
+    uint32_t phase = now % 1000;
+
+    switch (pattern)
+    {
+    case HW_PAT_STEADY:     return true;
+    case HW_PAT_BLINK_SLOW: return phase < 500;
+    case HW_PAT_BLINK_FAST: return (now % 200) < 100;
+    case HW_PAT_DOUBLE:     return (phase < 100) || (phase > 200 && phase < 300);
+    case HW_PAT_FLASH:      return (now % FLASH_PERIOD_MS) < FLASH_ON_MS;
+    default:                return false;
+    }
+}
+
+/*
+ * Per LED, the first assignment whose condition holds.
+ *
+ * The list order is the priority, which is the whole user facing model: a row
+ * further up hides everything below it for that LED. No implicit ranking
+ * between "functions" - what the user sees is what they arranged.
+ */
 void StatusLed::loop()
 {
-    uint32_t now = millis();
+    const HwProfile& hw  = hwConfig.active();
+    uint32_t         now = millis();
 
-    /*
-     * Programming mode wins when one LED carries both functions: an installer
-     * standing at the device needs to see that state, and a heartbeat
-     * flickering through it would only be confusing.
-     */
-    if (_progLed >= 0)
+    for (uint8_t i = 0; i < hw.ledCount && i < HW_MAX_LEDS; i++)
     {
-        if (knxLink.progMode())
+        bool painted = false;
+
+        for (uint8_t j = 0; j < hw.ledAssignCount && j < HW_MAX_LED_ASSIGN; j++)
         {
-            if ((uint32_t)(now - _lastProg) >= PROG_BLINK_MS)
+            const HwLedAssignment& a = hw.ledAssign[j];
+
+            if (strncmp(a.target, hw.leds[i].name, HW_NAME_MAX + 1) != 0 ||
+                !conditionHolds(a.condition))
             {
-                _lastProg = now;
-                _progLit  = !_progLit;
-                paint(_progLed, _progLit ? PROG_LEVEL : 0, 0, 0);
+                continue;
             }
-        }
-        else if (_progLit)
-        {
-            _progLit = false;
-            paint(_progLed, 0, 0, 0);
-        }
-    }
 
-    bool beatBlocked = (_progLed >= 0 && _progLed == _heartbeatLed && knxLink.progMode());
+            if (patternOn(a.pattern, now) && a.colour < HW_COL_COUNT)
+            {
+                paint((int8_t)i, PALETTE[a.colour][0], PALETTE[a.colour][1],
+                      PALETTE[a.colour][2]);
+            }
+            else
+            {
+                paint((int8_t)i, 0, 0, 0);
+            }
 
-    if (_heartbeatLed >= 0 && _heartbeat && !beatBlocked)
-    {
-        uint32_t elapsed = now - _lastBeat;
-
-        if (!_beatLit && elapsed >= BEAT_PERIOD_MS)
-        {
-            paint(_heartbeatLed, BEAT_LEVEL, BEAT_LEVEL, BEAT_LEVEL);
-            _beatLit  = true;
-            _lastBeat = now;
+            painted = true;
+            break;
         }
-        else if (_beatLit && elapsed >= BEAT_ON_MS)
+
+        if (!painted)
         {
-            paint(_heartbeatLed, 0, 0, 0);
-            _beatLit = false;
+            paint((int8_t)i, 0, 0, 0);
         }
     }
 

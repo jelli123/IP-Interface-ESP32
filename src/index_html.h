@@ -317,6 +317,9 @@ small{color:var(--dim)}
       <button class="sec ico" onclick="rowAdd('ba')" title="Zeile hinzufuegen">+</button>
       <button class="sec ico" onclick="rowDel('ba')" title="Markierte Zeile entfernen">&minus;</button>
     </div>
+    <p><small>Werkeinstellungen loescht alles, auch die WLAN-Zugangsdaten.
+    WLAN ein/aus laesst sich nur abschalten, wenn ein W5500 erkannt wurde,
+    und wirkt nach einem Neustart.</small></p>
   </div>
 
   <div class="grp">
@@ -325,10 +328,15 @@ small{color:var(--dim)}
     <div class="rowbtns">
       <button class="sec ico" onclick="rowAdd('la')" title="Zeile hinzufuegen">+</button>
       <button class="sec ico" onclick="rowDel('la')" title="Markierte Zeile entfernen">&minus;</button>
+      <button class="sec ico" onclick="rowMove('la',-1)" title="Nach oben">&uarr;</button>
+      <button class="sec ico" onclick="rowMove('la',1)" title="Nach unten">&darr;</button>
     </div>
-    <p><small>Werkeinstellungen loescht alles, auch die WLAN-Zugangsdaten.
-    WLAN ein/aus wirkt nach einem Neustart &ndash; ohne Ethernet ist das Geraet
-    danach nur noch ueber einen Taster erreichbar.</small></p>
+    <p><small>Die Reihenfolge entscheidet: Fuer jede LED gilt die
+    oberste Zeile, deren Zustand gerade zutrifft. Dieselbe LED darf mehrfach
+    vorkommen &ndash; so zeigt eine einzelne LED nacheinander
+    Programmiermodus, Netzzustand und Herzschlag. Die Farbe wirkt nur bei
+    adressierbaren LEDs; eine einfache LED unterscheidet die Zustaende
+    allein am Muster.</small></p>
   </div>
 
   <div class="grp">
@@ -472,10 +480,21 @@ const EN = {
 'WLAN Grundeinstellung':'WiFi setup', 'Geraet neu starten':'Restart the device',
 'WLAN ein/aus':'WiFi on/off',
 'Programmier-LED':'Programming LED', 'Heartbeat-LED':'Heartbeat LED',
+'Netzwerkanzeige':'Network indicator',
+'Programmiermodus aktiv':'Programming mode active',
+'AP-Modus offen':'Access point open',
+'keine TP-Verbindung':'No TP connection',
+'online':'online', 'offline':'offline', 'Herzschlag':'Heartbeat',
+'rot':'red', 'gruen':'green', 'blau':'blue', 'gelb':'yellow',
+'cyan':'cyan', 'magenta':'magenta', 'weiss':'white',
+'Dauerlicht':'steady', 'langsam blinken':'slow blink',
+'schnell blinken':'fast blink', 'Doppelblitz':'double flash',
+'kurzer Blitz':'short flash',
+'Nach oben':'Move up', 'Nach unten':'Move down',
+'mehr Zeilen sind nicht moeglich':'no more rows are possible',
 'keine':'none',
 'hoechstens 8 Zeilen':'at most 8 rows',
-'Bitte zuerst eine Zeile anklicken.':'Select a row first.',
-['Kurz ist ein Druck unter einer Sekunde, lang ab zwei Sekunden, sehr lang '
+'Bitte zuerst eine Zeile anklicken.':'Select a row first.',['Kurz ist ein Druck unter einer Sekunde, lang ab zwei Sekunden, sehr lang '
 + 'ab sechs. Derselbe GPIO darf mehrfach vorkommen, solange sich die '
 + 'Auesloesung unterscheidet.']:
   'Short means under one second, long from two seconds, very long from six. '
@@ -486,11 +505,21 @@ const EN = {
   'An addressable LED is one position in a chain. Rows sharing a GPIO belong '
 + 'to the same chain and need the same chip type but different positions.',
 ['Werkeinstellungen loescht alles, auch die WLAN-Zugangsdaten. WLAN ein/aus '
-+ 'wirkt nach einem Neustart \u2013 ohne Ethernet ist das Geraet danach nur '
-+ 'noch ueber einen Taster erreichbar.']:
++ 'laesst sich nur abschalten, wenn ein W5500 erkannt wurde, und wirkt nach '
++ 'einem Neustart.']:
   'Factory reset erases everything, including the WiFi credentials. WiFi '
-+ 'on/off takes effect after a restart - without Ethernet the device is then '
-+ 'only reachable through a button.',
++ 'on/off can only be switched off once a W5500 has been found, and takes '
++ 'effect after a restart.',
+['Die Reihenfolge entscheidet: Fuer jede LED gilt die oberste Zeile, deren '
++ 'Zustand gerade zutrifft. Dieselbe LED darf mehrfach vorkommen \u2013 so '
++ 'zeigt eine einzelne LED nacheinander Programmiermodus, Netzzustand und '
++ 'Herzschlag. Die Farbe wirkt nur bei adressierbaren LEDs; eine einfache '
++ 'LED unterscheidet die Zustaende allein am Muster.']:
+  'The order decides: for each LED the topmost row whose state currently '
++ 'holds is the one that shows. The same LED may appear more than once - '
++ 'that is how a single LED shows programming mode, network state and a '
++ 'heartbeat in turn. Colour only applies to addressable LEDs; a plain one '
++ 'tells the states apart by pattern alone.',
 'LED low-aktiv':'LED active low',
 'RTC ueber I2C anschliessen':'Connect an RTC via I2C',
 'Ethernet W5500 anschliessen':'Connect an Ethernet W5500',
@@ -922,7 +951,11 @@ const LKIND = ['LED','RGB-LED'];
 const RGBT  = ['WS2812','SK6812'];
 const BFUNC = ['Programmiermodus','Werkeinstellungen','WLAN Grundeinstellung',
                'Geraet neu starten','WLAN ein/aus'];
-const LFUNC = ['Programmier-LED','Heartbeat-LED'];
+const LCOND = ['Programmiermodus aktiv','AP-Modus offen','keine TP-Verbindung',
+               'online','offline','Herzschlag'];
+const LCOL  = ['rot','gruen','blau','gelb','cyan','magenta','weiss'];
+const LPAT  = ['Dauerlicht','langsam blinken','schnell blinken','Doppelblitz',
+               'kurzer Blitz'];
 
 const RTBL = {btn:'hwBtnTbl', led:'hwLedTbl', ba:'hwBaTbl', la:'hwLaTbl'};
 const RKEY = {btn:'buttons', led:'leds', ba:'button_assign', la:'led_assign'};
@@ -930,7 +963,7 @@ const ROWS = {btn:[], led:[], ba:[], la:[]};
 const RSEL = {btn:-1, led:-1, ba:-1, la:-1};
 
 const FBR = {unconfigured:'Image-Standard', invalid:'ungueltig &rarr; Standard',
-             crashloop:'Startfehler &rarr; Standard', button:'Taster &rarr; Standard'};
+             crashloop:'Startfehler &rarr; Standard'};
 
 async function refreshHw(){
   try { hwState = await (await fetch('/api/hwconfig')).json(); }
@@ -1026,13 +1059,28 @@ function rowRender(kind){
               + (r.active_low ? ' checked' : '') + '> low-aktiv</label></td>';
       }
     }
-    else {
-      const names = (kind === 'ba' ? ROWS.btn : ROWS.led).map(x => x.name);
+    else if(kind === 'ba'){
+      const names = ROWS.btn.map(x => x.name);
       html += '<td><select>' + names.map(n =>
                 '<option' + (n === r.target ? ' selected' : '') + '>' + esc(n) + '</option>'
               ).join('') + '</select></td>';
-      html += '<td><select>'
-            + pickOptions(kind === 'ba' ? BFUNC : LFUNC, r.function) + '</select></td>';
+      html += '<td><select>' + pickOptions(BFUNC, r.function) + '</select></td>';
+    }
+    else {
+      html += '<td><select onchange="rowSync(\'la\');rowRender(\'la\')">'
+            + ROWS.led.map(l =>
+                '<option' + (l.name === r.target ? ' selected' : '') + '>'
+                + esc(l.name) + '</option>'
+              ).join('') + '</select></td>';
+      html += '<td><select>' + pickOptions(LCOND, r.condition) + '</select></td>';
+      // Farbe hat nur bei einer adressierbaren LED eine Wirkung. Das Feld
+      // bleibt sichtbar, damit die Spalten nicht springen, wird aber
+      // gesperrt - so ist ohne Erklaerung klar, dass es hier nichts tut.
+      const target = ROWS.led.find(l => l.name === r.target);
+      const rgb = target && target.kind == 1;
+      html += '<td><select' + (rgb ? '' : ' disabled') + '>'
+            + pickOptions(LCOL, r.colour) + '</select></td>';
+      html += '<td><select>' + pickOptions(LPAT, r.pattern) + '</select></td>';
     }
     html += '</tr>';
   });
@@ -1065,9 +1113,15 @@ function rowSync(kind){
         r.active_low = f[3].checked;
       }
     }
-    else {
+    else if(kind === 'ba'){
       r.target   = f[0].value;
       r.function = parseInt(f[1].value, 10);
+    }
+    else {
+      r.target    = f[0].value;
+      r.condition = parseInt(f[1].value, 10);
+      r.colour    = parseInt(f[2].value, 10);
+      r.pattern   = parseInt(f[3].value, 10);
     }
   });
 }
@@ -1080,11 +1134,12 @@ function rowPick(kind, i){
                .forEach((tr, n) => tr.classList.toggle('sel', n === i));
 }
 
+const RMAX = {btn:8, led:8, ba:8, la:12};
+
 function rowAdd(kind){
   rowSync(kind);
-  const max = (kind === 'btn' || kind === 'led') ? 8 : 8;
-  if(ROWS[kind].length >= max){
-    $('hwErr').textContent = t('hoechstens 8 Zeilen');
+  if(ROWS[kind].length >= RMAX[kind]){
+    $('hwErr').textContent = t('mehr Zeilen sind nicht moeglich');
     return;
   }
   if(kind === 'btn')
@@ -1092,10 +1147,29 @@ function rowAdd(kind){
   else if(kind === 'led')
     ROWS.led.push({name:'', pin:(hwState.gpio_out||[0])[0], kind:0,
                    active_low:false, rgb_type:0, rgb_index:0});
+  else if(kind === 'ba')
+    ROWS.ba.push({target: ROWS.btn.map(x=>x.name)[0] || '', function:0});
   else
-    ROWS[kind].push({target:(kind === 'ba' ? ROWS.btn : ROWS.led).map(x=>x.name)[0] || '',
-                     function:0});
+    ROWS.la.push({target: ROWS.led.map(x=>x.name)[0] || '',
+                  condition:3, colour:1, pattern:0});
   RSEL[kind] = ROWS[kind].length - 1;
+  rowRender(kind);
+}
+
+/* Nur bei der LED-Zuordnung sichtbar - dort ist die Reihenfolge die
+ * Rangfolge, sonst spielt sie keine Rolle. */
+function rowMove(kind, dir){
+  rowSync(kind);
+  const i = RSEL[kind];
+  const j = i + dir;
+  if(i < 0 || j < 0 || j >= ROWS[kind].length){
+    $('hwErr').textContent = t('Bitte zuerst eine Zeile anklicken.');
+    return;
+  }
+  const tmp = ROWS[kind][i];
+  ROWS[kind][i] = ROWS[kind][j];
+  ROWS[kind][j] = tmp;
+  RSEL[kind] = j;
   rowRender(kind);
 }
 

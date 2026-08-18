@@ -26,9 +26,10 @@ static const uint8_t HW_NAME_MAX = 16;
 
 enum : uint8_t
 {
-    HW_MAX_BUTTONS = 8,
-    HW_MAX_LEDS    = 8,
-    HW_MAX_ASSIGN  = 8
+    HW_MAX_BUTTONS    = 8,
+    HW_MAX_LEDS       = 8,
+    HW_MAX_BTN_ASSIGN = 8,
+    HW_MAX_LED_ASSIGN = 12 //!< several states may point at the same LED
 };
 
 /** When a button fires. Several rows may share a pin if the trigger differs. */
@@ -56,12 +57,53 @@ enum HwRgbType : uint8_t
     HW_RGB_TYPE_COUNT
 };
 
-/** What an LED shows. */
-enum HwLedFunction : uint8_t
+/**
+ * A device state an LED can react to.
+ *
+ * Deliberately flat rather than "function with sub-states": an LED that shows
+ * the programming mode AND the network AND a heartbeat is the normal case on
+ * a board that only has one, and a nested model would have to special-case
+ * which function may be combined with which.
+ */
+enum HwLedCondition : uint8_t
 {
-    HW_LEDF_PROG = 0,  //!< KNX programming mode
-    HW_LEDF_HEARTBEAT, //!< sign of life
-    HW_LEDF_COUNT
+    HW_COND_PROG_MODE = 0, //!< KNX programming mode is active
+    HW_COND_AP_MODE,       //!< the provisioning access point is open
+    HW_COND_TP_DOWN,       //!< no TP1 connection to the SB-Interface
+    HW_COND_ONLINE,        //!< network and bus are up
+    HW_COND_OFFLINE,       //!< no address, or the cable is unplugged
+    HW_COND_HEARTBEAT,     //!< always, while the heartbeat switch is on
+    HW_COND_COUNT
+};
+
+/** How the LED is modulated while its condition holds. */
+enum HwLedPattern : uint8_t
+{
+    HW_PAT_STEADY = 0,
+    HW_PAT_BLINK_SLOW, //!< 1 Hz
+    HW_PAT_BLINK_FAST, //!< 5 Hz
+    HW_PAT_DOUBLE,     //!< two short pulses per second
+    HW_PAT_FLASH,      //!< one short flash every two seconds
+    HW_PAT_COUNT
+};
+
+/**
+ * Colour of an addressable LED. Ignored by a plain one.
+ *
+ * A fixed palette rather than a free colour value: these chips are painfully
+ * bright, so the brightness has to be capped somewhere, and a handful of
+ * clearly distinguishable colours is all a 5 mm indicator can convey anyway.
+ */
+enum HwLedColour : uint8_t
+{
+    HW_COL_RED = 0,
+    HW_COL_GREEN,
+    HW_COL_BLUE,
+    HW_COL_YELLOW,
+    HW_COL_CYAN,
+    HW_COL_MAGENTA,
+    HW_COL_WHITE,
+    HW_COL_COUNT
 };
 
 /** What a button does. */
@@ -92,11 +134,26 @@ struct HwLed
     uint8_t rgbIndex              = 0;     //!< HW_LED_RGB: position in the chain
 };
 
-/** Ties one named button or LED to one function. */
+/** Ties one named button to one function. */
 struct HwAssignment
 {
     char    target[HW_NAME_MAX + 1] = {0};
     uint8_t function                = 0;
+};
+
+/**
+ * Ties one named LED to one device state.
+ *
+ * Several rows may name the same LED. The first one whose condition holds
+ * wins, so the list order is the priority - which is the only part of this
+ * the user has to keep in mind.
+ */
+struct HwLedAssignment
+{
+    char    target[HW_NAME_MAX + 1] = {0};
+    uint8_t condition               = HW_COND_ONLINE;
+    uint8_t colour                  = HW_COL_GREEN;
+    uint8_t pattern                 = HW_PAT_STEADY;
 };
 
 /** A complete hardware description. Every pin may be -1 for "not fitted". */
@@ -112,10 +169,10 @@ struct HwProfile
     HwButton     buttons[HW_MAX_BUTTONS];
     uint8_t      ledCount    = 0;
     HwLed        leds[HW_MAX_LEDS];
-    uint8_t      btnAssignCount = 0;
-    HwAssignment btnAssign[HW_MAX_ASSIGN];
-    uint8_t      ledAssignCount = 0;
-    HwAssignment ledAssign[HW_MAX_ASSIGN];
+    uint8_t         btnAssignCount = 0;
+    HwAssignment    btnAssign[HW_MAX_BTN_ASSIGN];
+    uint8_t         ledAssignCount = 0;
+    HwLedAssignment ledAssign[HW_MAX_LED_ASSIGN];
 
     // RV-3028-C7 real time clock
     bool    i2cEnabled   = false;
@@ -132,8 +189,8 @@ struct HwProfile
     int8_t  ethRstPin    = -1;
     uint8_t ethSpiMhz    = 20;
 
-    /** @return index into leds[], or -1 when no LED carries @p function */
-    int8_t findLedFor(uint8_t function) const;
+    /** @return true if any LED reacts to @p condition */
+    bool usesCondition(uint8_t condition) const;
 
     /** @return index into buttons[], or -1 when nothing is assigned */
     int8_t findButtonFor(uint8_t function) const;
@@ -151,11 +208,10 @@ public:
     /** Why the built-in defaults are in use. */
     enum Fallback : uint8_t
     {
-        FB_NONE = 0,   //!< a stored profile is active
+        FB_NONE = 0,     //!< a stored profile is active
         FB_UNCONFIGURED, //!< nothing stored yet
-        FB_INVALID,    //!< stored profile failed validation
-        FB_CRASHLOOP,  //!< stored profile did not survive two boots
-        FB_BUTTON      //!< button held during startup
+        FB_INVALID,      //!< stored profile failed validation
+        FB_CRASHLOOP     //!< stored profile did not survive two boots
     };
 
     /**
@@ -165,7 +221,6 @@ public:
      * counter, which loop() clears once the firmware has proven itself.
      */
     void begin();
-
     /** Clears the crash-loop counter after a successful run. */
     void loop();
 

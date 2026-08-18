@@ -47,6 +47,14 @@ void NetManager::setWifiEnabled(bool enable)
     netPrefs.end();
 }
 
+bool NetManager::wifiCanBeDisabled() const
+{
+    // Hardware, not connectivity: ethInterface.begin() has already run by the
+    // time anyone asks, and a detected chip is what guarantees there is a
+    // second way in at all.
+    return ethInterface.chipPresent();
+}
+
 void NetManager::begin()
 {
     _bootTime = millis();
@@ -54,6 +62,22 @@ void NetManager::begin()
     netPrefs.begin(NET_NS, true);
     _wifiEnabled = netPrefs.getBool(KEY_WIFI, true);
     netPrefs.end();
+
+    /*
+     * Self-healing.
+     *
+     * The radio may have been switched off while a W5500 was fitted. If that
+     * board is gone, or its chip no longer answers, WiFi is the only way
+     * left - and the device would come up with no interface at all. Turning
+     * it back on and storing that keeps the state honest instead of leaving
+     * a setting that silently does not apply.
+     */
+    if (!_wifiEnabled && !wifiCanBeDisabled())
+    {
+        Serial.println("WiFi was switched off but no Ethernet chip answered - "
+                       "re-enabling to keep the device reachable");
+        setWifiEnabled(true);
+    }
 
     // NVS was already initialised by HwConfig::begin(), which has to run
     // first anyway to know which pins to use.

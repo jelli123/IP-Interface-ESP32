@@ -139,7 +139,7 @@ void ButtonService::fire(uint8_t slot, uint8_t trigger)
             continue;
         }
 
-        for (uint8_t j = 0; j < hw.btnAssignCount && j < HW_MAX_ASSIGN; j++)
+        for (uint8_t j = 0; j < hw.btnAssignCount && j < HW_MAX_BTN_ASSIGN; j++)
         {
             if (strncmp(hw.btnAssign[j].target, b.name, HW_NAME_MAX + 1) == 0)
             {
@@ -182,6 +182,14 @@ void ButtonService::dispatch(uint8_t function, const char* name)
         break;
 
     case HW_BTNF_WIFI_TOGGLE:
+        // Without a second interface this would take the device off the
+        // network for good - there is no button that brings it back, because
+        // the profile itself lives behind the web interface.
+        if (netManager.wifiEnabled() && !netManager.wifiCanBeDisabled())
+        {
+            Serial.printf("Button %s: WiFi stays on, no Ethernet chip found\n", name);
+            break;
+        }
         // Applied on the next boot. Switching the radio at runtime means a
         // mode change while the AP or the KNX multicast socket is up, which
         // this firmware has already been bitten by once.

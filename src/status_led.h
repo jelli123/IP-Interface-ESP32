@@ -34,14 +34,15 @@ public:
     /** @return true if at least one LED is configured */
     bool present() const { return _ledCount > 0; }
 
-    /** @return true if an LED carries the heartbeat function */
-    bool hasHeartbeat() const { return _heartbeatLed >= 0; }
+    /** @return true if any LED reacts to the heartbeat state */
+    bool hasHeartbeat() const { return _hasHeartbeat; }
 
     /**
-     * A short white flash every two seconds, as a sign of life.
+     * A short flash as a sign of life.
      *
      * Persisted, so it survives a restart. Off by default - a blinking LED in
-     * a distribution board is not everyone's idea of helpful.
+     * a distribution board is not everyone's idea of helpful. Only gates the
+     * heartbeat state; what it looks like comes from the profile.
      */
     void heartbeat(bool enable);
     bool heartbeat() const { return _heartbeat; }
@@ -57,6 +58,8 @@ private:
         bool     dirty   = false;
     };
 
+    bool   conditionHolds(uint8_t condition) const;
+    static bool patternOn(uint8_t pattern, uint32_t now);
     void   paint(int8_t led, uint8_t red, uint8_t green, uint8_t blue);
     void   flush();
     void   writeChain(Chain& chain);
@@ -68,14 +71,8 @@ private:
     uint8_t _chainCount = 0;
     uint8_t _ledCount   = 0;
 
-    int8_t _progLed      = -1;
-    int8_t _heartbeatLed = -1;
-
-    bool     _heartbeat = false;
-    bool     _beatLit   = false;
-    uint32_t _lastBeat  = 0;
-    bool     _progLit   = false;
-    uint32_t _lastProg  = 0;
+    bool _hasHeartbeat = false;
+    bool _heartbeat    = false;
 };
 
 extern StatusLed statusLed;

@@ -89,6 +89,17 @@ public:
     void setWifiEnabled(bool enable);
     bool wifiEnabled() const { return _wifiEnabled; }
 
+    /**
+     * Whether switching WiFi off is allowed at all.
+     *
+     * True once the W5500 has been found. A cable or an address is
+     * deliberately not required - an unplugged but present chip still leaves
+     * a way in, whereas no chip at all would make the device unreachable for
+     * good. begin() re-enables the radio when this is false, so a profile
+     * change or a removed board cannot lock anyone out either.
+     */
+    bool wifiCanBeDisabled() const;
+
 private:
     void handleWifiWatchdog();
     String apName() const;
