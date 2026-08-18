@@ -19,6 +19,7 @@
 #include "interface_config.h"
 #include "knx_link.h"
 
+#include "log_buffer.h"
 KnxLink knxLink;
 
 /*
@@ -87,7 +88,7 @@ public:
 
         if (_knxPartition == nullptr || _knxPartition->size < size + HEADER_SIZE)
         {
-            Serial.println("KNX: knxcfg partition missing or too small");
+            sysLog.println("KNX: knxcfg partition missing or too small");
             return nullptr;
         }
 
@@ -95,7 +96,7 @@ public:
 
         if (_knxMemory == nullptr)
         {
-            Serial.printf("KNX: could not allocate %u bytes of config memory\n",
+            sysLog.printf("KNX: could not allocate %u bytes of config memory\n",
                           (unsigned)size);
             return nullptr;
         }
@@ -122,7 +123,7 @@ public:
 
         // Blank or foreign content. 0xFF is what an unprogrammed device looks
         // like, so the stack starts from scratch instead of from rubbish.
-        Serial.println("KNX: knxcfg holds no valid configuration, starting empty");
+        sysLog.println("KNX: knxcfg holds no valid configuration, starting empty");
         memset(_knxMemory, 0xFF, size);
         return _knxMemory;
     }
@@ -145,7 +146,7 @@ public:
 
         if (erase > _knxPartition->size)
         {
-            Serial.println("KNX: knxcfg partition too small to write");
+            sysLog.println("KNX: knxcfg partition too small to write");
             return;
         }
 
@@ -159,7 +160,7 @@ public:
 
         if (err != ESP_OK)
         {
-            Serial.printf("KNX: writing the knxcfg partition failed: %s\n",
+            sysLog.printf("KNX: writing the knxcfg partition failed: %s\n",
                           esp_err_to_name(err));
         }
     }
@@ -290,7 +291,7 @@ void KnxLink::applyIdentity()
     knxBau.propertyValueWrite(OT_APPLICATION_PROG, 1, PID_PROG_VERSION,
                               count, 1, progVersion, sizeof(progVersion));
 
-    Serial.printf("KNX: %s - manufacturer 0x%04X, application 0x%04X v%u\n",
+    sysLog.printf("KNX: %s - manufacturer 0x%04X, application 0x%04X v%u\n",
                   SBIP_KNX_PRODUCT_NAME,
                   (unsigned)SBIP_KNX_MANUFACTURER_ID,
                   (unsigned)SBIP_KNX_APP_NUMBER,
@@ -406,7 +407,7 @@ void KnxLink::superviseTpLink()
     TpUartDataLinkLayer* tp = knxBau.getSecondaryDataLinkLayer();
     if (tp != nullptr && !tp->isConnected())
     {
-        Serial.println("TP link down - re-running the TP-UART reset handshake");
+        sysLog.println("TP link down - re-running the TP-UART reset handshake");
         tp->reset();
     }
 }
@@ -635,7 +636,7 @@ bool KnxLink::resetConfiguration()
     memset(nvm, 0xFF, size);
     knxPlatform.commitNonVolatileMemory();
 
-    Serial.printf("KNX: configuration cleared (%u bytes), restart required\n",
+    sysLog.printf("KNX: configuration cleared (%u bytes), restart required\n",
                   (unsigned)size);
     return true;
 }
@@ -650,7 +651,7 @@ void KnxLink::restartIpLayer()
 
     ip->enabled(false);
     ip->enabled(true);
-    Serial.println("KNX: KNXnet/IP multicast re-armed on the active interface");
+    sysLog.println("KNX: KNXnet/IP multicast re-armed on the active interface");
 }
 
 /*

@@ -12,6 +12,7 @@
 #include "json_util.h"
 #include "status_led.h"
 
+#include "log_buffer.h"
 HwConfig hwConfig;
 
 static Preferences prefs;
@@ -247,9 +248,11 @@ bool HwConfig::pinIsFlash(int8_t pin)
     if (pin == 16 || pin == 17) return true;
 #endif
 #elif CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3
-    // Quad flash/PSRAM. Octal variants additionally use 33..37, which cannot
-    // be detected here - check the module datasheet before using them.
     if (pin >= 26 && pin <= 32) return true;
+#if CONFIG_SPIRAM_MODE_OCT
+    // Octal PSRAM reaches the module over these; an N8R8 loses them.
+    if (pin >= 35 && pin <= 37) return true;
+#endif
 #elif CONFIG_IDF_TARGET_ESP32C3
     if (pin >= 11 && pin <= 17) return true;
 #elif CONFIG_IDF_TARGET_ESP32C6
@@ -701,7 +704,7 @@ void HwConfig::loadLists(const HwProfile& d)
 
     if (!ok)
     {
-        Serial.println("HW: button/LED lists have a foreign layout - using defaults");
+        sysLog.println("HW: button/LED lists have a foreign layout - using defaults");
         _stored.buttonCount    = d.buttonCount;
         _stored.ledCount       = d.ledCount;
         _stored.btnAssignCount = d.btnAssignCount;
@@ -810,7 +813,7 @@ void HwConfig::store(const HwProfile& p)
     _hasStored     = true;
     _rebootPending = true;
 
-    Serial.printf("HW: profile written in %lu ms\n",
+    sysLog.printf("HW: profile written in %lu ms\n",
                   (unsigned long)(millis() - started));
 }
 
@@ -826,11 +829,11 @@ void HwConfig::begin()
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
     {
-        Serial.println("NVS: erasing and re-initialising");
+        sysLog.println("NVS: erasing and re-initialising");
         nvs_flash_erase();
         err = nvs_flash_init();
     }
-    Serial.printf("NVS init: %s\n", err == ESP_OK ? "OK" : "FAILED");
+    sysLog.printf("NVS init: %s\n", err == ESP_OK ? "OK" : "FAILED");
 
     HwProfile d = defaults();
     load();
@@ -839,7 +842,7 @@ void HwConfig::begin()
     {
         _active   = d;
         _fallback = FB_UNCONFIGURED;
-        Serial.println("HW: using built-in defaults (nothing stored)");
+        sysLog.println("HW: using built-in defaults (nothing stored)");
         return;
     }
 
@@ -869,7 +872,7 @@ void HwConfig::begin()
         _active    = d;
         _hasStored = false;
         _fallback  = FB_CRASHLOOP;
-        Serial.printf("HW: stored profile failed %u boots - reverted to defaults\n",
+        sysLog.printf("HW: stored profile failed %u boots - reverted to defaults\n",
                       attempts);
         return;
     }
@@ -881,13 +884,13 @@ void HwConfig::begin()
     {
         _active   = d;
         _fallback = FB_INVALID;
-        Serial.printf("HW: stored profile rejected (%s) - using defaults\n", error.c_str());
+        sysLog.printf("HW: stored profile rejected (%s) - using defaults\n", error.c_str());
         return;
     }
 
     _active   = _stored;
     _fallback = FB_NONE;
-    Serial.printf("HW: stored profile active (KNX UART%d rx=%d tx=%d)\n",
+    sysLog.printf("HW: stored profile active (KNX UART%d rx=%d tx=%d)\n",
                   _active.knxUartNum, _active.knxRxPin, _active.knxTxPin);
 }
 
@@ -905,7 +908,7 @@ void HwConfig::loop()
         _applyPending = false;
         _active       = _pending;
         statusLed.reload();
-        Serial.println("HW: live profile change applied");
+        sysLog.println("HW: live profile change applied");
     }
 
     if (_counterCleared || millis() < PROVEN_AFTER_MS)
@@ -925,7 +928,7 @@ void HwConfig::loop()
     if (counter.getUChar("boots", 0) != 0)
     {
         counter.putUChar("boots", 0);
-        Serial.println("HW: profile proven, crash-loop counter cleared");
+        sysLog.println("HW: profile proven, crash-loop counter cleared");
     }
     counter.end();
 }
@@ -984,7 +987,7 @@ void HwConfig::resetToDefaults()
     _hasStored     = false;
     _stored        = defaults();
     _rebootPending = true;
-    Serial.println("HW: stored profile cleared, defaults active after reboot");
+    sysLog.println("HW: stored profile cleared, defaults active after reboot");
 }
 
 const char* HwConfig::fallbackReason() const
@@ -1131,14 +1134,14 @@ bool HwConfig::applyJson(const String& json, String& error)
         _pending       = p;
         _applyPending  = true;
         _rebootPending = false;
-        Serial.println("HW: assignments updated, active without a restart");
+        sysLog.println("HW: assignments updated, active without a restart");
     }
     else
     {
-        Serial.println("HW: new profile stored, reboot to activate");
+        sysLog.println("HW: new profile stored, reboot to activate");
     }
 
-    Serial.printf("HW: apply took %lu ms\n", (unsigned long)(millis() - started));
+    sysLog.printf("HW: apply took %lu ms\n", (unsigned long)(millis() - started));
 
     return true;
 }

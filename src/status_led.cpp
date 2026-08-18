@@ -4,6 +4,7 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <esp_heap_caps.h>
 #include <esp32-hal-rmt.h>
 #include <soc/soc_caps.h>
 
@@ -12,6 +13,7 @@
 #include "net_manager.h"
 #include "status_led.h"
 
+#include "log_buffer.h"
 StatusLed statusLed;
 
 static Preferences ledPrefs;
@@ -107,7 +109,7 @@ void StatusLed::begin()
             }
             else
             {
-                Serial.printf("LED %s: no PWM channel, driven on/off\n", led.name);
+                sysLog.printf("LED %s: no PWM channel, driven on/off\n", led.name);
                 pinMode(led.pin, OUTPUT);
                 digitalWrite(led.pin, led.activeLow ? HIGH : LOW);
             }
@@ -122,7 +124,7 @@ void StatusLed::begin()
         {
             if (_chainCount >= MAX_CHAINS)
             {
-                Serial.printf("LED %s: no free RMT chain, ignored\n", led.name);
+                sysLog.printf("LED %s: no free RMT chain, ignored\n", led.name);
                 continue;
             }
             at = (int8_t)_chainCount++;
@@ -141,17 +143,16 @@ void StatusLed::begin()
         Chain& c = _chains[i];
 
         c.colours = (uint8_t*)calloc((size_t)c.length * 3, 1);
-
         if (c.colours == nullptr || !rmtInit(c.pin, RMT_TX_MODE, RMT_MEM_NUM_BLOCKS_1, RMT_HZ))
         {
-            Serial.printf("RGB chain on GPIO %d: setup failed\n", c.pin);
+            sysLog.printf("RGB chain on GPIO %d: setup failed\n", c.pin);
             free(c.colours);
             c.colours = nullptr;
             c.length  = 0;
             continue;
         }
 
-        Serial.printf("RGB chain: %u x %s on GPIO %d\n", (unsigned)c.length,
+        sysLog.printf("RGB chain: %u x %s on GPIO %d\n", (unsigned)c.length,
                       (c.type == HW_RGB_SK6812) ? "SK6812" : "WS2812", c.pin);
 
         /*
@@ -178,7 +179,7 @@ void StatusLed::begin()
             if (!claimed)
             {
                 // Counted from 1 here, like the dashboard shows it.
-                Serial.printf("RGB chain on GPIO %d: position %u has no LED row "
+                sysLog.printf("RGB chain on GPIO %d: position %u has no LED row "
                               "and stays dark\n", c.pin, (unsigned)(pos + 1));
             }
         }
@@ -190,7 +191,7 @@ void StatusLed::begin()
 
     flush();
 
-    Serial.printf("LEDs: %u configured, %u states, heartbeat %s\n",
+    sysLog.printf("LEDs: %u configured, %u states, heartbeat %s\n",
                   (unsigned)_ledCount, (unsigned)hw.ledAssignCount,
                   _hasHeartbeat ? (_heartbeat ? "on" : "off") : "unassigned");
 }
@@ -397,7 +398,10 @@ void StatusLed::writeChain(Chain& chain)
 {
     const uint16_t symbols = (uint16_t)chain.length * 24;
 
-    rmt_data_t* data = (rmt_data_t*)malloc((size_t)symbols * sizeof(rmt_data_t));
+    // Internal RAM on purpose: the RMT driver reads this from an interrupt,
+    // and PSRAM is unreachable whenever the flash cache is off.
+    rmt_data_t* data = (rmt_data_t*)heap_caps_malloc(
+        (size_t)symbols * sizeof(rmt_data_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
     if (data == nullptr)
     {

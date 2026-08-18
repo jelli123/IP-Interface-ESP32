@@ -11,6 +11,7 @@
 #include <SPI.h>
 
 #include "hw_config.h"
+#include "log_buffer.h"
 #endif
 
 EthInterface ethInterface;
@@ -89,7 +90,7 @@ bool EthInterface::probeChip()
         // 0x00 or 0xFF simply means nothing is driving MISO.
         if (version != 0x00 && version != 0xFF)
         {
-            Serial.printf("ETH: unexpected chip on SPI, VERSIONR=0x%02X\n", version);
+            sysLog.printf("ETH: unexpected chip on SPI, VERSIONR=0x%02X\n", version);
         }
         return false;
     }
@@ -107,19 +108,19 @@ bool EthInterface::begin(void (*keepAlive)())
 
     if (!probeChip())
     {
-        Serial.println("ETH: no W5500 found, continuing without Ethernet");
+        sysLog.println("ETH: no W5500 found, continuing without Ethernet");
         return false;
     }
 
     _present = true;
-    Serial.println("ETH: W5500 found");
+    sysLog.println("ETH: W5500 found");
 
     // The reset pin is handed over as -1: the chip was already reset in the
     // probe, and letting the driver toggle it again only costs another 60 ms.
     if (!ETH.begin(ETH_PHY_W5500, SBIP_ETH_PHY_ADDR, hw.ethCsPin,
                    hw.ethIrqPin, -1, SPI, hw.ethSpiMhz))
     {
-        Serial.println("ETH: driver failed to start");
+        sysLog.println("ETH: driver failed to start");
         return false;
     }
     _started = true;
@@ -135,11 +136,11 @@ bool EthInterface::begin(void (*keepAlive)())
 
     if (!ETH.linkUp())
     {
-        Serial.println("ETH: no link (cable unplugged?)");
+        sysLog.println("ETH: no link (cable unplugged?)");
         return false;
     }
 
-    Serial.printf("ETH: link up, %u Mbit/s %s duplex\n",
+    sysLog.printf("ETH: link up, %u Mbit/s %s duplex\n",
                   ETH.linkSpeed(), ETH.fullDuplex() ? "full" : "half");
 
     deadline = millis() + IP_TIMEOUT_MS;
@@ -151,7 +152,7 @@ bool EthInterface::begin(void (*keepAlive)())
 
     if (!ETH.hasIP())
     {
-        Serial.println("ETH: no address from DHCP");
+        sysLog.println("ETH: no address from DHCP");
         return false;
     }
 
@@ -167,7 +168,7 @@ bool EthInterface::begin(void (*keepAlive)())
     ETH.setDefault();
 
     _wasUp = true;
-    Serial.printf("ETH: ready, IP %s\n", ETH.localIP().toString().c_str());
+    sysLog.printf("ETH: ready, IP %s\n", ETH.localIP().toString().c_str());
     return true;
 }
 
@@ -195,11 +196,11 @@ void EthInterface::loop()
         // lwIP re-runs DHCP on its own after a cable reconnect, but the
         // default route has to be claimed again.
         ETH.setDefault();
-        Serial.printf("ETH: link restored, IP %s\n", ETH.localIP().toString().c_str());
+        sysLog.printf("ETH: link restored, IP %s\n", ETH.localIP().toString().c_str());
     }
     else
     {
-        Serial.println("ETH: link lost");
+        sysLog.println("ETH: link lost");
     }
 }
 

@@ -16,6 +16,7 @@
 #include "knx_link.h"
 #include "net_manager.h"
 
+#include "log_buffer.h"
 NetManager netManager;
 
 static DNSServer   dnsServer;
@@ -75,7 +76,7 @@ void NetManager::begin()
      */
     if (!_wifiEnabled && !wifiCanBeDisabled())
     {
-        Serial.println("WiFi was switched off but no Ethernet chip answered - "
+        sysLog.println("WiFi was switched off but no Ethernet chip answered - "
                        "re-enabling to keep the device reachable");
         setWifiEnabled(true);
     }
@@ -98,7 +99,7 @@ void NetManager::begin()
         _ethMode   = true;
         _wasOnline = true;
         WiFi.mode(WIFI_OFF);
-        Serial.printf("Network: Ethernet, IP %s\n", ethInterface.ipString().c_str());
+        sysLog.printf("Network: Ethernet, IP %s\n", ethInterface.ipString().c_str());
         return;
     }
 
@@ -116,16 +117,16 @@ void NetManager::begin()
 
     if (!_wifiEnabled)
     {
-        Serial.println("WiFi is switched off in the settings");
+        sysLog.println("WiFi is switched off in the settings");
         return;
     }
 
-    Serial.printf("Stored SSID: %s\n",
+    sysLog.printf("Stored SSID: %s\n",
                   storedSsid.length() ? storedSsid.c_str() : "(none)");
 
     if (storedSsid.length() == 0)
     {
-        Serial.println("No credentials stored - starting provisioning AP");
+        sysLog.println("No credentials stored - starting provisioning AP");
         startAccessPoint();
         return;
     }
@@ -188,7 +189,7 @@ void NetManager::startAccessPoint()
      */
     if (!WiFi.mode(WIFI_AP))
     {
-        Serial.println("AP: switching to WIFI_AP failed");
+        sysLog.println("AP: switching to WIFI_AP failed");
         return;
     }
     WiFi.setSleep(WIFI_PS_NONE);
@@ -198,14 +199,14 @@ void NetManager::startAccessPoint()
 
     if (!WiFi.softAP(name.c_str()))
     {
-        Serial.printf("AP: softAP(\"%s\") failed\n", name.c_str());
+        sysLog.printf("AP: softAP(\"%s\") failed\n", name.c_str());
         return;
     }
 
     dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
     _apMode = true;
 
-    Serial.printf("AP \"%s\" up at %s\n", name.c_str(),
+    sysLog.printf("AP \"%s\" up at %s\n", name.c_str(),
                   WiFi.softAPIP().toString().c_str());
 }
 
@@ -239,10 +240,10 @@ void NetManager::waitForConnection(void (*keepAlive)())
 
     if (isOnline())
     {
-        Serial.printf("WiFi up, IP %s\n", WiFi.localIP().toString().c_str());
+        sysLog.printf("WiFi up, IP %s\n", WiFi.localIP().toString().c_str());
         if (_apMode)
         {
-            Serial.println("Station connected - shutting down the provisioning AP");
+            sysLog.println("Station connected - shutting down the provisioning AP");
             WiFi.softAPdisconnect(true);
             WiFi.mode(WIFI_STA);
             WiFi.setSleep(WIFI_PS_NONE); // the mode switch turns it back on
@@ -252,7 +253,7 @@ void NetManager::waitForConnection(void (*keepAlive)())
     }
     else if (!_apMode)
     {
-        Serial.println("WiFi did not come up - starting fallback AP");
+        sysLog.println("WiFi did not come up - starting fallback AP");
         startAccessPoint();
     }
 }
@@ -261,7 +262,7 @@ void NetManager::loop()
 {
     if (_pendingReboot && (uint32_t)(millis() - _rebootAt) > 2000)
     {
-        Serial.println("Rebooting");
+        sysLog.println("Rebooting");
         ESP.restart();
     }
 
@@ -309,13 +310,13 @@ void NetManager::handleWifiWatchdog()
         _wasOnline = online;
         if (online)
         {
-            Serial.printf("WiFi up, IP %s\n", WiFi.localIP().toString().c_str());
+            sysLog.printf("WiFi up, IP %s\n", WiFi.localIP().toString().c_str());
             _downSince = 0;
             _lastKick  = 0;
         }
         else
         {
-            Serial.println("WiFi link down - watchdog armed");
+            sysLog.println("WiFi link down - watchdog armed");
             _downSince = millis();
         }
     }
@@ -335,7 +336,7 @@ void NetManager::handleWifiWatchdog()
         (_lastKick == 0 || (uint32_t)(millis() - _lastKick) >= WIFI_WATCHDOG_RETRY_MS))
     {
         _lastKick = millis();
-        Serial.printf("WiFi down for %lus - forcing reconnect\n",
+        sysLog.printf("WiFi down for %lus - forcing reconnect\n",
                       (unsigned long)(downFor / 1000));
         WiFi.setSleep(WIFI_PS_NONE);
         // reconnect() disconnects and connects without touching the stored
@@ -346,11 +347,11 @@ void NetManager::handleWifiWatchdog()
 
 void NetManager::applyCredentials(const String& ssid, const String& password)
 {
-    Serial.printf("New WiFi credentials for SSID %s\n", ssid.c_str());
+    sysLog.printf("New WiFi credentials for SSID %s\n", ssid.c_str());
 
     if (!netPrefs.begin(NET_NS, false))
     {
-        Serial.println("WiFi: could not open the credential store");
+        sysLog.println("WiFi: could not open the credential store");
         return; // no reboot - the AP stays up so the user can retry
     }
 
@@ -363,17 +364,17 @@ void NetManager::applyCredentials(const String& ssid, const String& password)
 
     if (check != ssid)
     {
-        Serial.println("WiFi: credentials did not survive the write");
+        sysLog.println("WiFi: credentials did not survive the write");
         return;
     }
 
-    Serial.println("WiFi: credentials stored, rebooting");
+    sysLog.println("WiFi: credentials stored, rebooting");
     scheduleReboot();
 }
 
 void NetManager::forgetCredentials()
 {
-    Serial.println("Erasing WiFi credentials");
+    sysLog.println("Erasing WiFi credentials");
 
     netPrefs.begin(NET_NS, false);
     netPrefs.clear();
@@ -438,13 +439,13 @@ bool NetManager::applyStaticIp(uint32_t ip, uint32_t mask, uint32_t gw)
 
     if (!ok)
     {
-        Serial.printf("ETS address %s rejected by the interface\n",
+        sysLog.printf("ETS address %s rejected by the interface\n",
                       address.toString().c_str());
         return false;
     }
 
     _etsAddress = true;
-    Serial.printf("ETS address applied: %s/%s via %s\n",
+    sysLog.printf("ETS address applied: %s/%s via %s\n",
                   address.toString().c_str(), netmask.toString().c_str(),
                   gateway.toString().c_str());
     return true;

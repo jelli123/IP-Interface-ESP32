@@ -12,6 +12,7 @@
 #include "knx_link.h"
 #include "net_manager.h"
 
+#include "log_buffer.h"
 ButtonService buttonService;
 
 /** Contact bounce settles well inside this. */
@@ -66,7 +67,7 @@ void ButtonService::begin()
         }
     }
 
-    Serial.printf("Buttons: %u rows on %u pin%s\n", (unsigned)hw.buttonCount,
+    sysLog.printf("Buttons: %u rows on %u pin%s\n", (unsigned)hw.buttonCount,
                   (unsigned)_pinCount, (_pinCount == 1) ? "" : "s");
 }
 
@@ -154,7 +155,7 @@ void ButtonService::dispatch(uint8_t function, const char* name)
     switch (function)
     {
     case HW_BTNF_PROG_MODE:
-        Serial.printf("Button %s: programming mode\n", name);
+        sysLog.printf("Button %s: programming mode\n", name);
         knxLink.requestProgMode(!knxLink.progMode());
         break;
 
@@ -164,10 +165,10 @@ void ButtonService::dispatch(uint8_t function, const char* name)
         // the device unreachable for a while.
         if (netManager.isEthernetMode() || netManager.isApMode())
         {
-            Serial.printf("Button %s: WiFi setup not applicable\n", name);
+            sysLog.printf("Button %s: WiFi setup not applicable\n", name);
             break;
         }
-        Serial.printf("Button %s: starting provisioning AP\n", name);
+        sysLog.printf("Button %s: starting provisioning AP\n", name);
         WiFi.disconnect();
         netManager.startAccessPoint();
         if (knxLink.progMode())
@@ -177,7 +178,7 @@ void ButtonService::dispatch(uint8_t function, const char* name)
         break;
 
     case HW_BTNF_REBOOT:
-        Serial.printf("Button %s: restarting\n", name);
+        sysLog.printf("Button %s: restarting\n", name);
         netManager.scheduleReboot();
         break;
 
@@ -187,13 +188,13 @@ void ButtonService::dispatch(uint8_t function, const char* name)
         // the profile itself lives behind the web interface.
         if (netManager.wifiEnabled() && !netManager.wifiCanBeDisabled())
         {
-            Serial.printf("Button %s: WiFi stays on, no Ethernet chip found\n", name);
+            sysLog.printf("Button %s: WiFi stays on, no Ethernet chip found\n", name);
             break;
         }
         // Applied on the next boot. Switching the radio at runtime means a
         // mode change while the AP or the KNX multicast socket is up, which
         // this firmware has already been bitten by once.
-        Serial.printf("Button %s: WiFi %s after restart\n", name,
+        sysLog.printf("Button %s: WiFi %s after restart\n", name,
                       netManager.wifiEnabled() ? "off" : "on");
         netManager.setWifiEnabled(!netManager.wifiEnabled());
         netManager.scheduleReboot();
@@ -211,7 +212,7 @@ void ButtonService::dispatch(uint8_t function, const char* name)
          * no longer holds what it thinks, and the two second delay would be
          * two seconds of code running on top of that.
          */
-        Serial.printf("Button %s: factory reset\n", name);
+        sysLog.printf("Button %s: factory reset\n", name);
         Serial.flush();
         nvs_flash_erase();
         delay(100);

@@ -21,6 +21,7 @@
 #include "time_service.h"
 #include "web_server.h"
 
+#include "log_buffer.h"
 static AsyncWebServer server(80);
 
 /*
@@ -268,6 +269,9 @@ static String statusJson()
     json += "\"sketch_free\":" + String(ESP.getFreeSketchSpace()) + ",";
     json += "\"psram_total\":" + String(ESP.getPsramSize()) + ",";
     json += "\"psram_free\":" + String(ESP.getFreePsram()) + ",";
+    json += "\"log_size\":" + String(sysLog.capacity()) + ",";
+    json += "\"log_used\":" + String(sysLog.used()) + ",";
+    json += "\"log_psram\":" + String(sysLog.inPsram() ? "true" : "false") + ",";
     json += "\"profile_default\":" + String(hwConfig.usingDefaults() ? "true" : "false") + ",";
     json += "\"profile_fallback\":\"" + String(hwConfig.fallbackReason()) + "\",";
     json += "\"reboot_pending\":" + String(hwConfig.rebootPending() ? "true" : "false");
@@ -346,7 +350,7 @@ static void registerWifiRoutes()
             // page polling forever instead of showing an error.
             if (WiFi.scanNetworks(true) == WIFI_SCAN_FAILED)
             {
-                Serial.println("WiFi: scan could not be started");
+                sysLog.println("WiFi: scan could not be started");
                 request->send(500, "application/json",
                               "{\"error\":\"scan could not be started\"}");
                 return;
@@ -472,7 +476,7 @@ static void registerKnxRoutes()
 
         bool enable = request->getParam("unfiltered", true)->value() == "1";
         knxLink.routeUnfiltered(enable);
-        Serial.printf("KNX: unfiltered routing %s\n", enable ? "on" : "off");
+        sysLog.printf("KNX: unfiltered routing %s\n", enable ? "on" : "off");
 
         request->send(200, "application/json", "{\"status\":\"ok\"}");
     });
@@ -809,7 +813,7 @@ static void registerOtaRoutes()
 
             if (ok)
             {
-                Serial.println("OTA: upload accepted, rebooting shortly");
+                sysLog.println("OTA: upload accepted, rebooting shortly");
                 netManager.scheduleReboot();
             }
         },
@@ -827,12 +831,12 @@ static void registerOtaRoutes()
                 // Later chunks drain harmlessly, isRunning() stays false.
                 if (!originAllowed(request) || netManager.isApMode())
                 {
-                    Serial.println("OTA: rejected (cross-origin or AP mode)");
+                    sysLog.println("OTA: rejected (cross-origin or AP mode)");
                     g_uploadError = "not allowed in AP mode";
                     return;
                 }
 
-                Serial.printf("OTA: upload start: %s\n", filename.c_str());
+                sysLog.printf("OTA: upload start: %s\n", filename.c_str());
 
                 // A browser that walks away mid-upload leaves Update running:
                 // the final chunk never arrives, so end() is never reached.
@@ -844,7 +848,7 @@ static void registerOtaRoutes()
                 // the same way until the device is rebooted.
                 if (Update.isRunning())
                 {
-                    Serial.println("OTA: discarding an abandoned upload");
+                    sysLog.println("OTA: discarding an abandoned upload");
                     Update.abort();
                 }
 
@@ -855,7 +859,7 @@ static void registerOtaRoutes()
                     return;
                 }
 
-                Serial.printf("OTA: target partition holds %u bytes\n",
+                sysLog.printf("OTA: target partition holds %u bytes\n",
                               (unsigned)Update.size());
 
                 if (request->hasHeader("X-SHA256"))
@@ -865,11 +869,11 @@ static void registerOtaRoutes()
                     {
                         g_uploadSha256 = sha;
                         g_uploadHash.begin();
-                        Serial.printf("OTA: SHA-256 target %s\n", sha.c_str());
+                        sysLog.printf("OTA: SHA-256 target %s\n", sha.c_str());
                     }
                     else
                     {
-                        Serial.println("OTA: X-SHA256 ignored (bad format)");
+                        sysLog.println("OTA: X-SHA256 ignored (bad format)");
                     }
                 }
                 else if (request->hasHeader("X-MD5"))
@@ -882,16 +886,16 @@ static void registerOtaRoutes()
                     md5.toLowerCase();
                     if (md5.length() == 32 && Update.setMD5(md5.c_str()))
                     {
-                        Serial.printf("OTA: MD5 target %s (legacy)\n", md5.c_str());
+                        sysLog.printf("OTA: MD5 target %s (legacy)\n", md5.c_str());
                     }
                     else
                     {
-                        Serial.println("OTA: X-MD5 ignored (bad format)");
+                        sysLog.println("OTA: X-MD5 ignored (bad format)");
                     }
                 }
                 else
                 {
-                    Serial.println("OTA: no checksum header - proceeding unverified");
+                    sysLog.println("OTA: no checksum header - proceeding unverified");
                 }
             }
 
@@ -903,7 +907,7 @@ static void registerOtaRoutes()
                 // because progress() only counts flushed sectors.
                 if (len > Update.remaining())
                 {
-                    Serial.printf("OTA: image exceeds the %u byte partition - abort\n",
+                    sysLog.printf("OTA: image exceeds the %u byte partition - abort\n",
                                   (unsigned)Update.size());
                     g_uploadError = "image larger than the OTA partition";
                     Update.abort();
@@ -927,13 +931,13 @@ static void registerOtaRoutes()
                     g_uploadHash.finish();
                     if (!g_uploadHash.matches(g_uploadSha256))
                     {
-                        Serial.printf("OTA: SHA-256 mismatch\n  expected %s\n  actual   %s\n",
+                        sysLog.printf("OTA: SHA-256 mismatch\n  expected %s\n  actual   %s\n",
                                       g_uploadSha256.c_str(), g_uploadHash.hex().c_str());
                         g_uploadHashFailed = true;
                         Update.abort();
                         return;
                     }
-                    Serial.println("OTA: SHA-256 ok");
+                    sysLog.println("OTA: SHA-256 ok");
                 }
 
                 if (!Update.end(true))
@@ -942,7 +946,7 @@ static void registerOtaRoutes()
                 }
                 else
                 {
-                    Serial.printf("OTA: %u bytes written\n", (unsigned)(index + len));
+                    sysLog.printf("OTA: %u bytes written\n", (unsigned)(index + len));
                 }
             }
         });
@@ -1054,6 +1058,37 @@ void webServerBegin()
         request->send(200, "application/json", OtaService::partitionTableJson());
     });
 
+    /*
+     * The captured serial log, newest part last.
+     *
+     * Capped well below the ring size: the answer is built in the heap, and
+     * 64 KB of history would not survive the trip.
+     */
+    server.on("/api/log", HTTP_GET, [](AsyncWebServerRequest* request) {
+        static const size_t DEFAULT_BYTES = 8192;
+        static const size_t MAX_BYTES     = 16384;
+
+        size_t want = DEFAULT_BYTES;
+
+        if (request->hasParam("bytes"))
+        {
+            long value = request->getParam("bytes")->value().toInt();
+            if (value > 0)
+            {
+                want = (size_t)value;
+                if (want > MAX_BYTES) want = MAX_BYTES;
+            }
+        }
+
+        request->send(200, "text/plain; charset=utf-8", sysLog.tail(want));
+    });
+
+    server.on("/api/log/clear", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+        sysLog.clear();
+        request->send(200, "application/json", "{\"status\":\"ok\"}");
+    });
+
     registerCaptivePortalRoutes();
     registerWifiRoutes();
     registerKnxRoutes();
@@ -1062,5 +1097,5 @@ void webServerBegin()
     registerOtaRoutes();
 
     server.begin();
-    Serial.println("Web server started");
+    sysLog.println("Web server started");
 }

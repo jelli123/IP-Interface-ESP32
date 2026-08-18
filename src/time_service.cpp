@@ -12,6 +12,7 @@
 #include "knx_link.h"
 #include "time_service.h"
 
+#include "log_buffer.h"
 TimeService timeService;
 
 /** Anything before 2024-01-01 means the clock was never set. */
@@ -146,7 +147,7 @@ void TimeService::probeRtc()
 
     if (_rtc.begin(RV3028_BACKUP_LEVEL, RV3028_TRICKLE_OFF))
     {
-        Serial.println("RTC: RV-3028-C7 found");
+        sysLog.println("RTC: RV-3028-C7 found");
     }
 }
 
@@ -183,11 +184,11 @@ void TimeService::refreshSystemFromRtc()
     if (_source == SRC_NONE)
     {
         _source = SRC_RTC;
-        Serial.printf("RTC: system clock restored, %s\n", localTimeString().c_str());
+        sysLog.printf("RTC: system clock restored, %s\n", localTimeString().c_str());
     }
     else
     {
-        Serial.printf("RTC: system clock corrected by %ld s\n", (long)drift);
+        sysLog.printf("RTC: system clock corrected by %ld s\n", (long)drift);
     }
 }
 
@@ -221,7 +222,7 @@ void TimeService::startNtp()
 #else
     if (_config.ntpFromDhcp)
     {
-        Serial.println("NTP: DHCP option 42 unavailable in this lwIP build, "
+        sysLog.println("NTP: DHCP option 42 unavailable in this lwIP build, "
                        "using the configured server");
     }
 #endif
@@ -308,7 +309,7 @@ void TimeService::trackNtp()
     if (!_ntpEverSynced)
     {
         _ntpEverSynced = true;
-        Serial.printf("NTP: synchronised from %s, %s\n",
+        sysLog.printf("NTP: synchronised from %s, %s\n",
                       activeNtpServer().c_str(), localTimeString().c_str());
         _sendPending = true;
     }
@@ -356,7 +357,7 @@ bool TimeService::applyUtc(uint32_t utc)
     refreshRtcFromSystem();
     _sendPending = true;
 
-    Serial.printf("Time set manually: %s\n", localTimeString().c_str());
+    sysLog.printf("Time set manually: %s\n", localTimeString().c_str());
     return true;
 }
 

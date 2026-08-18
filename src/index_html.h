@@ -85,8 +85,12 @@ input[type=checkbox]{width:auto;margin:0;flex:0 0 auto;accent-color:var(--acc)}
 .trio input{margin:6px 0}
 /* Row editors. The selected row is what the minus button acts on, so it has
  * to be obvious which one that is - a border alone is too quiet here. */
-table.rows{width:100%;border-collapse:collapse;margin:6px 0 4px}
-table.rows td{padding:2px 3px}
+#logDlg{max-width:min(96vw,900px)}
+#logText{max-height:60vh;overflow:auto;white-space:pre-wrap;word-break:break-word;
+font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.45;
+background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:10px;
+margin:6px 0}
+table.rows{width:100%;border-collapse:collapse;margin:6px 0 4px}table.rows td{padding:2px 3px}
 table.rows tr.hd th{padding:2px 4px 5px;text-align:left;font-size:11px;
 font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);
 border-bottom:1px solid var(--line);cursor:help}
@@ -198,8 +202,10 @@ small{color:var(--dim)}
     <div class="row"><span>Freier Speicher</span><span id="heap">-</span></div>
     <div class="row"><span>Flash</span><span id="flash">-</span></div>
     <div class="row"><span>PSRAM</span><span id="psram">-</span></div>
+    <div class="row"><span>Protokollpuffer</span><span id="logbuf">-</span></div>
     <div class="actions">
       <button class="sec" onclick="showParts()">Partitionstabelle</button>
+      <button class="sec" onclick="showLog()">Protokoll</button>
     </div>
   </section>
 
@@ -251,6 +257,18 @@ small{color:var(--dim)}
     <p><small id="hashNote" data-dyn></small></p>
   </section>
 </main>
+
+<dialog id="logDlg">
+  <h2>Protokoll</h2>
+  <pre id="logText"></pre>
+  <div class="actions">
+    <button class="sec" onclick="loadLog()">Aktualisieren</button>
+    <button class="sec" onclick="clearLog()">Leeren</button>
+    <button class="sec" onclick="logDlg.close()">Schließen</button>
+  </div>
+  <p><small>Die letzten Meldungen der Firmware, älteste zuerst. Der Puffer
+  überlebt keinen Neustart.</small></p>
+</dialog>
 
 <dialog id="partDlg">
   <h2>Partitionstabelle</h2>
@@ -672,6 +690,13 @@ const EN = {
 'AP-Modus aktiv':'AP mode active', 'getrennt':'disconnected',
 'manuell':'manual', 'keine':'none', 'nicht gesetzt':'not set',
 'keiner':'none', 'nicht bestückt':'not fitted', 'deaktiviert':'disabled',
+'nicht aktiviert':'not enabled',
+'Protokoll':'Log', 'Protokollpuffer':'Log buffer',
+'Aktualisieren':'Refresh', 'Leeren':'Clear', 'internes RAM':'internal RAM',
+['Die letzten Meldungen der Firmware, älteste zuerst. Der Puffer überlebt '
++ 'keinen Neustart.']:
+  'The most recent firmware messages, oldest first. The buffer does not '
++ 'survive a restart.',
 'noch keine vergeben':'none assigned yet',
 'Image-Standard':'image defaults',
 'ungültig &rarr; Standard':'invalid &rarr; defaults',
@@ -899,7 +924,11 @@ async function refresh(){
       + ' \u00b7 ' + t('frei in der Partition') + ' ' + kib(s.hardware.sketch_free);
   $('psram').textContent = s.hardware.psram_total
       ? (kib(s.hardware.psram_free) + ' / ' + mib(s.hardware.psram_total) + ' ' + t('frei'))
-      : t('nicht bestückt');
+      : t('nicht aktiviert');
+  $('logbuf').textContent = s.hardware.log_size
+      ? (kib(s.hardware.log_used) + ' / ' + kib(s.hardware.log_size) + ' \u00b7 '
+         + (s.hardware.log_psram ? 'PSRAM' : t('internes RAM')))
+      : t('nicht aktiviert');
   // Both application slots with what is stored in each, so "switch" is an
   // informed decision rather than a leap.
   const PST = {valid:'geprüft', pending_verify:'auf Bewährung',
@@ -951,8 +980,25 @@ async function setBright(){
   await fetch('/api/led/brightness', {method:'POST', body});
 }
 
-async function showParts(){
-  $('partList').innerHTML = '<tr class="hd"><th>' + t('lese Filtertabelle...') + '</th></tr>';
+async function loadLog(){
+  const box = $('logText');
+  box.textContent = t('lese Filtertabelle...');
+  try { box.textContent = await (await fetch('/api/log')).text(); }
+  catch(e){ box.textContent = t('Lesen fehlgeschlagen.'); return; }
+  box.scrollTop = box.scrollHeight;
+}
+
+function showLog(){
+  logDlg.showModal();
+  loadLog();
+}
+
+async function clearLog(){
+  await fetch('/api/log/clear', {method:'POST'});
+  loadLog();
+}
+
+async function showParts(){  $('partList').innerHTML = '<tr class="hd"><th>' + t('lese Filtertabelle...') + '</th></tr>';
   partDlg.showModal();
 
   let p;

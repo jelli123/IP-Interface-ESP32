@@ -7,6 +7,7 @@
 #include "interface_config.h"
 #include "improv_service.h"
 
+#include "log_buffer.h"
 ImprovService improvService;
 
 #ifndef DISABLE_IMPROV
@@ -18,13 +19,13 @@ static bool       s_connected = false;
 
 static void onImprovError(ImprovTypes::Error err)
 {
-    Serial.printf("Improv error: %d\n", (int)err);
+    sysLog.printf("Improv error: %d\n", (int)err);
 }
 
 static void onImprovConnected(const char* ssid, const char* password)
 {
     (void)password;
-    Serial.printf("Improv provisioned SSID %s\n", ssid);
+    sysLog.printf("Improv provisioned SSID %s\n", ssid);
     s_connected = true;
 }
 

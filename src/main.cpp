@@ -23,6 +23,7 @@
 #include "time_service.h"
 #include "web_server.h"
 
+#include "log_buffer.h"
 /*
  * Passed to NetManager so the device stays alive during the provisioning
  * window. That window can last two minutes, and loop() has not started yet -
@@ -42,6 +43,10 @@ void setup()
     // Bound the write stall when the USB host disappears mid-print.
     Serial.setTxTimeoutMs(10);
 #endif
+
+    // Before anything reports anything, so the dashboard can show the whole
+    // startup afterwards.
+    sysLog.begin();
 
     /*
      * Hardware profile before anything else.
@@ -68,15 +73,15 @@ void setup()
     improvService.begin();
     improvService.serviceFor(2000);
 
-    Serial.println();
-    Serial.println("Selfbus KNX/IP Interface " FIRMWARE_VERSION);
+    sysLog.println();
+    sysLog.println("Selfbus KNX/IP Interface " FIRMWARE_VERSION);
 
     if (hwConfig.usingDefaults())
     {
-        Serial.printf("Hardware: built-in defaults (%s)\n", hwConfig.fallbackReason());
+        sysLog.printf("Hardware: built-in defaults (%s)\n", hwConfig.fallbackReason());
     }
 
-    ArduinoPlatform::SerialDebug = &Serial;
+    ArduinoPlatform::SerialDebug = &sysLog;
 
     /*
      * Bring up esp_netif/lwIP before anything can open a socket.
@@ -128,7 +133,7 @@ void setup()
     {
         // Not fatal. The interface still serves the dashboard, which is where
         // the failure is visible, and the link supervision keeps retrying.
-        Serial.println("WARNING: no answer from the SB-Interface on the KNX UART");
+        sysLog.println("WARNING: no answer from the SB-Interface on the KNX UART");
     }
 
     /*
@@ -149,7 +154,7 @@ void setup()
     if (MDNS.begin(MDNS_HOSTNAME))
     {
         MDNS.addService("http", "tcp", 80);
-        Serial.println("mDNS: http://" MDNS_HOSTNAME ".local");
+        sysLog.println("mDNS: http://" MDNS_HOSTNAME ".local");
     }
 
     // Blocks until the interface is up or the provisioning window closes.

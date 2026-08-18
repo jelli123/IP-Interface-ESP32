@@ -14,6 +14,7 @@
 #include "json_util.h"
 #include "ota_service.h"
 
+#include "log_buffer.h"
 OtaService otaService;
 
 // Key under which this build looks up its image in the update manifest.
@@ -115,7 +116,7 @@ void OtaService::loop()
         state == ESP_OTA_IMG_PENDING_VERIFY)
     {
         esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
-        Serial.printf("OTA: %s app valid (was PENDING_VERIFY)\n",
+        sysLog.printf("OTA: %s app valid (was PENDING_VERIFY)\n",
                       err == ESP_OK ? "marked" : "FAILED to mark");
     }
 }
@@ -215,7 +216,7 @@ void OtaService::checkTask(void* arg)
     g_sha256 = sha256;
     g_state = (compareVersions(latest, FIRMWARE_VERSION) > 0) ? AVAILABLE : IDLE;
 
-    Serial.printf("Update check: current=%s latest=%s state=%s\n",
+    sysLog.printf("Update check: current=%s latest=%s state=%s\n",
                   FIRMWARE_VERSION, latest.c_str(), stateName(g_state));
 
     vTaskDelete(nullptr);
@@ -368,7 +369,7 @@ void OtaService::installTask(void* arg)
     hash.finish();
     if (!hash.matches(g_sha256))
     {
-        Serial.printf("OTA: SHA-256 mismatch\n  expected %s\n  actual   %s\n",
+        sysLog.printf("OTA: SHA-256 mismatch\n  expected %s\n  actual   %s\n",
                       g_sha256.c_str(), hash.hex().c_str());
         setError("sha256 mismatch - image rejected");
         Update.abort();
@@ -389,7 +390,7 @@ void OtaService::installTask(void* arg)
 
     https.end();
     g_state = DONE;
-    Serial.printf("Online OTA: %u bytes written, SHA-256 ok - rebooting\n", (unsigned)written);
+    sysLog.printf("Online OTA: %u bytes written, SHA-256 ok - rebooting\n", (unsigned)written);
 
     delay(2000); // let the frontend poll the status one last time
     ESP.restart();
@@ -543,7 +544,7 @@ void OtaService::recordOwnSlot()
     {
         prefs.putString(running->label, record);
         prefs.end();
-        Serial.printf("OTA: %s holds %s\n", running->label, record.c_str());
+        sysLog.printf("OTA: %s holds %s\n", running->label, record.c_str());
     }
 
     // Keep the cache in step so the dashboard shows it without a restart.
@@ -624,17 +625,17 @@ bool OtaService::switchPartition()
     if (other == nullptr ||
         esp_ota_get_partition_description(other, &desc) != ESP_OK)
     {
-        Serial.println("OTA: the other slot holds no valid firmware");
+        sysLog.println("OTA: the other slot holds no valid firmware");
         return false;
     }
 
     if (esp_ota_set_boot_partition(other) != ESP_OK)
     {
-        Serial.println("OTA: could not switch the boot partition");
+        sysLog.println("OTA: could not switch the boot partition");
         return false;
     }
 
-    Serial.printf("OTA: next boot from %s (%s)\n", other->label, desc.version);
+    sysLog.printf("OTA: next boot from %s (%s)\n", other->label, desc.version);
     return true;
 }
 

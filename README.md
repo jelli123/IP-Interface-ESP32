@@ -345,9 +345,57 @@ die gesamte NVS-Partition, siehe *Taster und LEDs*.
 > erst. Der Rettungsweg wäre also genau dann tot, wenn man ihn braucht.
 > Deshalb erledigen das die Crash-Loop-Erkennung und der Laufzeit-Taster.
 
-Auf S3-Modulen mit **Octal**-Flash/PSRAM sind zusätzlich GPIO 33–37 belegt.
-Das lässt sich zur Laufzeit nicht erkennen – bei diesen Modulen vorher ins
-Datenblatt schauen.
+Auf S3-Modulen mit **Octal**-Flash/PSRAM sind zusätzlich GPIO 35–37 belegt.
+Bei aktiviertem PSRAM (`memory_type = qio_opi`, siehe unten) erkennt die
+Validierung das über `CONFIG_SPIRAM_MODE_OCT` und weist diese Pins ab.
+
+### PSRAM
+
+Die Board-Definition `esp32-s3-devkitc-1` geht von der Variante **N8** ohne
+PSRAM aus. Ein **N8R8** hat 8 MB Octal-PSRAM, das sonst unsichtbar bleibt –
+`ESP.getPsramSize()` meldet dann 0 und das Dashboard zeigt *nicht aktiviert*.
+
+Eingeschaltet wird es in [platformio.ini](platformio.ini):
+
+```ini
+board_build.arduino.memory_type = qio_opi   ; QIO-Flash + OPI-PSRAM
+build_flags = -DBOARD_HAS_PSRAM
+```
+
+Der Preis sind **GPIO 35, 36 und 37**: Über die spricht das Modul mit dem
+PSRAM, für alles andere sind sie damit weg.
+
+Die Firmware **braucht** kein PSRAM – sie belegt rund 56 KB der 320 KB
+internen RAMs. Allokationen bis 4 KB bleiben ohnehin intern
+(`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL`). Der RMT-Puffer der LED-Kette wird
+zusätzlich ausdrücklich intern angefordert: Der Treiber liest ihn aus einem
+Interrupt, und PSRAM ist nicht erreichbar, solange der Flash-Cache aus ist.
+
+Genutzt wird es für den **Protokollpuffer**, siehe unten.
+
+### Protokollpuffer
+
+Ein Gerät im Verteiler hat keine serielle Konsole angeschlossen. Alles, was
+die Firmware ausgibt, landet deshalb zusätzlich in einem Ringpuffer und ist
+im Dashboard unter *System → Protokoll* abrufbar.
+
+| | |
+| --- | --- |
+| mit PSRAM | 64 KiB |
+| ohne PSRAM | 4 KiB im internen RAM |
+
+Zwei Quellen speisen ihn: alles, was über `sysLog` geschrieben wird – das ist
+der gesamte Firmware-Code und, über `ArduinoPlatform::SerialDebug`, auch der
+KNX-Stack – und der ESP-IDF-Log (die `[E][Preferences.cpp:47]`-Zeilen), der
+über `esp_log_set_vprintf()` mitgeschnitten wird. Die serielle Ausgabe bleibt
+unverändert: `sysLog` schreibt durch.
+
+Der Puffer liegt im RAM und überlebt keinen Neustart. `GET /api/log` liefert
+die neuesten 8 KiB als Text (`?bytes=` bis 16384), `POST /api/log/clear`
+leert ihn.
+
+> Im Code steht deshalb `sysLog.printf(...)` statt `Serial.printf(...)`.
+> `Serial` selbst bleibt für `begin()`, `flush()` und `setTxTimeoutMs()`.
 
 ### Speicherung
 
@@ -634,6 +682,9 @@ Abschaltbar mit `-DDISABLE_IMPROV` (spart rund 9 KB Flash und 2 s Bootzeit).
 | POST | `/api/hwconfig/reset` | gespeichertes Profil verwerfen |
 | POST | `/api/led/heartbeat` | `enabled=1\|0` → Herzschlag schalten |
 | POST | `/api/led/brightness` | `percent=1..100` → Helligkeit aller LEDs |
+| GET | `/api/partitions` | Partitionstabelle des Flash |
+| GET | `/api/log` | Protokollpuffer als Text, `?bytes=` |
+| POST | `/api/log/clear` | Protokollpuffer leeren |
 | POST | `/api/reboot` | Neustart auslösen |
 | GET | `/api/time` | Zustand und Konfiguration des Zeitservers |
 | POST | `/api/time/config` | Konfiguration schreiben (Teilfelder erlaubt) |
@@ -1109,6 +1160,7 @@ gestartet.
 | [src/fw_hash.cpp](src/fw_hash.cpp) | SHA-256 über den Firmware-Datenstrom |
 | [src/improv_service.cpp](src/improv_service.cpp) | Improv-Provisionierung |
 | [src/json_util.cpp](src/json_util.cpp) | JSON-Escaping und Mini-Parser |
+| [src/log_buffer.cpp](src/log_buffer.cpp) | Ringpuffer für das serielle Protokoll |
 
 ### Nebenläufigkeit
 
