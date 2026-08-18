@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <esp32-hal-rmt.h>
+#include <soc/soc_caps.h>
 
 #include "hw_config.h"
 #include "knx_link.h"
@@ -14,8 +15,23 @@
 StatusLed statusLed;
 
 static Preferences ledPrefs;
-static const char* LED_NS   = "sbip-led";
-static const char* KEY_BEAT = "beat";
+static const char* LED_NS    = "sbip-led";
+static const char* KEY_BEAT  = "beat";
+static const char* KEY_BRIGHT = "bright";
+
+/*
+ * PWM for the plain LEDs.
+ *
+ * 5 kHz is well above anything the eye can follow and low enough that the
+ * 10 bit resolution stays available on every chip in the family. Any GPIO
+ * that can be an output can carry it - the matrix routes LEDC to the pin, so
+ * there is no fixed pin list. What is limited is the number of channels
+ * (SOC_LEDC_CHANNEL_NUM: 6 on C3 and C6, 8 on S2 and S3, 16 on the classic
+ * ESP32), and one is used per dimmed LED.
+ */
+static const uint32_t PWM_HZ   = 5000;
+static const uint8_t  PWM_BITS = 10;
+static const uint16_t PWM_MAX  = (1 << PWM_BITS) - 1;
 
 /*
  * RMT resolution. One tick is 0.1 us, which is what the WS2812 family needs:
@@ -29,10 +45,11 @@ static const uint32_t FLASH_PERIOD_MS = 2000;
 static const uint32_t FLASH_ON_MS     = 40;
 
 /*
- * Deliberately not full brightness. These chips are painfully bright at 255,
- * and the point here is an indicator, not illumination.
+ * Palette at full scale. What actually reaches the LED is scaled by the
+ * brightness setting, so the profile stays the same whether the device sits
+ * in a dark cabinet or a bright room.
  */
-static const uint8_t L = 48;
+static const uint8_t L = 255;
 
 /** Palette, indexed by HwLedColour. */
 static const uint8_t PALETTE[HW_COL_COUNT][3] = {
@@ -61,11 +78,17 @@ void StatusLed::begin()
     _ledCount     = hw.ledCount;
     _hasHeartbeat = hw.usesCondition(HW_COND_HEARTBEAT);
 
-    if (ledPrefs.begin(LED_NS, true))
+    if (ledPrefs.begin(LED_NS, false))
     {
-        _heartbeat = ledPrefs.getBool(KEY_BEAT, false);
+        _heartbeat  = ledPrefs.getBool(KEY_BEAT, false);
+        _brightness = ledPrefs.getUChar(KEY_BRIGHT, _brightness);
         ledPrefs.end();
     }
+
+    if (_brightness < 1)   _brightness = 1;
+    if (_brightness > 100) _brightness = 100;
+
+    uint8_t dimmed = 0;
 
     for (uint8_t i = 0; i < hw.ledCount && i < HW_MAX_LEDS; i++)
     {
@@ -73,8 +96,21 @@ void StatusLed::begin()
 
         if (led.kind == HW_LED_PLAIN)
         {
-            pinMode(led.pin, OUTPUT);
-            digitalWrite(led.pin, led.activeLow ? HIGH : LOW);
+            // One LEDC channel per LED. Beyond what the chip has, fall back
+            // to plain on/off rather than refusing the profile - an
+            // indicator at full brightness still works.
+            if (dimmed < SOC_LEDC_CHANNEL_NUM && ledcAttach(led.pin, PWM_HZ, PWM_BITS))
+            {
+                _dimmable[i] = true;
+                dimmed++;
+                ledcWrite(led.pin, led.activeLow ? PWM_MAX : 0);
+            }
+            else
+            {
+                Serial.printf("LED %s: no PWM channel, driven on/off\n", led.name);
+                pinMode(led.pin, OUTPUT);
+                digitalWrite(led.pin, led.activeLow ? HIGH : LOW);
+            }
             continue;
         }
 
@@ -118,6 +154,35 @@ void StatusLed::begin()
         Serial.printf("RGB chain: %u x %s on GPIO %d\n", (unsigned)c.length,
                       (c.type == HW_RGB_SK6812) ? "SK6812" : "WS2812", c.pin);
 
+        /*
+         * Positions nobody claimed are sent black, because the chain has to
+         * be clocked out as one frame. That is correct for a strip where only
+         * some LEDs are used - and a trap for the far more common case of a
+         * single LED that was given position 1 by accident: the one chip that
+         * exists then receives the black of position 0 and stays dark.
+         */
+        for (uint8_t pos = 0; pos < c.length; pos++)
+        {
+            bool claimed = false;
+
+            for (uint8_t j = 0; j < hw.ledCount && j < HW_MAX_LEDS; j++)
+            {
+                if (hw.leds[j].kind == HW_LED_RGB && hw.leds[j].pin == c.pin &&
+                    hw.leds[j].rgbIndex == pos)
+                {
+                    claimed = true;
+                    break;
+                }
+            }
+
+            if (!claimed)
+            {
+                // Counted from 1 here, like the dashboard shows it.
+                Serial.printf("RGB chain on GPIO %d: position %u has no LED row "
+                              "and stays dark\n", c.pin, (unsigned)(pos + 1));
+            }
+        }
+
         // A chain powers up in a random state often enough to be worth
         // clearing before anything else writes to it.
         c.dirty = true;
@@ -139,6 +204,32 @@ void StatusLed::heartbeat(bool enable)
         ledPrefs.putBool(KEY_BEAT, enable);
         ledPrefs.end();
     }
+}
+
+void StatusLed::brightness(uint8_t percent)
+{
+    if (percent < 1)   percent = 1;
+    if (percent > 100) percent = 100;
+
+    _brightness = percent;
+
+    if (ledPrefs.begin(LED_NS, false))
+    {
+        ledPrefs.putUChar(KEY_BRIGHT, percent);
+        ledPrefs.end();
+    }
+
+    // The next loop() repaints anyway, but an addressable chain only gets a
+    // new frame when a colour actually changes - so force one.
+    for (uint8_t i = 0; i < _chainCount; i++)
+    {
+        if (_chains[i].colours != nullptr) _chains[i].dirty = true;
+    }
+}
+
+void StatusLed::reload()
+{
+    _hasHeartbeat = hwConfig.active().usesCondition(HW_COND_HEARTBEAT);
 }
 
 bool StatusLed::conditionHolds(uint8_t condition) const
@@ -239,10 +330,30 @@ void StatusLed::paint(int8_t led, uint8_t red, uint8_t green, uint8_t blue)
 
     if (l.kind == HW_LED_PLAIN)
     {
-        bool on = (red | green | blue) != 0;
-        digitalWrite(l.pin, (on != l.activeLow) ? HIGH : LOW);
+        if (_dimmable[led])
+        {
+            // Brightest channel decides: a colour is meaningless here, but
+            // "how bright was it meant to be" still is.
+            uint16_t peak = red;
+            if (green > peak) peak = green;
+            if (blue > peak)  peak = blue;
+
+            uint32_t duty = (uint32_t)peak * PWM_MAX * _brightness / (255 * 100);
+            ledcWrite(l.pin, l.activeLow ? (PWM_MAX - duty) : duty);
+        }
+        else
+        {
+            bool on = (red | green | blue) != 0;
+            digitalWrite(l.pin, (on != l.activeLow) ? HIGH : LOW);
+        }
         return;
     }
+
+    // Scaled here rather than in the palette, so the stored profile stays
+    // independent of how bright this particular installation wants to be.
+    red   = (uint8_t)((uint16_t)red * _brightness / 100);
+    green = (uint8_t)((uint16_t)green * _brightness / 100);
+    blue  = (uint8_t)((uint16_t)blue * _brightness / 100);
 
     int8_t at = chainFor(l.pin);
     if (at < 0 || _chains[at].colours == nullptr || l.rgbIndex >= _chains[at].length)

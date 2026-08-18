@@ -30,7 +30,13 @@ public:
 
     /** Drives the assigned functions. Call from the main loop. */
     void loop();
-
+    /**
+     * Re-read the parts of the profile that do not touch a pin.
+     *
+     * Called after an assignment-only profile change, which takes effect
+     * without a restart.
+     */
+    void reload();
     /** @return true if at least one LED is configured */
     bool present() const { return _ledCount > 0; }
 
@@ -46,6 +52,19 @@ public:
      */
     void heartbeat(bool enable);
     bool heartbeat() const { return _heartbeat; }
+
+    /**
+     * Common brightness for every LED, 1..100 percent.
+     *
+     * One value for all of them: the point is to tame an indicator that is
+     * too bright for the room it sits in, and that applies to the whole
+     * device. Persisted alongside the heartbeat switch.
+     *
+     * A plain LED is dimmed with LEDC hardware PWM, an addressable one by
+     * scaling the colour it is sent.
+     */
+    void brightness(uint8_t percent);
+    uint8_t brightness() const { return _brightness; }
 
 private:
     /** One addressable chain, identified by its data pin. */
@@ -73,6 +92,11 @@ private:
 
     bool _hasHeartbeat = false;
     bool _heartbeat    = false;
+
+    uint8_t _brightness = 25; //!< percent
+
+    /** LEDC channels are finite; a plain LED without one is driven on/off. */
+    bool _dimmable[HW_MAX_LEDS] = {false};
 };
 
 extern StatusLed statusLed;

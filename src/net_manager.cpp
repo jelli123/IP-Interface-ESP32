@@ -5,6 +5,7 @@
 #include <DNSServer.h>
 #include <Preferences.h>
 #include <WiFi.h>
+#include <esp_mac.h>
 #include <esp_wifi.h>
 
 #include "eth_interface.h"
@@ -59,7 +60,7 @@ void NetManager::begin()
 {
     _bootTime = millis();
 
-    netPrefs.begin(NET_NS, true);
+    netPrefs.begin(NET_NS, false);
     _wifiEnabled = netPrefs.getBool(KEY_WIFI, true);
     netPrefs.end();
 
@@ -108,7 +109,7 @@ void NetManager::begin()
      * find nothing stored is what forced the mode juggling that kept losing
      * the credentials.
      */
-    netPrefs.begin(NET_NS, true);
+    netPrefs.begin(NET_NS, false);
     String storedSsid = netPrefs.getString(KEY_SSID, "");
     String storedPass = netPrefs.getString(KEY_PASS, "");
     netPrefs.end();
@@ -143,13 +144,22 @@ void NetManager::begin()
 
 String NetManager::apName() const
 {
-    // The base MAC, not softAPmacAddress(): the latter only becomes valid
-    // once the access point is running, and the name is needed to start it.
-    // Asking too early yields 00:00:00:00:00:00, so every device ended up
-    // announcing itself as "SB-IP AP 0000".
-    String mac = WiFi.macAddress();
-    mac.replace(":", "");
-    return String(AP_NAME_PREFIX) + mac.substring(mac.length() - 4);
+    /*
+     * Straight from the eFuse, not from the driver.
+     *
+     * WiFi.macAddress() only answers once the driver has been initialised,
+     * and the access point is started before that whenever nothing is stored
+     * - begin() returns early in that case and never reaches WiFi.mode().
+     * The driver then reports 00:00:00:00:00:00 and every device in the room
+     * calls itself "SB-IP AP 0000". esp_read_mac() works at any time.
+     */
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+
+    char suffix[5];
+    snprintf(suffix, sizeof(suffix), "%02X%02X", mac[4], mac[5]);
+
+    return String(AP_NAME_PREFIX) + suffix;
 }
 
 void NetManager::startAccessPoint()

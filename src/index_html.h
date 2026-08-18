@@ -54,6 +54,12 @@ button:disabled{opacity:.5;cursor:not-allowed}
 button,.badge{transition:none}
 button:active:not(:disabled),.badge:active{transform:none}}
 #langBtn{padding:5px 11px;font-size:12px;border-radius:20px}
+#infoBtn{padding:5px 0;width:28px;font-size:13px;font-style:italic;
+font-weight:700;border-radius:50%;margin-left:6px}
+/* Ein ausstehender Neustart ist kein Nebensatz - solange er offen ist,
+ * laeuft das Geraet nicht auf dem, was in der Maske steht. */
+.warnbadge{display:inline-block;padding:2px 8px;border-radius:20px;
+font-size:11px;font-weight:600;background:var(--err);color:#fff}
 .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:8px}
 .bar>i{display:block;height:100%;background:var(--acc);width:0;transition:width .3s}
 .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
@@ -81,6 +87,9 @@ input[type=checkbox]{width:auto;margin:0;flex:0 0 auto;accent-color:var(--acc)}
  * to be obvious which one that is - a border alone is too quiet here. */
 table.rows{width:100%;border-collapse:collapse;margin:6px 0 4px}
 table.rows td{padding:2px 3px}
+table.rows tr.hd th{padding:2px 4px 5px;text-align:left;font-size:11px;
+font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);
+border-bottom:1px solid var(--line);cursor:help}
 table.rows tr{cursor:pointer}
 table.rows tr.sel td{background:rgba(94,168,255,.14)}
 table.rows tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--acc)}
@@ -88,6 +97,11 @@ table.rows input,table.rows select{margin:2px 0;padding:6px;font-size:13px}
 table.rows input[type=checkbox]{margin:0 0 0 6px}
 .rowbtns{display:flex;gap:8px}
 button.ico{width:38px;padding:7px 0;font-size:16px;line-height:1;flex:0 0 auto}
+/* Eine Checkbox-Zeile direkt unter einer Schaltflaechenreihe oder einem
+ * Absatz klebte am Vorgaenger - sie braucht denselben Luftraum wie ein
+ * eigener Abschnitt. */
+.actions + label.chk, p + label.chk, .bar + label.chk{margin-top:14px}
+label.chk{display:flex;align-items:center;gap:9px;font-size:13px}
 small{color:var(--dim)}
 </style>
 </head>
@@ -97,6 +111,8 @@ small{color:var(--dim)}
   <span class="badge" id="netBadge" onclick="openWifi()">...</span>
   <button class="sec" id="langBtn" onclick="toggleLang()"
           title="Sprache / Language">EN</button>
+  <button class="sec" id="infoBtn" onclick="infoDlg.showModal()"
+          title="Über dieses Projekt">i</button>
 </header>
 
 <main>
@@ -115,10 +131,13 @@ small{color:var(--dim)}
     </div>
     <label class="chk" style="margin-top:14px">
       <input type="checkbox" id="rtAll" onchange="setRouting()">
-      Ohne Filtertabelle alles weiterleiten</label>
-    <p><small>Ein unprogrammierter Koppler sperrt jedes Gruppentelegramm.
-    Nur einschalten, wenn dieses Ger&auml;t die einzige Verbindung zwischen
-    Linie und IP ist &ndash; sonst drohen Telegrammschleifen.</small></p>
+      Alle Gruppentelegramme weiterleiten</label>
+    <p><small>Achtung: Das übersteuert die ETS. Auch eine geladene
+    Filtertabelle wird ignoriert, das Gerät leitet dann jedes
+    Gruppentelegramm weiter. Ohne ETS-Programmierung gibt es gar keine
+    Tabelle, dann sperrt der Koppler sonst alles. Nur einschalten, wenn
+    dieses Gerät die einzige Verbindung zwischen Linie und IP ist &ndash;
+    sonst drohen Telegrammschleifen.</small></p>
   </section>
 
   <section class="card">
@@ -135,7 +154,7 @@ small{color:var(--dim)}
     <h2>Telegramme</h2>
     <div class="row"><span>TP empfangen</span><span id="tpRx">-</span></div>
     <div class="row"><span>TP verworfen (fremd)</span><span id="tpIgn">-</span></div>
-    <div class="row"><span>TP ungueltig</span><span id="tpInv">-</span></div>
+    <div class="row"><span>TP ungültig</span><span id="tpInv">-</span></div>
     <div class="row"><span>TP gesendet</span><span id="tpTx">-</span></div>
     <div class="row"><span>IP empfangen</span><span id="ipRx">-</span></div>
     <div class="row"><span>IP gesendet</span><span id="ipTx">-</span></div>
@@ -147,7 +166,7 @@ small{color:var(--dim)}
     <div class="row"><span>Zeitquelle</span><span id="tsSrc">-</span></div>
     <div class="row"><span>NTP-Server</span><span id="tsNtpAct">-</span></div>
     <div class="row"><span>RTC (RV-3028)</span><span id="tsRtc">-</span></div>
-    <div class="row"><span>Naechstes Senden</span><span id="tsNext">-</span></div>
+    <div class="row"><span>Nächstes Senden</span><span id="tsNext">-</span></div>
     <div class="actions">
       <button class="sec" onclick="openTime()">Einstellungen</button>
       <button class="sec" onclick="syncBrowser()">Zeit vom Browser</button>
@@ -177,6 +196,11 @@ small{color:var(--dim)}
     <div class="row"><span>Chip</span><span id="chip">-</span></div>
     <div class="row"><span>Takt</span><span id="cpu">-</span></div>
     <div class="row"><span>Freier Speicher</span><span id="heap">-</span></div>
+    <div class="row"><span>Flash</span><span id="flash">-</span></div>
+    <div class="row"><span>PSRAM</span><span id="psram">-</span></div>
+    <div class="actions">
+      <button class="sec" onclick="showParts()">Partitionstabelle</button>
+    </div>
   </section>
 
   <section class="card">
@@ -195,20 +219,27 @@ small{color:var(--dim)}
     </div>
     <label class="chk" id="beatRow" style="margin-top:14px;display:none">
       <input type="checkbox" id="beat" onchange="setBeat()">
-      Herzschlag &ndash; alle 2 Sekunden ein weisser Blitz</label>
-    <p><small>Aenderungen am Profil werden erst nach einem Neustart aktiv.</small></p>
+      Heartbeat aktiv</label>
+    <div id="brightRow" style="display:none">
+      <label>LED-Helligkeit <span id="brightVal" data-dyn></span></label>
+      <input type="range" id="bright" min="1" max="100"
+             oninput="$('brightVal').textContent = this.value + ' %'"
+             onchange="setBright()">
+    </div>
+    <p><small>Änderungen am Profil werden erst nach einem Neustart aktiv.
+    Reine Zuordnungen wirken sofort.</small></p>
   </section>
 
   <section class="card">
     <h2>Firmware</h2>
     <div class="row"><span>Version</span><span id="ver">-</span></div>
     <div class="row"><span>Build</span><span id="build">-</span></div>
-    <div class="row"><span>Aktiver Speicherplatz</span><span id="partRun">-</span></div>
-    <div class="row"><span>Zweiter Speicherplatz</span><span id="partAlt">-</span></div>
+    <div class="row"><span>Aktive Partition</span><span id="partRun">-</span></div>
+    <div class="row"><span>Zweite Partition</span><span id="partAlt">-</span></div>
     <div class="row"><span>Update</span><span id="updState">-</span></div>
     <div class="bar" id="updBar" style="display:none"><i id="updFill"></i></div>
     <div class="actions">
-      <button class="sec" onclick="checkUpdate()">Online pruefen</button>
+      <button class="sec" onclick="checkUpdate()">Online prüfen</button>
       <button class="sec" id="instBtn" onclick="installUpdate()" disabled>Installieren</button>
       <button class="sec" onclick="fw.click()">Datei hochladen</button>
       <input type="file" id="fw" accept=".bin" style="display:none" onchange="upload()">
@@ -216,10 +247,40 @@ small{color:var(--dim)}
     </div>
     <label style="display:block;margin-top:10px;font-size:12px;color:var(--dim)">
       SHA-256 der Datei (optional, aus <code>sha256sum</code>)</label>
-    <input id="fwHash" placeholder="64 Hex-Zeichen &ndash; leer = ungeprueft">
+    <input id="fwHash" placeholder="64 Hex-Zeichen &ndash; leer = ungeprüft">
     <p><small id="hashNote" data-dyn></small></p>
   </section>
 </main>
+
+<dialog id="partDlg">
+  <h2>Partitionstabelle</h2>
+  <table class="rows" id="partList"></table>
+  <div class="actions">
+    <button class="sec" onclick="partDlg.close()">Schließen</button>
+  </div>
+</dialog>
+
+<dialog id="infoDlg">
+  <h2>Über dieses Projekt</h2>
+  <p><small>Selfbus KNX/IP Interface &ndash; eine KNXnet/IP-Schnittstelle auf
+  ESP32 für den freien KNX-Baukasten von Selfbus.</small></p>
+  <p><small>Selfbus ist ein offenes Projekt für KNX-Geräte zum Selbstbau:
+  Schaltpläne, Platinen und Firmware stehen unter freien Lizenzen.</small></p>
+  <div class="row"><span>Wiki</span>
+    <a href="https://selfbus.org" target="_blank" rel="noopener">selfbus.org</a></div>
+  <div class="row"><span>Quelltext</span>
+    <a href="https://github.com/selfbus" target="_blank" rel="noopener">github.com/selfbus</a></div>
+  <div class="row"><span>KNX-Stack</span>
+    <a href="https://github.com/thelsing/knx" target="_blank" rel="noopener">thelsing/knx</a></div>
+  <div class="row"><span>Lizenz</span><span>GPL-3.0</span></div>
+  <p><small>Diese Firmware ist freie Software: weitergeben und ändern unter
+  den Bedingungen der GNU General Public License, Version 3. Ohne jede
+  Gewährleistung &ndash; auch ohne die implizite Zusicherung der
+  Marktreife oder Eignung für einen bestimmten Zweck.</small></p>
+  <div class="actions">
+    <button class="sec" onclick="infoDlg.close()">Schließen</button>
+  </div>
+</dialog>
 
 <dialog id="wifiDlg">
   <h2>WLAN einrichten</h2>
@@ -230,7 +291,7 @@ small{color:var(--dim)}
     <button class="sec" onclick="scan()">Neu suchen</button>
     <button class="sec" onclick="wifiDlg.close()">Abbrechen</button>
   </div>
-  <p><small>Nach dem Verbinden startet das Geraet neu.</small></p>
+  <p><small>Nach dem Verbinden startet das Gerät neu.</small></p>
 </dialog>
 
 <dialog id="filterDlg">
@@ -239,7 +300,7 @@ small{color:var(--dim)}
   <div id="filterList" style="max-height:50vh;overflow:auto;font-size:13px;
        font-variant-numeric:tabular-nums;line-height:1.7"></div>
   <div class="actions">
-    <button class="sec" onclick="filterDlg.close()">Schliessen</button>
+    <button class="sec" onclick="filterDlg.close()">Schließen</button>
   </div>
 </dialog>
 
@@ -268,11 +329,11 @@ small{color:var(--dim)}
   <input id="tsManual" type="datetime-local" step="1">
   <div class="actions">
     <button onclick="saveTime()">Speichern</button>
-    <button class="sec" onclick="setManual()">Zeit uebernehmen</button>
-    <button class="sec" onclick="timeDlg.close()">Schliessen</button>
+    <button class="sec" onclick="setManual()">Zeit übernehmen</button>
+    <button class="sec" onclick="timeDlg.close()">Schließen</button>
   </div>
   <p><small>Ohne Internetzugang NTP abschalten und die Zeit per Browser oder
-  manuell setzen. Mit RV-3028 bleibt sie ueber einen Stromausfall erhalten.</small></p>
+  manuell setzen. Mit RV-3028 bleibt sie über einen Stromausfall erhalten.</small></p>
 </dialog>
 
 <dialog id="hwDlg">
@@ -290,35 +351,36 @@ small{color:var(--dim)}
     <label>Taster</label>
     <table class="rows" id="hwBtnTbl"></table>
     <div class="rowbtns">
-      <button class="sec ico" onclick="rowAdd('btn')" title="Zeile hinzufuegen">+</button>
+      <button class="sec ico" onclick="rowAdd('btn')" title="Zeile hinzufügen">+</button>
       <button class="sec ico" onclick="rowDel('btn')" title="Markierte Zeile entfernen">&minus;</button>
     </div>
     <p><small>Kurz ist ein Druck unter einer Sekunde, lang ab zwei Sekunden,
     sehr lang ab sechs. Derselbe GPIO darf mehrfach vorkommen, solange sich
-    die Auesloesung unterscheidet.</small></p>
+    die Auslösung unterscheidet.</small></p>
   </div>
 
   <div class="grp">
     <label>LEDs</label>
     <table class="rows" id="hwLedTbl"></table>
     <div class="rowbtns">
-      <button class="sec ico" onclick="rowAdd('led')" title="Zeile hinzufuegen">+</button>
+      <button class="sec ico" onclick="rowAdd('led')" title="Zeile hinzufügen">+</button>
       <button class="sec ico" onclick="rowDel('led')" title="Markierte Zeile entfernen">&minus;</button>
     </div>
     <p><small>Eine adressierbare LED ist eine Position in einer Kette. Zeilen
-    mit demselben GPIO gehoeren zur selben Kette und brauchen denselben Chiptyp,
-    aber verschiedene Positionen.</small></p>
+    mit demselben GPIO gehören zur selben Kette und brauchen denselben Chiptyp,
+    aber verschiedene Positionen. Bleibt die LED des S3-DevKitC dunkel: v1.0
+    treibt sie über GPIO 48, v1.1 über GPIO 38.</small></p>
   </div>
 
   <div class="grp">
     <label>Zuordnung Taster</label>
     <table class="rows" id="hwBaTbl"></table>
     <div class="rowbtns">
-      <button class="sec ico" onclick="rowAdd('ba')" title="Zeile hinzufuegen">+</button>
+      <button class="sec ico" onclick="rowAdd('ba')" title="Zeile hinzufügen">+</button>
       <button class="sec ico" onclick="rowDel('ba')" title="Markierte Zeile entfernen">&minus;</button>
     </div>
-    <p><small>Werkeinstellungen loescht alles, auch die WLAN-Zugangsdaten.
-    WLAN ein/aus laesst sich nur abschalten, wenn ein W5500 erkannt wurde,
+    <p><small>Werkeinstellungen löscht alles, auch die WLAN-Zugangsdaten.
+    WLAN ein/aus lässt sich nur abschalten, wenn ein W5500 erkannt wurde,
     und wirkt nach einem Neustart.</small></p>
   </div>
 
@@ -326,21 +388,21 @@ small{color:var(--dim)}
     <label>Zuordnung LEDs</label>
     <table class="rows" id="hwLaTbl"></table>
     <div class="rowbtns">
-      <button class="sec ico" onclick="rowAdd('la')" title="Zeile hinzufuegen">+</button>
+      <button class="sec ico" onclick="rowAdd('la')" title="Zeile hinzufügen">+</button>
       <button class="sec ico" onclick="rowDel('la')" title="Markierte Zeile entfernen">&minus;</button>
       <button class="sec ico" onclick="rowMove('la',-1)" title="Nach oben">&uarr;</button>
       <button class="sec ico" onclick="rowMove('la',1)" title="Nach unten">&darr;</button>
     </div>
-    <p><small>Die Reihenfolge entscheidet: Fuer jede LED gilt die
+    <p><small>Die Reihenfolge entscheidet: Für jede LED gilt die
     oberste Zeile, deren Zustand gerade zutrifft. Dieselbe LED darf mehrfach
     vorkommen &ndash; so zeigt eine einzelne LED nacheinander
     Programmiermodus, Netzzustand und Herzschlag. Die Farbe wirkt nur bei
-    adressierbaren LEDs; eine einfache LED unterscheidet die Zustaende
+    adressierbaren LEDs; eine einfache LED unterscheidet die Zustände
     allein am Muster.</small></p>
   </div>
 
   <div class="grp">
-    <label class="chk"><input type="checkbox" id="hwI2cEn"> RTC ueber I2C anschliessen</label>
+    <label class="chk"><input type="checkbox" id="hwI2cEn"> RTC über I2C aktivieren</label>
     <label>SDA / SCL</label>
     <div class="trio">
       <input id="hwSda" type="number" min="-1">
@@ -350,7 +412,7 @@ small{color:var(--dim)}
   </div>
 
   <div class="grp">
-    <label class="chk"><input type="checkbox" id="hwEthEn"> Ethernet W5500 anschliessen</label>
+    <label class="chk"><input type="checkbox" id="hwEthEn"> Ethernet W5500 aktivieren</label>
     <label>SCK / MISO / MOSI</label>
     <div class="trio">
       <input id="hwSck"  type="number" min="-1">
@@ -368,14 +430,15 @@ small{color:var(--dim)}
   <p id="hwErr" style="color:var(--err);font-size:12px"></p>
   <div class="actions">
     <button onclick="hwSave()">Speichern</button>
-    <button class="sec" onclick="hwDefaults()">Werte des Images</button>
-    <button class="sec" onclick="hwReset()">Auf Standard zuruecksetzen</button>
+    <button class="sec" onclick="hwDefaults()"
+            title="Formular mit den Werten der Firmware füllen, nichts speichern">Formular zurücksetzen</button>
+    <button class="sec" onclick="hwReset()"
+            title="Gespeichertes Profil im Gerät löschen und neu starten">Profil im Gerät löschen</button>
     <button class="sec" onclick="hwDlg.close()">Abbrechen</button>
   </div>
-  <p><small>Ungueltige Pins werden abgewiesen. Startet das Geraet mit einem
-  neuen Profil zweimal nicht durch, faellt es automatisch auf die Werte des
-  Images zurueck. Taster beim Einschalten gedrueckt halten erzwingt das
-  ebenfalls.</small></p>
+  <p><small>Ungültige Pins werden abgewiesen. Startet das Gerät mit einem
+  neuen Profil zweimal nicht durch, fällt es automatisch auf die Werte der
+  Firmware zurück.</small></p>
 </dialog>
 
 <script>
@@ -384,10 +447,10 @@ const $ = id => document.getElementById(id);
 /*
  * Zweisprachigkeit.
  *
- * Deutsch steht im Markup und ist die Quelle. Uebersetzt wird ueber eine
+ * Deutsch steht im Markup und ist die Quelle. Übersetzt wird über eine
  * einzige Tabelle, die vom deutschen Text auf den englischen abbildet - so
- * gibt es kein zweites Woerterbuch zu pflegen, und was fehlt, bleibt einfach
- * deutsch. Beim Umschalten zurueck wird der urspruengliche Textknoten aus
+ * gibt es kein zweites Wörterbuch zu pflegen, und was fehlt, bleibt einfach
+ * deutsch. Beim Umschalten zurück wird der ursprüngliche Textknoten aus
  * dem Cache wiederhergestellt.
  */
 let LANG = localStorage.getItem('sbip-lang') === 'en' ? 'en' : 'de';
@@ -400,55 +463,96 @@ const EN = {
 'Programmiermodus':'Programming mode', 'Verbindung':'Connection',
 'Schnittstelle':'Interface', 'Baudrate':'Baud rate', 'Selbsttest':'Self test',
 'Buslast':'Bus load', 'TP empfangen':'TP received',
-'TP verworfen (fremd)':'TP discarded (foreign)', 'TP ungueltig':'TP invalid',
+'TP verworfen (fremd)':'TP discarded (foreign)', 'TP ungültig':'TP invalid',
 'TP gesendet':'TP sent', 'IP empfangen':'IP received', 'IP gesendet':'IP sent',
 'Aktuelle Zeit':'Current time', 'Zeitquelle':'Time source',
-'NTP-Server':'NTP server', 'Naechstes Senden':'Next transmission',
+'NTP-Server':'NTP server', 'Nächstes Senden':'Next transmission',
 'IP-Adresse':'IP address', 'Netzmaske':'Subnet mask',
 'IP-Bezug':'Address source', 'fest, aus der ETS':'fixed, from the ETS',
 'automatisch (DHCP)':'automatic (DHCP)',
 'Takt':'Clock', 'Freier Speicher':'Free memory',
+'Über dieses Projekt':'About this project',
+'Wiki':'Wiki', 'Quelltext':'Source code', 'KNX-Stack':'KNX stack',
+'Lizenz':'Licence',
+'Partitionstabelle':'Partition table', 'Typ':'Type', 'Adresse':'Address',
+'Größe':'Size', 'Firmware':'Firmware',
+'frei in der Partition':'free in the partition',
+'frei':'free',
+'LED-Helligkeit':'LED brightness', 'Heartbeat aktiv':'Heartbeat active',
+'Neustart nötig':'Restart required',
+'Alle Gruppentelegramme weiterleiten':'Forward every group telegram',
+'Name':'Name', 'Auslösung':'Trigger', 'Chip':'Chip',
+'Position':'Position', 'Zustand':'State', 'Farbe':'Colour', 'Muster':'Pattern',
+'1 bis 16 Zeichen aus A-Z a-z 0-9 _ -':'1 to 16 characters from A-Z a-z 0-9 _ -',
+'Frei wählbarer Name zur Zuordnung weiter unten':
+  'A name of your choice, used by the assignment below',
+'Eingang, an dem der Taster gegen Masse schaltet':
+  'Input the button pulls to ground',
+'Kurz unter 1 s, lang ab 2 s, sehr lang ab 6 s':
+  'Short under 1 s, long from 2 s, very long from 6 s',
+'Ausgang zur LED bzw. Datenleitung der Kette':
+  'Output to the LED, or the data line of the chain',
+'Einfache LED an einem GPIO oder Position in einer Kette':
+  'A plain LED on one GPIO, or a position in a chain',
+'Nur bei adressierbaren LEDs: Bitdauer des Chips':
+  'Addressable LEDs only: bit timing of the chip',
+'Nur bei adressierbaren LEDs: Platz in der Kette, ab 0':
+  'Addressable LEDs only: place in the chain, from 0',
+'Platz in der Kette. Eine einzelne LED steht auf 0.':
+  'Place in the chain. A single LED belongs at 0.',
+'Platz in der Kette, die erste LED ist die 1.':
+  'Place in the chain, the first LED is number 1.',
+'Name aus der Tastertabelle':'A name from the button table',
+'Was der Taster auslöst':'What the button triggers',
+'Name aus der LED-Tabelle':'A name from the LED table',
+'Wann diese Zeile gilt':'When this row applies',
+'Nur bei adressierbaren LEDs':'Addressable LEDs only',
+'Wie die LED während des Zustands moduliert wird':
+  'How the LED is modulated while the state holds',
+['Das übersteuert die ETS: auch eine geladene Filtertabelle wird '
++ 'ignoriert. Fortfahren?']:
+  'This overrides the ETS: a downloaded filter table is ignored as well. '
++ 'Continue?',
 'Quelle':'Source', 'LED / Taster':'LED / button', 'Status-LED':'Status LED',
-'Herzschlag \u2013 alle 2 Sekunden ein weisser Blitz':
+'Herzschlag \u2013 alle 2 Sekunden ein weißer Blitz':
   'Heartbeat \u2013 a white flash every 2 seconds',
 
 'KNX zur\u00fccksetzen':'Reset KNX', 'Einstellungen':'Settings',
 'ETS-Programmierung l\u00f6schen':'Erase the ETS programming',
 'Filtertabelle':'Filter table', 'Partition wechseln':'Switch partition',
-'L\u00e4uft aus':'Running from', 'Zweiter Speicherplatz':'Second slot',
-'Aktiver Speicherplatz':'Active slot',
-'geprueft':'verified', 'auf Bewaehrung':'on probation', 'neu':'new',
-'ungueltig':'invalid', 'abgebrochen':'aborted',
+'L\u00e4uft aus':'Running from', 'Zweite Partition':'Second partition',
+'Aktive Partition':'Active partition',
+'geprüft':'verified', 'auf Bewährung':'on probation', 'neu':'new',
+'ungültig':'invalid', 'abgebrochen':'aborted',
 'ohne OTA-Vermerk':'no OTA record', 'unbekannt':'unknown',
 'leer':'empty',
 'lese Filtertabelle...':'reading the filter table...',
 'Lesen fehlgeschlagen.':'Could not read it.',
-['Keine Filtertabelle geladen \u2013 das Geraet ist nicht programmiert und '
+['Keine Filtertabelle geladen \u2013 das Gerät ist nicht programmiert und '
 + 'sperrt jedes Gruppentelegramm.']:
   'No filter table loaded \u2013 the device is unprogrammed and blocks every '
 + 'group telegram.',
 '%s Gruppenadressen werden weitergeleitet.':'%s group addresses are forwarded.',
 'Angezeigt: die ersten %s.':'Showing the first %s.',
-'Die Tabelle ist geladen, laesst aber nichts durch.':
+'Die Tabelle ist geladen, lässt aber nichts durch.':
   'The table is loaded but lets nothing through.',
-['Beim naechsten Start die andere Partition verwenden? Das Geraet startet '
+['Beim nächsten Start die andere Partition verwenden? Das Gerät startet '
 + 'neu.']:
   'Boot from the other slot next time? The device restarts.',
-['Achtung: Der Inhalt ist unbekannt. Dieser Speicherplatz hat unter der '
-+ 'aktuellen Firmware noch nie gelaufen, dort liegt vermutlich ein aelterer '
+['Achtung: Der Inhalt ist unbekannt. Diese Partition hat unter der '
++ 'aktuellen Firmware noch nie gelaufen, dort liegt vermutlich ein älterer '
 + 'Stand.']:
   'Careful: the contents are unknown. This slot has never run under the '
 + 'current firmware, so it most likely holds an older build.',
-'Umgeschaltet. Das Geraet startet neu.':'Switched. The device restarts.',
-'Umschalten nicht moeglich.':'Cannot switch.',
+'Umgeschaltet. Das Gerät startet neu.':'Switched. The device restarts.',
+'Umschalten nicht möglich.':'Cannot switch.',
 'Zeit vom Browser':'Time from browser', 'Jetzt senden':'Send now',
 'Bearbeiten':'Edit', 'JSON laden':'Load JSON', 'JSON speichern':'Save JSON',
-'Online pruefen':'Check online', 'Installieren':'Install',
+'Online prüfen':'Check online', 'Installieren':'Install',
 'Datei hochladen':'Upload file', 'Verbinden':'Connect',
 'Neu suchen':'Scan again', 'Abbrechen':'Cancel', 'Speichern':'Save',
-'Zeit uebernehmen':'Apply time', 'Schliessen':'Close',
-'Werte des Images':'Image defaults',
-'Auf Standard zuruecksetzen':'Reset to defaults',
+'Zeit übernehmen':'Apply time', 'Schließen':'Close',
+
 
 'Zeit auf den KNX-Bus senden':'Send time to the KNX bus',
 'Ohne Filtertabelle alles weiterleiten':'Forward everything without a filter table',
@@ -469,7 +573,7 @@ const EN = {
 'Zeitzone (POSIX TZ)':'Time zone (POSIX TZ)',
 'Zeit manuell setzen':'Set time manually',
 'KNX \u2013 UART-Nummer / RX / TX':'KNX \u2013 UART number / RX / TX',
-'Programmier-LED / Taster (\u22121 = nicht bestueckt)':
+'Programmier-LED / Taster (\u22121 = nicht bestückt)':
   'Programming LED / button (\u22121 = not fitted)',
 'Taster':'Buttons', 'LEDs':'LEDs',
 'Zuordnung Taster':'Button assignment', 'Zuordnung LEDs':'LED assignment',
@@ -477,7 +581,7 @@ const EN = {
 'sehr langer Druck':'very long press',
 'RGB-LED':'RGB LED',
 'Programmiermodus':'Programming mode', 'Werkeinstellungen':'Factory reset',
-'WLAN Grundeinstellung':'WiFi setup', 'Geraet neu starten':'Restart the device',
+'WLAN Grundeinstellung':'WiFi setup', 'Gerät neu starten':'Restart the device',
 'WLAN ein/aus':'WiFi on/off',
 'Programmier-LED':'Programming LED', 'Heartbeat-LED':'Heartbeat LED',
 'Netzwerkanzeige':'Network indicator',
@@ -485,68 +589,77 @@ const EN = {
 'AP-Modus offen':'Access point open',
 'keine TP-Verbindung':'No TP connection',
 'online':'online', 'offline':'offline', 'Herzschlag':'Heartbeat',
-'rot':'red', 'gruen':'green', 'blau':'blue', 'gelb':'yellow',
-'cyan':'cyan', 'magenta':'magenta', 'weiss':'white',
+'rot':'red', 'grün':'green', 'blau':'blue', 'gelb':'yellow',
+'cyan':'cyan', 'magenta':'magenta', 'weiß':'white',
 'Dauerlicht':'steady', 'langsam blinken':'slow blink',
 'schnell blinken':'fast blink', 'Doppelblitz':'double flash',
 'kurzer Blitz':'short flash',
 'Nach oben':'Move up', 'Nach unten':'Move down',
-'mehr Zeilen sind nicht moeglich':'no more rows are possible',
+'mehr Zeilen sind nicht möglich':'no more rows are possible',
 'keine':'none',
-'hoechstens 8 Zeilen':'at most 8 rows',
+'höchstens 8 Zeilen':'at most 8 rows',
 'Bitte zuerst eine Zeile anklicken.':'Select a row first.',['Kurz ist ein Druck unter einer Sekunde, lang ab zwei Sekunden, sehr lang '
 + 'ab sechs. Derselbe GPIO darf mehrfach vorkommen, solange sich die '
-+ 'Auesloesung unterscheidet.']:
++ 'Auslösung unterscheidet.']:
   'Short means under one second, long from two seconds, very long from six. '
 + 'The same GPIO may appear more than once as long as the trigger differs.',
 ['Eine adressierbare LED ist eine Position in einer Kette. Zeilen mit '
-+ 'demselben GPIO gehoeren zur selben Kette und brauchen denselben Chiptyp, '
-+ 'aber verschiedene Positionen.']:
++ 'demselben GPIO gehören zur selben Kette und brauchen denselben Chiptyp, '
++ 'aber verschiedene Positionen. Bleibt die LED des S3-DevKitC dunkel: v1.0 '
++ 'treibt sie über GPIO 48, v1.1 über GPIO 38.']:
   'An addressable LED is one position in a chain. Rows sharing a GPIO belong '
-+ 'to the same chain and need the same chip type but different positions.',
-['Werkeinstellungen loescht alles, auch die WLAN-Zugangsdaten. WLAN ein/aus '
-+ 'laesst sich nur abschalten, wenn ein W5500 erkannt wurde, und wirkt nach '
++ 'to the same chain and need the same chip type but different positions. If '
++ 'the LED on an S3-DevKitC stays dark: v1.0 drives it from GPIO 48, v1.1 '
++ 'from GPIO 38.',
+['Werkeinstellungen löscht alles, auch die WLAN-Zugangsdaten. WLAN ein/aus '
++ 'lässt sich nur abschalten, wenn ein W5500 erkannt wurde, und wirkt nach '
 + 'einem Neustart.']:
   'Factory reset erases everything, including the WiFi credentials. WiFi '
 + 'on/off can only be switched off once a W5500 has been found, and takes '
 + 'effect after a restart.',
-['Die Reihenfolge entscheidet: Fuer jede LED gilt die oberste Zeile, deren '
+['Die Reihenfolge entscheidet: Für jede LED gilt die oberste Zeile, deren '
 + 'Zustand gerade zutrifft. Dieselbe LED darf mehrfach vorkommen \u2013 so '
 + 'zeigt eine einzelne LED nacheinander Programmiermodus, Netzzustand und '
 + 'Herzschlag. Die Farbe wirkt nur bei adressierbaren LEDs; eine einfache '
-+ 'LED unterscheidet die Zustaende allein am Muster.']:
++ 'LED unterscheidet die Zustände allein am Muster.']:
   'The order decides: for each LED the topmost row whose state currently '
 + 'holds is the one that shows. The same LED may appear more than once - '
 + 'that is how a single LED shows programming mode, network state and a '
 + 'heartbeat in turn. Colour only applies to addressable LEDs; a plain one '
 + 'tells the states apart by pattern alone.',
 'LED low-aktiv':'LED active low',
-'RTC ueber I2C anschliessen':'Connect an RTC via I2C',
-'Ethernet W5500 anschliessen':'Connect an Ethernet W5500',
+'RTC über I2C aktivieren':'Enable the RTC on I2C',
+'Ethernet W5500 aktivieren':'Enable the W5500 Ethernet',
+'Formular zurücksetzen':'Reset the form',
+'Profil im Gerät löschen':'Delete the stored profile',
+'Formular mit den Werten der Firmware füllen, nichts speichern':
+  'Fill the form with the firmware defaults, save nothing',
+'Gespeichertes Profil im Gerät löschen und neu starten':
+  'Delete the profile stored in the device and restart',
 'CS / IRQ / RST (\u22121 = ungenutzt)':'CS / IRQ / RST (\u22121 = unused)',
 'SHA-256 der Datei (optional, aus':'SHA-256 of the file (optional, from',
 
-'Aenderungen am Profil werden erst nach einem Neustart aktiv.':
+'Änderungen am Profil werden erst nach einem Neustart aktiv.':
   'Profile changes take effect after a restart.',
-'Zeile hinzufuegen':'Add a row',
+'Zeile hinzufügen':'Add a row',
 'Markierte Zeile entfernen':'Remove the selected row',
 'low-aktiv':'active low',
-'Nach dem Verbinden startet das Geraet neu.':
+'Nach dem Verbinden startet das Gerät neu.':
   'The device restarts after connecting.',
 ['Ohne Internetzugang NTP abschalten und die Zeit per Browser oder manuell '
-+ 'setzen. Mit RV-3028 bleibt sie ueber einen Stromausfall erhalten.']:
++ 'setzen. Mit RV-3028 bleibt sie über einen Stromausfall erhalten.']:
   'Without internet access, switch NTP off and set the time from the browser '
 + 'or by hand. With an RV-3028 it survives a power failure.',
-['Ungueltige Pins werden abgewiesen. Startet das Geraet mit einem neuen Profil '
-+ 'zweimal nicht durch, faellt es automatisch auf die Werte des Images '
-+ 'zurueck. Taster beim Einschalten gedrueckt halten erzwingt das ebenfalls.']:
+['Ungültige Pins werden abgewiesen. Startet das Gerät mit einem neuen Profil '
++ 'zweimal nicht durch, fällt es automatisch auf die Werte des Images '
++ 'zurück. Taster beim Einschalten gedrückt halten erzwingt das ebenfalls.']:
   'Invalid pins are rejected. If the device fails to boot twice with a new '
 + 'profile, it falls back to the image defaults on its own. Holding the '
 + 'button while powering up forces the same.',
 
 'Passwort':'Password', 'leer = aus':'empty = off',
 'z.B. 0/0/1 \u2013 leer = aus':'e.g. 0/0/1 \u2013 empty = off',
-'64 Hex-Zeichen \u2013 leer = ungeprueft':
+'64 Hex-Zeichen \u2013 leer = ungeprüft':
   '64 hex characters \u2013 empty = unverified',
 'Netzwerke suchen...':'Searching for networks...',
 
@@ -558,40 +671,40 @@ const EN = {
 'nicht konfiguriert':'not configured', 'WLAN':'Wi-Fi',
 'AP-Modus aktiv':'AP mode active', 'getrennt':'disconnected',
 'manuell':'manual', 'keine':'none', 'nicht gesetzt':'not set',
-'keiner':'none', 'nicht bestueckt':'not fitted', 'deaktiviert':'disabled',
+'keiner':'none', 'nicht bestückt':'not fitted', 'deaktiviert':'disabled',
 'noch keine vergeben':'none assigned yet',
 'Image-Standard':'image defaults',
-'ungueltig &rarr; Standard':'invalid &rarr; defaults',
+'ungültig &rarr; Standard':'invalid &rarr; defaults',
 'Startfehler &rarr; Standard':'boot failure &rarr; defaults',
 'Taster &rarr; Standard':'button &rarr; defaults',
 'gespeichertes Profil':'stored profile',
-'(Neustart noetig)':'(restart required)', 'kein':'none',
-'pruefe...':'checking...', 'berechne Pruefsumme...':'computing checksum...',
+'(Neustart nötig)':'(restart required)', 'kein':'none',
+'prüfe...':'checking...', 'berechne Prüfsumme...':'computing checksum...',
 'lade hoch...':'uploading...',
 'erfolgreich, Neustart...':'successful, restarting...',
-'fehlgeschlagen':'failed', 'Uebertragung abgebrochen':'transfer aborted',
-'abgelehnt':'rejected', 'Suche laeuft...':'Scanning...',
+'fehlgeschlagen':'failed', 'Übertragung abgebrochen':'transfer aborted',
+'abgelehnt':'rejected', 'Suche läuft...':'Scanning...',
 'Kein Netz gefunden':'No network found',
-'Zeitueberschreitung':'Timed out', 'Version %s verfuegbar':'version %s available',
+'Zeitüberschreitung':'Timed out', 'Version %s verfügbar':'version %s available',
 
 'Zeit konnte nicht gesetzt werden.':'Could not set the time.',
 'Bitte Datum und Uhrzeit eingeben.':'Please enter a date and a time.',
-'Senden nicht moeglich - Uhr nicht gesetzt?':
+'Senden nicht möglich - Uhr nicht gesetzt?':
   'Cannot send - is the clock set?',
 'Profil gespeichert. Jetzt neu starten?':'Profile saved. Restart now?',
 'Gespeichertes Profil verwerfen und die Werte des Images verwenden?':
   'Discard the stored profile and use the image defaults?',
-'Zurueckgesetzt. Jetzt neu starten?':'Reset done. Restart now?',
-'Keine gueltige JSON-Datei.':'Not a valid JSON file.',
-'Neustart laeuft. Die Seite in einigen Sekunden neu laden.':
+'Zurückgesetzt. Jetzt neu starten?':'Reset done. Restart now?',
+'Keine gültige JSON-Datei.':'Not a valid JSON file.',
+'Neustart läuft. Die Seite in einigen Sekunden neu laden.':
   'Restarting. Reload the page in a few seconds.',
-'Das Geraet laeuft ueber Ethernet. WLAN ist nicht aktiv.':
+'Das Gerät läuft über Ethernet. WLAN ist nicht aktiv.':
   'The device runs over Ethernet. Wi-Fi is not active.',
-'Zugangsdaten gespeichert. Das Geraet startet neu.':
+'Zugangsdaten gespeichert. Das Gerät startet neu.':
   'Credentials saved. The device restarts.',
-'Firmware jetzt installieren? Das Geraet startet danach neu.':
+'Firmware jetzt installieren? Das Gerät startet danach neu.':
   'Install the firmware now? The device restarts afterwards.',
-'Kein SHA-256 angegeben. Firmware ungeprueft uebertragen?':
+'Kein SHA-256 angegeben. Firmware ungeprüft übertragen?':
   'No SHA-256 given. Transfer the firmware unverified?',
 'Zur\u00fccksetzen fehlgeschlagen.':'Reset failed.',
 'KNX-Konfiguration gel\u00f6scht. Das Ger\u00e4t startet neu.':
@@ -604,7 +717,7 @@ const EN = {
 + 'the ETS.\n\nWi-Fi and the hardware profile are kept.',
 'Wird beim Hochladen automatisch berechnet.':
   'Computed automatically during upload.',
-['Automatische Berechnung braucht HTTPS und entfaellt hier. Selbst ermitteln '
+['Automatische Berechnung braucht HTTPS und entfällt hier. Selbst ermitteln '
 + 'mit "Get-FileHash firmware.bin" bzw. "sha256sum firmware.bin", oder leer '
 + 'lassen.']:
   'Automatic computation needs HTTPS and is unavailable here. Obtain it with '
@@ -650,7 +763,7 @@ function applyLang(){
   $('langBtn').textContent = LANG === 'de' ? 'EN' : 'DE';
   $('hashNote').textContent = t(CAN_HASH
     ? 'Wird beim Hochladen automatisch berechnet.'
-    : 'Automatische Berechnung braucht HTTPS und entfaellt hier. Selbst '
+    : 'Automatische Berechnung braucht HTTPS und entfällt hier. Selbst '
     + 'ermitteln mit "Get-FileHash firmware.bin" bzw. "sha256sum '
     + 'firmware.bin", oder leer lassen.');
 
@@ -691,10 +804,23 @@ document.addEventListener('change', e => {
 
 let last = null;
 
+/*
+ * Nur eine Abfrage gleichzeitig.
+ *
+ * Neben der Zeitschleife lösen auch Bedienschritte ein refresh() aus. Ohne
+ * diese Sperre laufen mehrere Anfragen parallel, und der ESP32 hat nur eine
+ * Handvoll TCP-Verbindungen.
+ */
+let busy = false;
+
 async function refresh(){
+  if(busy) return;
+  busy = true;
+
   let s;
   try { s = await (await fetch('/api/status')).json(); }
   catch(e){ $('netBadge').textContent = 'offline'; return; }
+  finally { busy = false; }
   last = s;
 
   $('uptime').textContent = s.uptime;
@@ -718,6 +844,11 @@ async function refresh(){
 
   $('beatRow').style.display = s.led_beat_available ? '' : 'none';
   $('beat').checked          = s.led_heartbeat;
+  $('brightRow').style.display = s.led_present ? '' : 'none';
+  if(document.activeElement !== $('bright')){
+    $('bright').value = s.led_brightness;
+    $('brightVal').textContent = s.led_brightness + ' %';
+  }
 
   $('tpConn').innerHTML = dot(s.tp.connected);
   $('tpType').textContent = s.tp.type;
@@ -758,10 +889,21 @@ async function refresh(){
   $('cpu').textContent  = s.hardware.cpu_freq + ' MHz';
   $('heap').textContent = Math.round(s.hardware.heap_free/1024) + ' / '
                         + Math.round(s.hardware.heap_total/1024) + ' KiB';
+
+  const mib = b => (b/1048576).toFixed(b < 1048576 ? 2 : 1) + ' MiB';
+  const kib = b => Math.round(b/1024) + ' KiB';
+  // sketch_size wird einmalig kurz nach dem Start gemessen; bis dahin 0.
+  $('flash').textContent = mib(s.hardware.flash_size)
+      + (s.hardware.sketch_size
+          ? ' \u00b7 ' + t('Firmware') + ' ' + kib(s.hardware.sketch_size) : '')
+      + ' \u00b7 ' + t('frei in der Partition') + ' ' + kib(s.hardware.sketch_free);
+  $('psram').textContent = s.hardware.psram_total
+      ? (kib(s.hardware.psram_free) + ' / ' + mib(s.hardware.psram_total) + ' ' + t('frei'))
+      : t('nicht bestückt');
   // Both application slots with what is stored in each, so "switch" is an
   // informed decision rather than a leap.
-  const PST = {valid:'geprueft', pending_verify:'auf Bewaehrung',
-               new:'neu', invalid:'ungueltig', aborted:'abgebrochen',
+  const PST = {valid:'geprüft', pending_verify:'auf Bewährung',
+               new:'neu', invalid:'ungültig', aborted:'abgebrochen',
                undefined:'ohne OTA-Vermerk'};
   const slot = p => p.label + ' \u00b7 '
       + (p.firmware || t(p.valid ? 'unbekannt' : 'leer'))
@@ -788,6 +930,11 @@ async function toggleProg(){
 }
 
 async function setRouting(){
+  if($('rtAll').checked &&
+     !confirm(t('Das übersteuert die ETS: auch eine geladene Filtertabelle wird ignoriert. Fortfahren?'))){
+    $('rtAll').checked = false;
+    return;
+  }
   const body = new URLSearchParams({unfiltered: $('rtAll').checked ? '1' : '0'});
   await fetch('/api/knx/routing', {method:'POST', body});
   setTimeout(refresh, 300);
@@ -797,6 +944,26 @@ async function setBeat(){
   const body = new URLSearchParams({enabled: $('beat').checked ? '1' : '0'});
   await fetch('/api/led/heartbeat', {method:'POST', body});
   setTimeout(refresh, 300);
+}
+
+async function setBright(){
+  const body = new URLSearchParams({percent: $('bright').value});
+  await fetch('/api/led/brightness', {method:'POST', body});
+}
+
+async function showParts(){
+  $('partList').innerHTML = '<tr class="hd"><th>' + t('lese Filtertabelle...') + '</th></tr>';
+  partDlg.showModal();
+
+  let p;
+  try { p = await (await fetch('/api/partitions')).json(); }
+  catch(e){ $('partList').innerHTML = '<tr><td>' + t('Lesen fehlgeschlagen.') + '</td></tr>'; return; }
+
+  const hex = n => '0x' + n.toString(16).toUpperCase().padStart(6, '0');
+  $('partList').innerHTML = '<tr class="hd"><th>' + t('Name') + '</th><th>' + t('Typ')
+      + '</th><th>' + t('Adresse') + '</th><th>' + t('Größe') + '</th></tr>'
+    + p.map(e => '<tr><td>' + esc(e.label) + '</td><td>' + e.type + '</td><td>'
+      + hex(e.addr) + '</td><td>' + Math.round(e.size/1024) + ' KiB</td></tr>').join('');
 }
 
 async function showFilter(){
@@ -809,7 +976,7 @@ async function showFilter(){
   catch(e){ $('filterInfo').textContent = t('Lesen fehlgeschlagen.'); return; }
 
   if(!f.loaded){
-    $('filterInfo').textContent = t('Keine Filtertabelle geladen \u2013 das Geraet '
+    $('filterInfo').textContent = t('Keine Filtertabelle geladen \u2013 das Gerät '
       + 'ist nicht programmiert und sperrt jedes Gruppentelegramm.');
     return;
   }
@@ -819,7 +986,7 @@ async function showFilter(){
       + (f.total > f.addresses.length
          ? ' ' + t('Angezeigt: die ersten %s.').replace('%s', f.addresses.length)
          : '')
-    : t('Die Tabelle ist geladen, laesst aber nichts durch.');
+    : t('Die Tabelle ist geladen, lässt aber nichts durch.');
 
   $('filterList').textContent = f.addresses.join('   ');
 }
@@ -827,21 +994,21 @@ async function showFilter(){
 async function switchPart(){
   const p = ((last && last.build.partitions) || [])[1];
 
-  let msg = t('Beim naechsten Start die andere Partition verwenden? '
-            + 'Das Geraet startet neu.');
+  let msg = t('Beim nächsten Start die andere Partition verwenden? '
+            + 'Das Gerät startet neu.');
 
   // A slot holding a bootable image we have never run is fair game, but the
   // user should know they are jumping to something unidentified.
   if(p && !p.firmware){
-    msg += '\n\n' + t('Achtung: Der Inhalt ist unbekannt. Dieser Speicherplatz '
+    msg += '\n\n' + t('Achtung: Der Inhalt ist unbekannt. Diese Partition '
          + 'hat unter der aktuellen Firmware noch nie gelaufen, dort liegt '
-         + 'vermutlich ein aelterer Stand.');
+         + 'vermutlich ein älterer Stand.');
   }
 
   if(!confirm(msg)) return;
   const r = await fetch('/api/ota/switch', {method:'POST'});
-  alert(t(r.ok ? 'Umgeschaltet. Das Geraet startet neu.'
-              : 'Umschalten nicht moeglich.'));
+  alert(t(r.ok ? 'Umgeschaltet. Das Gerät startet neu.'
+              : 'Umschalten nicht möglich.'));
 }
 
 async function resetKnx(){
@@ -870,7 +1037,7 @@ async function refreshTime(){
                        : '<span class="dim">' + t('keiner') + '</span>')
       : '<span class="dim">' + t('aus') + '</span>';
   $('tsRtc').innerHTML    = ts.rtc_present ? dot(true)
-                          : '<span class="dim">' + t('nicht bestueckt') + '</span>';
+                          : '<span class="dim">' + t('nicht bestückt') + '</span>';
   $('tsNext').textContent = ts.enabled ? (ts.next_send_s + ' s') : t('deaktiviert');
   syncGroups();
   return ts;
@@ -909,7 +1076,7 @@ async function saveTime(){
   refreshTime();
 }
 
-// Browser-Zeit uebernehmen: Date.now() ist bereits UTC-basiert.
+// Browser-Zeit übernehmen: Date.now() ist bereits UTC-basiert.
 async function syncBrowser(){
   const body = new URLSearchParams({epoch: Math.floor(Date.now()/1000)});
   const r = await fetch('/api/time/set', {method:'POST', body});
@@ -930,7 +1097,7 @@ async function setManual(){
 
 async function sendTime(){
   const r = await fetch('/api/time/send', {method:'POST'});
-  if(!r.ok) alert(t('Senden nicht moeglich - Uhr nicht gesetzt?'));
+  if(!r.ok) alert(t('Senden nicht möglich - Uhr nicht gesetzt?'));
   setTimeout(refreshTime, 600);
 }
 
@@ -950,10 +1117,10 @@ const TRIG  = ['kurzer Druck','langer Druck','sehr langer Druck'];
 const LKIND = ['LED','RGB-LED'];
 const RGBT  = ['WS2812','SK6812'];
 const BFUNC = ['Programmiermodus','Werkeinstellungen','WLAN Grundeinstellung',
-               'Geraet neu starten','WLAN ein/aus'];
+               'Gerät neu starten','WLAN ein/aus'];
 const LCOND = ['Programmiermodus aktiv','AP-Modus offen','keine TP-Verbindung',
                'online','offline','Herzschlag'];
-const LCOL  = ['rot','gruen','blau','gelb','cyan','magenta','weiss'];
+const LCOL  = ['rot','grün','blau','gelb','cyan','magenta','weiß'];
 const LPAT  = ['Dauerlicht','langsam blinken','schnell blinken','Doppelblitz',
                'kurzer Blitz'];
 
@@ -962,7 +1129,7 @@ const RKEY = {btn:'buttons', led:'leds', ba:'button_assign', la:'led_assign'};
 const ROWS = {btn:[], led:[], ba:[], la:[]};
 const RSEL = {btn:-1, led:-1, ba:-1, la:-1};
 
-const FBR = {unconfigured:'Image-Standard', invalid:'ungueltig &rarr; Standard',
+const FBR = {unconfigured:'Image-Standard', invalid:'ungültig &rarr; Standard',
              crashloop:'Startfehler &rarr; Standard'};
 
 async function refreshHw(){
@@ -974,7 +1141,7 @@ async function refreshHw(){
       ? '<span class="dot err"></span>' + t(FBR[hwState.fallback]||hwState.fallback)
       : dot(true) + ' ' + t('gespeichertes Profil');
   if(hwState.reboot_pending)
-    $('hwSrc').innerHTML += ' <small>' + t('(Neustart noetig)') + '</small>';
+    $('hwSrc').innerHTML += ' <span class="warnbadge">' + t('Neustart nötig') + '</span>';
 
   $('hwKnx').textContent = 'UART' + a.knx_uart + ', RX ' + a.knx_rx + ', TX ' + a.knx_tx;
 
@@ -984,7 +1151,7 @@ async function refreshHw(){
       b => b.name + ' (GPIO ' + b.pin + ', ' + t(TRIG[b.trigger] || '?') + ')');
   $('hwLeds').textContent = named(a.leds || [],
       l => l.name + ' (GPIO ' + l.pin
-         + (l.kind == 1 ? ', ' + RGBT[l.rgb_type] + ' #' + l.rgb_index : '') + ')');
+         + (l.kind == 1 ? ', ' + RGBT[l.rgb_type] + ' #' + (l.rgb_index + 1) : '') + ')');
   $('hwI2c').textContent = a.i2c_enabled ? ('SDA ' + a.i2c_sda + ', SCL ' + a.i2c_scl)
                                          : t('aus');
   $('hwEth').textContent = a.eth_enabled
@@ -1008,8 +1175,8 @@ function hwFill(p){
 
 /* --- Zeileneditoren ------------------------------------------------------ *
  * Die Zeilen leben in ROWS, die Tabelle ist nur die Anzeige. Vor jedem
- * Neuzeichnen wird das DOM zurueckgeschrieben, sonst gingen Eingaben beim
- * Hinzufuegen einer Zeile verloren.
+ * Neuzeichnen wird das DOM zurückgeschrieben, sonst gingen Eingaben beim
+ * Hinzufügen einer Zeile verloren.
  * ------------------------------------------------------------------------ */
 
 function gpioOptions(list, sel){
@@ -1024,36 +1191,62 @@ function pickOptions(texts, sel){
   ).join('');
 }
 
-function nameCell(v){
-  // maxlength und pattern spiegeln nur, was die Firmware ohnehin prueft.
-  return '<input maxlength="16" pattern="[A-Za-z0-9_-]{1,16}" value="' +
+function nameCell(v, kind){
+  // maxlength und pattern spiegeln nur, was die Firmware ohnehin prüft.
+  // onchange statt oninput: beim Verlassen des Feldes ist der Name fertig,
+  // und die Zuordnungstabelle kann ihn sofort anbieten.
+  const dep = (kind === 'btn') ? 'ba' : 'la';
+  return '<input maxlength="16" pattern="[A-Za-z0-9_-]{1,16}" ' +
+         'title="' + esc(t('1 bis 16 Zeichen aus A-Z a-z 0-9 _ -')) + '" ' +
+         'onchange="rowSync(\'' + kind + '\');rowRender(\'' + dep + '\')" value="' +
          esc(v == null ? '' : v) + '">';
 }
+
+// Kopfzeilen und Kurzhilfen je Tabelle.
+const RHEAD = {
+  btn: [['Name',     'Frei wählbarer Name zur Zuordnung weiter unten'],
+        ['GPIO',     'Eingang, an dem der Taster gegen Masse schaltet'],
+        ['Auslösung','Kurz unter 1 s, lang ab 2 s, sehr lang ab 6 s']],
+  led: [['Name',     'Frei wählbarer Name zur Zuordnung weiter unten'],
+        ['GPIO',     'Ausgang zur LED bzw. Datenleitung der Kette'],
+        ['Typ',      'Einfache LED an einem GPIO oder Position in einer Kette'],
+        ['Chip',     'Nur bei adressierbaren LEDs: Bitdauer des Chips'],
+        ['Position', 'Platz in der Kette, die erste LED ist die 1.']],
+  ba:  [['Taster',   'Name aus der Tastertabelle'],
+        ['Funktion', 'Was der Taster auslöst']],
+  la:  [['LED',      'Name aus der LED-Tabelle'],
+        ['Zustand',  'Wann diese Zeile gilt'],
+        ['Farbe',    'Nur bei adressierbaren LEDs'],
+        ['Muster',   'Wie die LED während des Zustands moduliert wird']]
+};
 
 function rowRender(kind){
   const tbl = $(RTBL[kind]);
   const gin = hwState ? hwState.gpio_in : [];
   const gout = hwState ? hwState.gpio_out : [];
-  let html = '';
+
+  let html = '<tr class="hd">' + RHEAD[kind].map(h =>
+    '<th title="' + esc(t(h[1])) + '">' + t(h[0]) + '</th>').join('') + '</tr>';
 
   ROWS[kind].forEach((r, i) => {
     const sel = (RSEL[kind] === i) ? ' class="sel"' : '';
     html += '<tr' + sel + ' onclick="rowPick(\'' + kind + '\',' + i + ')">';
 
     if(kind === 'btn'){
-      html += '<td>' + nameCell(r.name) + '</td>';
+      html += '<td>' + nameCell(r.name, 'btn') + '</td>';
       html += '<td><select>' + gpioOptions(gin, r.pin) + '</select></td>';
       html += '<td><select>' + pickOptions(TRIG, r.trigger) + '</select></td>';
     }
     else if(kind === 'led'){
-      html += '<td>' + nameCell(r.name) + '</td>';
+      html += '<td>' + nameCell(r.name, 'led') + '</td>';
       html += '<td><select>' + gpioOptions(gout, r.pin) + '</select></td>';
-      html += '<td><select onchange="rowSync(\'led\');rowRender(\'led\')">'
+      html += '<td><select onchange="rowSync(\'led\');rowRender(\'led\');rowRender(\'la\')">'
             + pickOptions(LKIND, r.kind) + '</select></td>';
       if(r.kind == 1){
         html += '<td><select>' + pickOptions(RGBT, r.rgb_type) + '</select></td>';
-        html += '<td><input type="number" min="0" max="63" value="'
-              + (r.rgb_index|0) + '"></td>';
+        // Anzeige ab 1, gespeichert ab 0: "die erste LED" ist die 1.
+        html += '<td><input type="number" min="1" max="64" value="'
+              + ((r.rgb_index|0) + 1) + '"></td>';
       } else {
         html += '<td colspan="2"><label class="chk"><input type="checkbox"'
               + (r.active_low ? ' checked' : '') + '> low-aktiv</label></td>';
@@ -1075,7 +1268,7 @@ function rowRender(kind){
       html += '<td><select>' + pickOptions(LCOND, r.condition) + '</select></td>';
       // Farbe hat nur bei einer adressierbaren LED eine Wirkung. Das Feld
       // bleibt sichtbar, damit die Spalten nicht springen, wird aber
-      // gesperrt - so ist ohne Erklaerung klar, dass es hier nichts tut.
+      // gesperrt - so ist ohne Erklärung klar, dass es hier nichts tut.
       const target = ROWS.led.find(l => l.name === r.target);
       const rgb = target && target.kind == 1;
       html += '<td><select' + (rgb ? '' : ' disabled') + '>'
@@ -1088,9 +1281,9 @@ function rowRender(kind){
   tbl.innerHTML = html;
 }
 
-/** DOM zurueck in ROWS schreiben. */
+/** DOM zurück in ROWS schreiben. */
 function rowSync(kind){
-  const rows = $(RTBL[kind]).querySelectorAll('tr');
+  const rows = $(RTBL[kind]).querySelectorAll('tr:not(.hd)');
 
   rows.forEach((tr, i) => {
     const r = ROWS[kind][i];
@@ -1105,13 +1298,24 @@ function rowSync(kind){
     else if(kind === 'led'){
       r.name = f[0].value.trim();
       r.pin  = parseInt(f[1].value, 10);
-      r.kind = parseInt(f[2].value, 10);
-      if(r.kind == 1){
+      /*
+       * Nach der Feldzahl entscheiden, nicht nach dem gewaehlten Typ.
+       *
+       * Beim Umschalten des Typs feuert onchange, bevor die Zeile neu
+       * gezeichnet ist: Das Auswahlfeld meldet dann schon "RGB-LED",
+       * waehrend im DOM noch die Checkbox der einfachen LED steht. Wer
+       * hier dem Wert glaubt, liest die Checkbox als Chiptyp und laeuft
+       * beim nicht vorhandenen Positionsfeld auf einen Fehler - die Zeile
+       * bekommt stillschweigend Unsinn.
+       */
+      if(f.length >= 5){
         r.rgb_type  = parseInt(f[3].value, 10);
-        r.rgb_index = parseInt(f[4].value, 10);
-      } else {
+        r.rgb_index = parseInt(f[4].value, 10) - 1;
+        if(!(r.rgb_index >= 0)) r.rgb_index = 0;
+      } else if(f.length >= 4){
         r.active_low = f[3].checked;
       }
+      r.kind = parseInt(f[2].value, 10);
     }
     else if(kind === 'ba'){
       r.target   = f[0].value;
@@ -1127,10 +1331,10 @@ function rowSync(kind){
 }
 
 function rowPick(kind, i){
-  // Kein Neuzeichnen: ein Klick ins Namensfeld wuerde sonst den Cursor
+  // Kein Neuzeichnen: ein Klick ins Namensfeld würde sonst den Cursor
   // verlieren, weil die Tabelle unter der Eingabe neu gebaut wird.
   RSEL[kind] = i;
-  $(RTBL[kind]).querySelectorAll('tr')
+  $(RTBL[kind]).querySelectorAll('tr:not(.hd)')
                .forEach((tr, n) => tr.classList.toggle('sel', n === i));
 }
 
@@ -1139,21 +1343,24 @@ const RMAX = {btn:8, led:8, ba:8, la:12};
 function rowAdd(kind){
   rowSync(kind);
   if(ROWS[kind].length >= RMAX[kind]){
-    $('hwErr').textContent = t('mehr Zeilen sind nicht moeglich');
+    $('hwErr').textContent = t('mehr Zeilen sind nicht möglich');
     return;
   }
   if(kind === 'btn')
     ROWS.btn.push({name:'', pin:(hwState.gpio_in||[0])[0], trigger:0});
   else if(kind === 'led')
     ROWS.led.push({name:'', pin:(hwState.gpio_out||[0])[0], kind:0,
-                   active_low:false, rgb_type:0, rgb_index:0});
-  else if(kind === 'ba')
+                   active_low:false, rgb_type:0, rgb_index:0});  else if(kind === 'ba')
     ROWS.ba.push({target: ROWS.btn.map(x=>x.name)[0] || '', function:0});
   else
     ROWS.la.push({target: ROWS.led.map(x=>x.name)[0] || '',
                   condition:3, colour:1, pattern:0});
   RSEL[kind] = ROWS[kind].length - 1;
   rowRender(kind);
+  // Eine neue Taste oder LED soll sofort in der Zuordnung auswählbar sein,
+  // ohne den Dialog zu schließen.
+  if(kind === 'btn') rowRender('ba');
+  if(kind === 'led') rowRender('la');
 }
 
 /* Nur bei der LED-Zuordnung sichtbar - dort ist die Reihenfolge die
@@ -1183,7 +1390,7 @@ function rowDel(kind){
   ROWS[kind].splice(i, 1);
   RSEL[kind] = -1;
   rowRender(kind);
-  // Eine geloeschte LED oder Taste darf in keiner Zuordnung stehenbleiben.
+  // Eine gelöschte LED oder Taste darf in keiner Zuordnung stehenbleiben.
   if(kind === 'btn' || kind === 'led'){
     const other = (kind === 'btn') ? 'ba' : 'la';
     const names = ROWS[kind].map(x => x.name);
@@ -1224,8 +1431,14 @@ async function hwPost(profile){
   });
   if(r.ok){
     hwDlg.close();
+    // Reine Zuordnungen wirken sofort - dann nicht nach einem Neustart
+    // fragen, den niemand braucht.
+    let needs = true;
+    try { needs = (await r.json()).reboot_required !== false; } catch(e){}
     refreshHw();
-    if(confirm(t('Profil gespeichert. Jetzt neu starten?'))) doReboot();
+    if(needs){
+      if(confirm(t('Profil gespeichert. Jetzt neu starten?'))) doReboot();
+    }
     return true;
   }
   let msg = t('abgelehnt');
@@ -1241,7 +1454,7 @@ async function hwReset(){
   await fetch('/api/hwconfig/reset', {method:'POST'});
   hwDlg.close();
   refreshHw();
-  if(confirm(t('Zurueckgesetzt. Jetzt neu starten?'))) doReboot();
+  if(confirm(t('Zurückgesetzt. Jetzt neu starten?'))) doReboot();
 }
 
 function hwDownload(){
@@ -1260,19 +1473,19 @@ async function hwUpload(){
   if(!f) return;
   let p;
   try { p = JSON.parse(await f.text()); }
-  catch(e){ alert(t('Keine gueltige JSON-Datei.')); return; }
+  catch(e){ alert(t('Keine gültige JSON-Datei.')); return; }
   if(!await hwPost(p)) { hwDlg.showModal(); hwFill(p); }
 }
 
 async function doReboot(){
   await fetch('/api/reboot', {method:'POST'});
-  alert(t('Neustart laeuft. Die Seite in einigen Sekunden neu laden.'));
+  alert(t('Neustart läuft. Die Seite in einigen Sekunden neu laden.'));
 }
 
 function openWifi(){
   // Im Ethernet-Betrieb ist das WLAN gar nicht gestartet.
   if(last && last.iface === 'ethernet'){
-    alert(t('Das Geraet laeuft ueber Ethernet. WLAN ist nicht aktiv.'));
+    alert(t('Das Gerät läuft über Ethernet. WLAN ist nicht aktiv.'));
     return;
   }
   wifiDlg.showModal(); scan();
@@ -1280,7 +1493,7 @@ function openWifi(){
 
 async function scan(){
   const sel = $('ssidSel');
-  sel.innerHTML = '<option>' + t('Suche laeuft...') + '</option>';
+  sel.innerHTML = '<option>' + t('Suche läuft...') + '</option>';
   await fetch('/api/wifi/scan?start=1');
   for(let i=0;i<20;i++){
     await new Promise(r=>setTimeout(r,900));
@@ -1292,24 +1505,24 @@ async function scan(){
       return;
     }
   }
-  sel.innerHTML = '<option>' + t('Zeitueberschreitung') + '</option>';
+  sel.innerHTML = '<option>' + t('Zeitüberschreitung') + '</option>';
 }
 
 async function connect(){
   const body = new URLSearchParams({ssid:$('ssidSel').value, password:$('pw').value});
   await fetch('/api/wifi/connect', {method:'POST', body});
   wifiDlg.close();
-  alert(t('Zugangsdaten gespeichert. Das Geraet startet neu.'));
+  alert(t('Zugangsdaten gespeichert. Das Gerät startet neu.'));
 }
 
 async function checkUpdate(){
-  $('updState').textContent = t('pruefe...');
+  $('updState').textContent = t('prüfe...');
   await fetch('/api/update/check');
   pollUpdate();
 }
 
 async function installUpdate(){
-  if(!confirm(t('Firmware jetzt installieren? Das Geraet startet danach neu.'))) return;
+  if(!confirm(t('Firmware jetzt installieren? Das Gerät startet danach neu.'))) return;
   await fetch('/api/update/install', {method:'POST'});
   pollUpdate();
 }
@@ -1318,7 +1531,7 @@ async function pollUpdate(){
   const u = await (await fetch('/api/update/status')).json();
   let text = u.state;
   if(u.error) text += ' - ' + u.error;
-  else if(u.available) text = t('Version %s verfuegbar').replace('%s', u.latest);
+  else if(u.available) text = t('Version %s verfügbar').replace('%s', u.latest);
   $('updState').textContent = text;
   $('instBtn').disabled = !u.available;
 
@@ -1337,7 +1550,7 @@ async function pollUpdate(){
  * SHA-256 im Browser.
  *
  * crypto.subtle gibt es nur im "secure context" - also HTTPS oder localhost.
- * Ueber http://<IP>/ ist die API schlicht nicht vorhanden. Dann bleibt nur
+ * Über http://<IP>/ ist die API schlicht nicht vorhanden. Dann bleibt nur
  * die manuelle Eingabe des Hashes.
  */
 const CAN_HASH = !!(window.crypto && window.crypto.subtle);
@@ -1358,12 +1571,12 @@ async function upload(){
   let hash = $('fwHash').value.trim().toLowerCase();
 
   if(!hash && CAN_HASH){
-    $('updState').textContent = t('berechne Pruefsumme...');
+    $('updState').textContent = t('berechne Prüfsumme...');
     try { hash = await sha256Hex(file); $('fwHash').value = hash; }
     catch(e){ hash = ''; }
   }
 
-  if(!hash && !confirm(t('Kein SHA-256 angegeben. Firmware ungeprueft uebertragen?'))) return;
+  if(!hash && !confirm(t('Kein SHA-256 angegeben. Firmware ungeprüft übertragen?'))) return;
 
   $('updState').textContent = t('lade hoch...');
   const fd = new FormData();
@@ -1374,7 +1587,7 @@ async function upload(){
 
   let r;
   try { r = await fetch('/api/ota', {method:'POST', body:fd, headers}); }
-  catch(e){ $('updState').textContent = t('Uebertragung abgebrochen'); return; }
+  catch(e){ $('updState').textContent = t('Übertragung abgebrochen'); return; }
 
   if(r.ok){
     $('updState').textContent = t('erfolgreich, Neustart...');
@@ -1386,8 +1599,38 @@ async function upload(){
 }
 
 applyLang();
-setInterval(refresh, 2000);
-setInterval(refreshTime, 5000);
+
+/*
+ * Selbstplanende Abfrage statt setInterval.
+ *
+ * setInterval feuert unabhängig davon, ob die vorige Antwort schon da ist.
+ * Braucht das Gerät einmal länger als das Intervall, stapeln sich die
+ * Anfragen: der Browser öffnet für jede eine Verbindung, dem ESP32 gehen
+ * die TCP-Slots aus, neue Verbindungen laufen in Wiederholungen mit
+ * wachsender Wartezeit - und jede Bedienung hängt hinter dem Rückstau.
+ * Genau so werden aus 200 ms Verzögerung 10 bis 30 Sekunden.
+ *
+ * Deshalb wird erst nach der Antwort neu geplant, und im Hintergrund gar
+ * nicht: ein unsichtbarer Tab muss nichts abfragen.
+ */
+function poll(fn, delay){
+  const tick = async () => {
+    if(!document.hidden){
+      try { await fn(); } catch(e){}
+    }
+    setTimeout(tick, delay);
+  };
+  setTimeout(tick, delay);
+}
+
+poll(refresh, 2000);
+poll(refreshTime, 5000);
+
+// Nach dem Zurückholen des Tabs sofort auffrischen statt bis zum nächsten
+// Intervall veraltete Werte zu zeigen.
+document.addEventListener('visibilitychange', () => {
+  if(!document.hidden){ refresh(); refreshTime(); }
+});
 </script>
 </body>
 </html>

@@ -66,8 +66,8 @@ void ButtonService::begin()
         }
     }
 
-    Serial.printf("Buttons: %u rows on %u pins\n", (unsigned)hw.buttonCount,
-                  (unsigned)_pinCount);
+    Serial.printf("Buttons: %u rows on %u pin%s\n", (unsigned)hw.buttonCount,
+                  (unsigned)_pinCount, (_pinCount == 1) ? "" : "s");
 }
 
 void ButtonService::loop()

@@ -122,6 +122,61 @@ static String uptimeString()
     return String(buffer);
 }
 
+/*
+ * The parts of the status document that are expensive to produce.
+ *
+ * The tunnel addresses come out of the KNX interface objects and the radio
+ * level out of the WiFi driver; neither changes between two polls, but both
+ * cost far more than the rest of the document put together. The dashboard
+ * asks every two seconds, so they are refreshed on their own schedule.
+ */
+static String tunnelPaJson()
+{
+    static String   cached;
+    static uint32_t cachedAt = 0;
+
+    if (cached.length() && (uint32_t)(millis() - cachedAt) < 5000)
+    {
+        return cached;
+    }
+
+    uint16_t tunnelPa[KNX_TUNNELING];
+    uint8_t  count = knxLink.tunnelAddresses(tunnelPa, KNX_TUNNELING);
+
+    String json = "[";
+    for (uint8_t i = 0; i < count; i++)
+    {
+        if (i) json += ",";
+        json += "\"" + String((tunnelPa[i] >> 12) & 0x0F) + "." +
+                String((tunnelPa[i] >> 8) & 0x0F) + "." +
+                String(tunnelPa[i] & 0xFF) + "\"";
+    }
+    json += "]";
+
+    cached   = json;
+    cachedAt = millis();
+    return cached;
+}
+
+static int32_t cachedRssi()
+{
+    static int32_t  cached   = 0;
+    static uint32_t cachedAt = 0;
+
+    if (netManager.isApMode() || netManager.isEthernetMode())
+    {
+        return 0;
+    }
+    if (cachedAt != 0 && (uint32_t)(millis() - cachedAt) < 5000)
+    {
+        return cached;
+    }
+
+    cached   = WiFi.RSSI();
+    cachedAt = millis();
+    return cached;
+}
+
 static String statusJson()
 {
     const KnxLink::Stats& stats = knxLink.stats();
@@ -140,8 +195,7 @@ static String statusJson()
     json += "\"mac\":\"" + netManager.currentMac() + "\",";
     json += "\"wifi_connected\":" +
             String((netManager.isApMode() || netManager.isOnline()) ? "true" : "false") + ",";
-    json += "\"rssi\":" +
-            String((netManager.isApMode() || netManager.isEthernetMode()) ? 0 : WiFi.RSSI()) + ",";
+    json += "\"rssi\":" + String(cachedRssi()) + ",";
 
     // Wired interface. Always reported so the dashboard can show that a
     // W5500 was looked for and not found.
@@ -160,6 +214,7 @@ static String statusJson()
     json += "\"led_present\":" + String(statusLed.present() ? "true" : "false") + ",";
     json += "\"led_beat_available\":" + String(statusLed.hasHeartbeat() ? "true" : "false") + ",";
     json += "\"led_heartbeat\":" + String(statusLed.heartbeat() ? "true" : "false") + ",";
+    json += "\"led_brightness\":" + String(statusLed.brightness()) + ",";
     json += "\"wifi_enabled\":" + String(netManager.wifiEnabled() ? "true" : "false") + ",";
     json += "\"prog_mode\":" + String(knxLink.progMode() ? "true" : "false") + ",";
 
@@ -171,19 +226,7 @@ static String statusJson()
     // The addresses clients appear under when they talk through us. Worth
     // showing: they are what ETS assigns, and there is no other way to see
     // what actually ended up in the device.
-    uint16_t tunnelPa[KNX_TUNNELING];
-    uint8_t  tunnelCount = knxLink.tunnelAddresses(tunnelPa, KNX_TUNNELING);
-    json += "\"knx_tunnel_pa\":[";
-
-    for (uint8_t i = 0; i < tunnelCount; i++)
-    {
-        if (i) json += ",";
-        json += "\"" + String((tunnelPa[i] >> 12) & 0x0F) + "." +
-                String((tunnelPa[i] >> 8) & 0x0F) + "." +
-                String(tunnelPa[i] & 0xFF) + "\"";
-    }
-
-    json += "],";
+    json += "\"knx_tunnel_pa\":" + tunnelPaJson() + ",";
 
     // The TP1 side. No NCN512x rail or crystal telemetry here: the Selfbus
     // SB-Interface emulates a plain TP-UART 2 and has no such registers.
@@ -220,6 +263,11 @@ static String statusJson()
     json += "\"cpu_freq\":" + String(ESP.getCpuFreqMHz()) + ",";
     json += "\"heap_total\":" + String(ESP.getHeapSize()) + ",";
     json += "\"heap_free\":" + String(ESP.getFreeHeap()) + ",";
+    json += "\"flash_size\":" + String(ESP.getFlashChipSize()) + ",";
+    json += "\"sketch_size\":" + String(OtaService::sketchSize()) + ",";
+    json += "\"sketch_free\":" + String(ESP.getFreeSketchSpace()) + ",";
+    json += "\"psram_total\":" + String(ESP.getPsramSize()) + ",";
+    json += "\"psram_free\":" + String(ESP.getFreePsram()) + ",";
     json += "\"profile_default\":" + String(hwConfig.usingDefaults() ? "true" : "false") + ",";
     json += "\"profile_fallback\":\"" + String(hwConfig.fallbackReason()) + "\",";
     json += "\"reboot_pending\":" + String(hwConfig.rebootPending() ? "true" : "false");
@@ -677,7 +725,8 @@ static void registerHardwareRoutes()
             }
 
             request->send(200, "application/json",
-                          "{\"status\":\"ok\",\"reboot_required\":true}");
+                          String("{\"status\":\"ok\",\"reboot_required\":") +
+                              (hwConfig.rebootPending() ? "true" : "false") + "}");
         },
         nullptr,
         [](AsyncWebServerRequest* request, uint8_t* data, size_t len,
@@ -957,6 +1006,32 @@ static void registerOtaRoutes()
                       String("{\"status\":\"ok\",\"heartbeat\":") +
                           (enable ? "true" : "false") + "}");
     });
+
+    /* Common brightness for every LED. */
+    server.on("/api/led/brightness", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        if (!request->hasParam("percent", true))
+        {
+            request->send(400, "application/json",
+                          "{\"error\":\"parameter 'percent' missing\"}");
+            return;
+        }
+
+        long value = request->getParam("percent", true)->value().toInt();
+
+        if (value < 1 || value > 100)
+        {
+            request->send(400, "application/json",
+                          "{\"error\":\"percent out of range (1..100)\"}");
+            return;
+        }
+
+        statusLed.brightness((uint8_t)value);
+
+        request->send(200, "application/json",
+                      String("{\"status\":\"ok\",\"brightness\":") + String(value) + "}");
+    });
 }
 
 void webServerBegin()
@@ -971,6 +1046,12 @@ void webServerBegin()
 
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest* request) {
         request->send(200, "application/json", statusJson());
+    });
+
+    // Fixed at flash time, so it has no business in a document the dashboard
+    // fetches every two seconds.
+    server.on("/api/partitions", HTTP_GET, [](AsyncWebServerRequest* request) {
+        request->send(200, "application/json", OtaService::partitionTableJson());
     });
 
     registerCaptivePortalRoutes();

@@ -87,11 +87,19 @@ Kondensator-Ladezeit – diese Krücken sind hier bewusst nicht übernommen.
 | `esp32s2` | ESP32-S2-Saola | UART1 | 18 / 17 | 15 | 0 |
 
 Auf dem **S3-** und dem **C6-DevKitC** gibt es keine einfache LED, sondern
-eine **SK68/WS2812-RGB-LED** – am S3 auf GPIO 48, am C6 auf GPIO 8. Die
-braucht ein getaktetes serielles Protokoll; `digitalWrite()` bleibt dort ohne
-sichtbare Wirkung. Das Profil des S3 legt sie deshalb als adressierbare LED
-an, siehe *Taster und LEDs*. Beim XIAO C3 ist GPIO 4 herausgeführt, aber
-unbestückt – dort gehört eine eigene LED mit Vorwiderstand hin.
+eine **SK68/WS2812-RGB-LED**. Die braucht ein getaktetes serielles Protokoll;
+`digitalWrite()` bleibt dort ohne sichtbare Wirkung. Das Profil des S3 legt
+sie deshalb als adressierbare LED an, siehe *Taster und LEDs*.
+
+> **Vorsicht beim S3-DevKitC-1: der LED-Pin hängt an der Board-Revision.**
+> **v1.0 treibt sie über GPIO 48, v1.1 über GPIO 38** – beide Versionen sind
+> im Handel, und Espressif nennt genau das als einzigen Unterschied. Der
+> Arduino-Variantenheader kennt nur GPIO 48, weshalb auch `rgbLedWrite()` auf
+> v1.1-Boards wirkungslos bleibt. Die Vorgabe hier ist 48; bleibt die LED
+> dunkel, im Dashboard auf 38 umstellen – ohne Neubau.
+
+Beim XIAO C3 ist GPIO 4 herausgeführt, aber unbestückt – dort gehört eine
+eigene LED mit Vorwiderstand hin.
 
 I2C für die optionale RTC: `esp32dev` 21/22, `esp32s2`/`esp32s3` 8/9,
 `esp32c3`/`esp32c6` 6/7.
@@ -223,6 +231,10 @@ aus – das Gerät kommt beim nächsten Start von selbst mit WLAN hoch.
 | `rgb_type` | nur bei `kind` 1: `0` WS2812, `1` SK6812 |
 | `rgb_index` | nur bei `kind` 1: Position in der Kette, 0–63 |
 
+> Im Dashboard wird die Position **ab 1** angezeigt – „die erste LED ist die
+> 1" ist die natürlichere Zählung. Im JSON bleibt sie **ab 0**, weil sie dort
+> ein Feldindex ist. Die Oberfläche rechnet um.
+
 Eine adressierbare LED ist **eine Position in einer Kette**. Zeilen mit
 demselben GPIO beschreiben dieselbe physische Leitung: Sie müssen denselben
 `rgb_type` und verschiedene `rgb_index` haben. Die Kettenlänge ergibt sich aus
@@ -275,11 +287,17 @@ Der **Herzschlag** ist der einzige Zustand mit einem Schalter auf der
 Startseite; er ist standardmäßig **aus**. Wie er aussieht, steht trotzdem im
 Profil.
 
-### Änderungen brauchen einen Neustart
+### Änderungen brauchen einen Neustart – meistens
 
-Peripherie lässt sich nicht verschieben, während sie läuft. Das Profil wird
-deshalb **genau einmal** beim Start gelesen. Das Dashboard bietet nach dem
-Speichern einen Neustart an.
+Peripherie lässt sich nicht verschieben, während sie läuft. Pins, Chiptypen
+und Kettenpositionen werden deshalb **genau einmal** beim Start gelesen; das
+Dashboard bietet nach dem Speichern einen Neustart an.
+
+Ändert sich nur die **Zuordnung**, wirkt das sofort. Welchen Zustand eine LED
+anzeigt und was ein Taster auslöst, wird bei jedem Durchlauf frisch
+nachgeschlagen – eine andere Farbe kostet also keinen Neustart. Ob das
+zutrifft, entscheidet `HwConfig::sameWiring()`; die Antwort steht als
+`reboot_required` in der Antwort auf den POST.
 
 ### Warum das Gerät dabei nicht unbrauchbar wird
 
@@ -615,6 +633,7 @@ Abschaltbar mit `-DDISABLE_IMPROV` (spart rund 9 KB Flash und 2 s Bootzeit).
 | POST | `/api/hwconfig` | JSON-Profil speichern (Teilfelder erlaubt) |
 | POST | `/api/hwconfig/reset` | gespeichertes Profil verwerfen |
 | POST | `/api/led/heartbeat` | `enabled=1\|0` → Herzschlag schalten |
+| POST | `/api/led/brightness` | `percent=1..100` → Helligkeit aller LEDs |
 | POST | `/api/reboot` | Neustart auslösen |
 | GET | `/api/time` | Zustand und Konfiguration des Zeitservers |
 | POST | `/api/time/config` | Konfiguration schreiben (Teilfelder erlaubt) |
@@ -888,6 +907,24 @@ Kopplerparameter `PID_MAIN_LCCONFIG` und `PID_SUB_LCCONFIG` sind ebenfalls
 reine Download-Inhalte.
 
 Tunneling ist davon nicht betroffen und funktioniert unprogrammiert.
+
+### Alle Gruppentelegramme weiterleiten
+
+Der Schalter auf der Startseite (`POST /api/knx/routing`, `unfiltered=1`) setzt
+`sbipRouteUnfiltered` und lässt `isGroupAddressInFilterTable()` **vor** der
+Prüfung des Ladezustands `true` zurückgeben. Der Patch dazu steht in
+[scripts/patch_knx.py](scripts/patch_knx.py).
+
+Das wirkt in beiden Fällen:
+
+* **ohne ETS-Download** – es gibt keine Tabelle, sonst würde alles gesperrt
+* **mit ETS-Download** – die geladene Tabelle wird **übersteuert**, das Gerät
+  leitet auch weiter, was die ETS ausfiltern wollte
+
+Der zweite Fall ist Absicht und im Dashboard mit einer Rückfrage versehen.
+Wer die Filterung projektiert hat, will sie normalerweise auch. Nur einschalten,
+wenn dieses Gerät die einzige Verbindung zwischen Linie und IP ist – zwei
+Koppler ohne Filter erzeugen Telegrammschleifen.
 
 ### Fremde Produktdatenbank verwenden
 

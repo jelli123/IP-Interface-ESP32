@@ -10,6 +10,7 @@
 #include "hw_config.h"
 #include "interface_config.h"
 #include "json_util.h"
+#include "status_led.h"
 
 HwConfig hwConfig;
 
@@ -632,7 +633,7 @@ void HwConfig::load()
 {
     HwProfile d = defaults();
 
-    prefs.begin(NS, true);
+    prefs.begin(NS, false);
     _hasStored = prefs.getBool("set", false);
 
     if (_hasStored)
@@ -734,39 +735,83 @@ void HwConfig::loadLists(const HwProfile& d)
 
 void HwConfig::store(const HwProfile& p)
 {
-    prefs.begin(NS, false);
-    prefs.putChar("uart", p.knxUartNum);
-    prefs.putChar("krx",  p.knxRxPin);
-    prefs.putChar("ktx",  p.knxTxPin);
-    prefs.putBool("i2cen", p.i2cEnabled);
-    prefs.putChar("sda",  p.i2cSdaPin);
-    prefs.putChar("scl",  p.i2cSclPin);
-    prefs.putBool("ethen", p.ethEnabled);
-    prefs.putChar("esck", p.ethSckPin);
-    prefs.putChar("emiso", p.ethMisoPin);
-    prefs.putChar("emosi", p.ethMosiPin);
-    prefs.putChar("ecs",  p.ethCsPin);
-    prefs.putChar("eirq", p.ethIrqPin);
-    prefs.putChar("erst", p.ethRstPin);
-    prefs.putUChar("emhz", p.ethSpiMhz);
+    uint32_t started = millis();
 
-    prefs.putBytes("btns", p.buttons,   sizeof(p.buttons));
-    prefs.putBytes("leds", p.leds,      sizeof(p.leds));
-    prefs.putBytes("bact", p.btnAssign, sizeof(p.btnAssign));
-    prefs.putBytes("lact", p.ledAssign, sizeof(p.ledAssign));
-    prefs.putUChar("btnc", p.buttonCount);
-    prefs.putUChar("ledc", p.ledCount);
-    prefs.putUChar("bacc", p.btnAssignCount);
-    prefs.putUChar("lacc", p.ledAssignCount);
-    prefs.putUChar("iover", IO_VERSION);
+    /*
+     * Own handle, not the shared one.
+     *
+     * This runs on the async_tcp task while HwConfig::loop() may be writing
+     * the crash-loop counter from the main task. Two tasks sharing one
+     * Preferences object means one can close the handle the other is using -
+     * NVS itself copes with separate handles, a single object does not.
+     */
+    Preferences store;
+    store.begin(NS, false);
 
-    prefs.putBool("set", true);
-    prefs.putUChar("boots", 0); // a fresh profile starts unproven
-    prefs.end();
+    store.putChar("uart", p.knxUartNum);
+    store.putChar("krx",  p.knxRxPin);
+    store.putChar("ktx",  p.knxTxPin);
+    store.putBool("i2cen", p.i2cEnabled);
+    store.putChar("sda",  p.i2cSdaPin);
+    store.putChar("scl",  p.i2cSclPin);
+    store.putBool("ethen", p.ethEnabled);
+    store.putChar("esck", p.ethSckPin);
+    store.putChar("emiso", p.ethMisoPin);
+    store.putChar("emosi", p.ethMosiPin);
+    store.putChar("ecs",  p.ethCsPin);
+    store.putChar("eirq", p.ethIrqPin);
+    store.putChar("erst", p.ethRstPin);
+    store.putUChar("emhz", p.ethSpiMhz);
+
+    /*
+     * Blobs only when they differ.
+     *
+     * NVS has no way to update a blob in place: every write allocates a new
+     * entry and marks the old one erased, and once a page is full that forces
+     * a compaction with a flash erase. Saving an unchanged profile used to
+     * churn about 750 bytes for nothing.
+     */
+    struct Blob
+    {
+        const char* key;
+        const void* now;
+        const void* was;
+        size_t      size;
+    };
+
+    const Blob blobs[] = {
+        { "btns", p.buttons,   _stored.buttons,   sizeof(p.buttons)   },
+        { "leds", p.leds,      _stored.leds,      sizeof(p.leds)      },
+        { "bact", p.btnAssign, _stored.btnAssign, sizeof(p.btnAssign) },
+        { "lact", p.ledAssign, _stored.ledAssign, sizeof(p.ledAssign) },
+    };
+
+    bool fresh = (store.getUChar("iover", 0) != IO_VERSION);
+
+    for (size_t i = 0; i < sizeof(blobs) / sizeof(blobs[0]); i++)
+    {
+        if (fresh || memcmp(blobs[i].now, blobs[i].was, blobs[i].size) != 0)
+        {
+            store.putBytes(blobs[i].key, blobs[i].now, blobs[i].size);
+        }
+    }
+
+    store.putUChar("btnc", p.buttonCount);
+    store.putUChar("ledc", p.ledCount);
+    store.putUChar("bacc", p.btnAssignCount);
+    store.putUChar("lacc", p.ledAssignCount);
+    store.putUChar("iover", IO_VERSION);
+
+    store.putBool("set", true);
+    store.putUChar("boots", 0); // a fresh profile starts unproven
+    store.end();
 
     _stored        = p;
     _hasStored     = true;
     _rebootPending = true;
+
+    Serial.printf("HW: profile written in %lu ms\n",
+                  (unsigned long)(millis() - started));
 }
 
 /* ------------------------------------------------------------------------- *
@@ -848,6 +893,21 @@ void HwConfig::begin()
 
 void HwConfig::loop()
 {
+    /*
+     * Take over a live change here, in the main task.
+     *
+     * StatusLed and ButtonService read the active profile from this very
+     * task, so between the two statements below nothing can be halfway
+     * through it.
+     */
+    if (_applyPending)
+    {
+        _applyPending = false;
+        _active       = _pending;
+        statusLed.reload();
+        Serial.println("HW: live profile change applied");
+    }
+
     if (_counterCleared || millis() < PROVEN_AFTER_MS)
     {
         return;
@@ -859,13 +919,60 @@ void HwConfig::loop()
         return;
     }
 
-    prefs.begin(NS, false);
-    if (prefs.getUChar("boots", 0) != 0)
+    // Own handle: store() may run on the async_tcp task at the same moment.
+    Preferences counter;
+    counter.begin(NS, false);
+    if (counter.getUChar("boots", 0) != 0)
     {
-        prefs.putUChar("boots", 0);
+        counter.putUChar("boots", 0);
         Serial.println("HW: profile proven, crash-loop counter cleared");
     }
-    prefs.end();
+    counter.end();
+}
+
+bool HwConfig::sameWiring(const HwProfile& a, const HwProfile& b)
+{
+    if (a.knxUartNum != b.knxUartNum || a.knxRxPin != b.knxRxPin ||
+        a.knxTxPin != b.knxTxPin ||
+        a.i2cEnabled != b.i2cEnabled || a.i2cSdaPin != b.i2cSdaPin ||
+        a.i2cSclPin != b.i2cSclPin ||
+        a.ethEnabled != b.ethEnabled || a.ethSckPin != b.ethSckPin ||
+        a.ethMisoPin != b.ethMisoPin || a.ethMosiPin != b.ethMosiPin ||
+        a.ethCsPin != b.ethCsPin || a.ethIrqPin != b.ethIrqPin ||
+        a.ethRstPin != b.ethRstPin || a.ethSpiMhz != b.ethSpiMhz)
+    {
+        return false;
+    }
+
+    if (a.buttonCount != b.buttonCount || a.ledCount != b.ledCount)
+    {
+        return false;
+    }
+
+    // Names take part: an assignment points at one, so a rename has to be
+    // seen by whoever caches the pin list.
+    for (uint8_t i = 0; i < a.buttonCount && i < HW_MAX_BUTTONS; i++)
+    {
+        if (a.buttons[i].pin != b.buttons[i].pin ||
+            a.buttons[i].trigger != b.buttons[i].trigger ||
+            strncmp(a.buttons[i].name, b.buttons[i].name, HW_NAME_MAX + 1) != 0)
+        {
+            return false;
+        }
+    }
+    for (uint8_t i = 0; i < a.ledCount && i < HW_MAX_LEDS; i++)
+    {
+        if (a.leds[i].pin != b.leds[i].pin || a.leds[i].kind != b.leds[i].kind ||
+            a.leds[i].activeLow != b.leds[i].activeLow ||
+            a.leds[i].rgbType != b.leds[i].rgbType ||
+            a.leds[i].rgbIndex != b.leds[i].rgbIndex ||
+            strncmp(a.leds[i].name, b.leds[i].name, HW_NAME_MAX + 1) != 0)
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 void HwConfig::resetToDefaults()
@@ -946,6 +1053,8 @@ static bool readList(const String& json, const char* key, uint8_t max,
 
 bool HwConfig::applyJson(const String& json, String& error)
 {
+    uint32_t started = millis();
+
     // Start from what is running, so a partial document acts as a patch.
     HwProfile p = _active;
 
@@ -1005,8 +1114,32 @@ bool HwConfig::applyJson(const String& json, String& error)
         return false;
     }
 
+    /*
+     * A change that leaves the wiring alone takes effect at once.
+     *
+     * Pins cannot be moved while the peripherals sit on them, but the state
+     * an LED reacts to is looked up per iteration - so recolouring an
+     * indicator should not cost a restart. The swap itself is left to
+     * loop(); see the note on _pending.
+     */
+    bool live = sameWiring(_active, p);
+
     store(p);
-    Serial.println("HW: new profile stored, reboot to activate");
+
+    if (live)
+    {
+        _pending       = p;
+        _applyPending  = true;
+        _rebootPending = false;
+        Serial.println("HW: assignments updated, active without a restart");
+    }
+    else
+    {
+        Serial.println("HW: new profile stored, reboot to activate");
+    }
+
+    Serial.printf("HW: apply took %lu ms\n", (unsigned long)(millis() - started));
+
     return true;
 }
 

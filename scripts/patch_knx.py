@@ -127,10 +127,16 @@ ROUTER_NEW = (
     "\n"
     "bool RouterObject::isGroupAddressInFilterTable(uint16_t groupAddress)\n"
     "{\n"
-    "    // No ETS download means no filter table, which per spec blocks every\n"
-    "    // group telegram. The firmware can opt out of that.\n"
+    "    // Deliberately ahead of the load state check: the switch means\n"
+    "    // \"forward everything\", and a downloaded filter table is exactly the\n"
+    "    // case where the user needs to be able to say that. Without an ETS\n"
+    "    // download there is no table at all, which per spec would block every\n"
+    "    // group telegram - the same switch covers that too.\n"
+    "    if (sbipRouteUnfiltered)\n"
+    "        return true;\n"
+    "\n"
     "    if (loadState() != LS_LOADED)\n"
-    "        return sbipRouteUnfiltered;\n"
+    "        return false;\n"
 )
 
 

@@ -49,7 +49,7 @@ static Preferences prefs;
 
 void TimeService::loadConfig()
 {
-    prefs.begin("timesrv", true);
+    prefs.begin("timesrv", false);
     _config.enabled     = prefs.getBool("en", _config.enabled);
     _config.gaDateTime  = prefs.getUShort("gadt", _config.gaDateTime);
     _config.gaTime      = prefs.getUShort("gat", _config.gaTime);

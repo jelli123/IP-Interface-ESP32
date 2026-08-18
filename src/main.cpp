@@ -23,10 +23,16 @@
 #include "time_service.h"
 #include "web_server.h"
 
-/** Passed to NetManager so the KNX stack keeps running while WiFi comes up. */
-static void knxKeepAlive()
+/*
+ * Passed to NetManager so the device stays alive during the provisioning
+ * window. That window can last two minutes, and loop() has not started yet -
+ * without this the status LED would sit dark exactly while someone is
+ * standing in front of the device trying to set it up.
+ */
+static void provisioningKeepAlive()
 {
     knxLink.loop();
+    statusLed.loop();
 }
 
 void setup()
@@ -148,7 +154,7 @@ void setup()
 
     // Blocks until the interface is up or the provisioning window closes.
     // Returns immediately in Ethernet mode.
-    netManager.waitForConnection(knxKeepAlive);
+    netManager.waitForConnection(provisioningKeepAlive);
 
     // The multicast membership was taken out before the interface had an
     // address; renew it now that it does.

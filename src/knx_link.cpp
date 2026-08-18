@@ -303,7 +303,7 @@ bool KnxLink::begin()
 
     applyIdentity();
 
-    if (knxPrefs.begin(KNX_NS, true))
+    if (knxPrefs.begin(KNX_NS, false))
     {
         sbipRouteUnfiltered = knxPrefs.getBool(KEY_ROUTEALL, false);
         knxPrefs.end();

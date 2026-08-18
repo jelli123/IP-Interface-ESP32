@@ -67,6 +67,25 @@ public:
     static String partitionsJson();
 
     /**
+     * The whole partition table: name, type, offset and size.
+     *
+     * Cached like partitionsJson() - walking the table disables the flash
+     * cache, and the layout cannot change while the device runs anyway.
+     */
+    static String partitionTableJson();
+
+    /**
+     * Size of the running image in bytes, 0 until it has been measured.
+     *
+     * Cached on purpose. ESP.getSketchSize() looks like a header read but is
+     * not: it calls esp_image_verify(), which reads the whole image from
+     * flash and checks its SHA-256. That takes the better part of a second
+     * with the flash cache disabled, which stalls both cores - once is fine,
+     * once per dashboard poll is not.
+     */
+    static uint32_t sketchSize();
+
+    /**
      * Boot from the other slot next time.
      *
      * Refuses when that slot holds no valid image. Takes effect on restart,

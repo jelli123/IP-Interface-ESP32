@@ -221,7 +221,7 @@ public:
      * counter, which loop() clears once the firmware has proven itself.
      */
     void begin();
-    /** Clears the crash-loop counter after a successful run. */
+    /** Clears the crash-loop counter and applies a pending live change. */
     void loop();
 
     /** The profile the firmware is actually running on. */
@@ -265,6 +265,15 @@ public:
     /** Drop the stored profile and go back to the built-in defaults. */
     void resetToDefaults();
 
+    /**
+     * True when two profiles describe the same wiring.
+     *
+     * Only the pin level matters here. Which state an LED reacts to, or what
+     * a button triggers, is read fresh on every use - so a change limited to
+     * the assignment lists can take effect without a restart.
+     */
+    static bool sameWiring(const HwProfile& a, const HwProfile& b);
+
     /** Current state as a JSON object, for the dashboard. */
     String toJson() const;
 
@@ -291,6 +300,20 @@ private:
 
     HwProfile _active;
     HwProfile _stored;
+
+    /*
+     * Handover for a change that needs no restart.
+     *
+     * applyJson() runs on the web server task, StatusLed and ButtonService
+     * read the active profile from the main task. Swapping it from the web
+     * handler means a 1.5 KB structure being rewritten under a reader that
+     * is halfway through it - a torn chain position is enough to write past
+     * the end of a frame buffer. The main task does the swap instead, which
+     * is the same rule the KNX stack already follows.
+     */
+    HwProfile _pending;
+    volatile bool _applyPending = false;
+
     Fallback  _fallback       = FB_UNCONFIGURED;
     bool      _hasStored      = false;
     bool      _rebootPending  = false;

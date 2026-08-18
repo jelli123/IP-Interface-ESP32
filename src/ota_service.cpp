@@ -83,12 +83,23 @@ int OtaService::compareVersions(const String& a, const String& b)
     return aPatch - bPatch;
 }
 
+static uint32_t s_sketchSize = 0;
+
+uint32_t OtaService::sketchSize()
+{
+    return s_sketchSize;
+}
+
 void OtaService::loop()
 {
     if (!_slotRecorded)
     {
         _slotRecorded = true;
         recordOwnSlot();
+
+        // Measured here, in the main task and exactly once, rather than from
+        // a web handler. See the note on sketchSize().
+        s_sketchSize = ESP.getSketchSize();
     }
 
     if (!_validationPending || millis() < OTA_VALIDATE_AFTER_MS)
@@ -441,7 +452,7 @@ static void loadSlotRecords()
 
     const esp_partition_t* slots[2] = {esp_ota_get_running_partition(), otherSlot()};
 
-    if (!prefs.begin(FW_NS, true)) return;
+    if (!prefs.begin(FW_NS, false)) return;
 
     for (int i = 0; i < 2; i++)
     {
@@ -540,6 +551,46 @@ void OtaService::recordOwnSlot()
     {
         if (s_slotLabel[i] == running->label) s_slotRecord[i] = record;
     }
+}
+
+String OtaService::partitionTableJson()
+{
+    static String cached;
+
+    if (cached.length())
+    {
+        return cached;
+    }
+
+    String json = "[";
+    bool   first = true;
+
+    for (esp_partition_type_t type : { ESP_PARTITION_TYPE_APP, ESP_PARTITION_TYPE_DATA })
+    {
+        esp_partition_iterator_t it =
+            esp_partition_find(type, ESP_PARTITION_SUBTYPE_ANY, nullptr);
+
+        while (it != nullptr)
+        {
+            const esp_partition_t* part = esp_partition_get(it);
+
+            if (!first) json += ",";
+            json += "{\"label\":\"" + jsonEscape(part->label) + "\"";
+            json += ",\"type\":\"";
+            json += (type == ESP_PARTITION_TYPE_APP) ? "app" : "data";
+            json += "\",\"addr\":" + String(part->address);
+            json += ",\"size\":" + String(part->size) + "}";
+            first = false;
+
+            it = esp_partition_next(it);
+        }
+
+        esp_partition_iterator_release(it);
+    }
+
+    json += "]";
+    cached = json;
+    return cached;
 }
 
 String OtaService::partitionsJson()
