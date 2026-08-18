@@ -5,7 +5,9 @@
 #include <ESPAsyncWebServer.h>
 #include <Update.h>
 #include <WiFi.h>
+#include <memory>
 #include <new>
+#include <utility>
 
 #include "build_info.h"
 #include "eth_interface.h"
@@ -1061,26 +1063,37 @@ void webServerBegin()
     /*
      * The captured serial log, newest part last.
      *
-     * Capped well below the ring size: the answer is built in the heap, and
-     * 64 KB of history would not survive the trip.
+     * Sent in pieces straight out of the ring: a full dump is 64 KiB, and
+     * building that as a String would cost twice as much heap as the whole
+     * answer is worth.
      */
     server.on("/api/log", HTTP_GET, [](AsyncWebServerRequest* request) {
-        static const size_t DEFAULT_BYTES = 8192;
-        static const size_t MAX_BYTES     = 16384;
-
-        size_t want = DEFAULT_BYTES;
+        size_t want = 8192;
 
         if (request->hasParam("bytes"))
         {
             long value = request->getParam("bytes")->value().toInt();
-            if (value > 0)
-            {
-                want = (size_t)value;
-                if (want > MAX_BYTES) want = MAX_BYTES;
-            }
+            if (value > 0) want = (size_t)value;
         }
 
-        request->send(200, "text/plain; charset=utf-8", sysLog.tail(want));
+        auto state = std::make_shared<std::pair<size_t, size_t>>(0, 0);
+        state->first = sysLog.tailStart(want, state->second);
+
+        AsyncWebServerResponse* response = request->beginChunkedResponse(
+            "text/plain", [state](uint8_t* buffer, size_t maxLen, size_t) -> size_t {
+                return sysLog.readAt(state->first, state->second,
+                                     (char*)buffer, maxLen);
+            });
+
+        response->addHeader("Cache-Control", "no-store");
+
+        if (request->hasParam("download"))
+        {
+            response->addHeader("Content-Disposition",
+                                "attachment; filename=\"sbip-log.txt\"");
+        }
+
+        request->send(response);
     });
 
     server.on("/api/log/clear", HTTP_POST, [](AsyncWebServerRequest* request) {

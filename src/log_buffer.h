@@ -31,12 +31,21 @@ public:
     bool inPsram() const { return _psram; }
 
     /**
-     * Copy out the newest @p max bytes, oldest first.
+     * Start position of the newest @p want bytes.
      *
-     * The caller decides how much it can afford to hold - the whole ring is
-     * more than a web response should carry.
+     * @param available receives how many bytes are really there
+     * @return an opaque position for readAt()
      */
-    String tail(size_t max) const;
+    size_t tailStart(size_t want, size_t& available) const;
+
+    /**
+     * Copy up to @p max bytes from @p pos, advancing @p pos and @p left.
+     *
+     * Reading in pieces keeps a full dump off the heap. The ring keeps
+     * filling meanwhile, so a dump that is overtaken by new output shows the
+     * seam - which beats holding 64 KiB twice to avoid it.
+     */
+    size_t readAt(size_t& pos, size_t& left, char* out, size_t max) const;
 
     void clear();
 
@@ -52,13 +61,15 @@ public:
 private:
     void store(const char* data, size_t len);
 
-    static int idfHook(const char* format, va_list args);
+    static size_t makeStamp(char* out, size_t max);
+    static int    idfHook(const char* format, va_list args);
 
     char*  _buf    = nullptr;
     size_t _size   = 0;
     size_t _head   = 0; //!< next write position
     size_t _filled = 0;
     bool   _psram  = false;
+    bool   _atLineStart = true;
 
     mutable portMUX_TYPE _lock = portMUX_INITIALIZER_UNLOCKED;
 };

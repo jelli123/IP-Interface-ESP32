@@ -88,6 +88,30 @@ size_t LogBuffer::write(const uint8_t* data, size_t len)
     return Serial.write(data, len);
 }
 
+/*
+ * Wall clock once it has been set, uptime before that. The leading + says
+ * which one you are looking at, so a line from before the first NTP answer
+ * cannot be mistaken for a time of day.
+ */
+size_t LogBuffer::makeStamp(char* out, size_t max)
+{
+    time_t now = time(nullptr);
+
+    if (now > 1600000000) // any plausible date rather than 1970
+    {
+        struct tm local;
+        localtime_r(&now, &local);
+        return (size_t)snprintf(out, max, "%02d:%02d:%02d ",
+                                local.tm_hour, local.tm_min, local.tm_sec);
+    }
+
+    uint32_t seconds = millis() / 1000;
+    return (size_t)snprintf(out, max, "+%02u:%02u:%02u ",
+                            (unsigned)((seconds / 3600) % 100),
+                            (unsigned)((seconds / 60) % 60),
+                            (unsigned)(seconds % 60));
+}
+
 void LogBuffer::store(const char* data, size_t len)
 {
     if (_buf == nullptr || len == 0)
@@ -95,79 +119,89 @@ void LogBuffer::store(const char* data, size_t len)
         return;
     }
 
-    // A single write longer than the ring can only leave its tail behind.
-    if (len > _size)
-    {
-        data += len - _size;
-        len = _size;
-    }
+    // Built before the lock: localtime_r takes one of its own.
+    char   stamp[16];
+    size_t stampLen = makeStamp(stamp, sizeof(stamp));
 
     portENTER_CRITICAL(&_lock);
 
-    size_t untilEnd = _size - _head;
-
-    if (len <= untilEnd)
+    for (size_t i = 0; i < len; i++)
     {
-        memcpy(_buf + _head, data, len);
-    }
-    else
-    {
-        memcpy(_buf + _head, data, untilEnd);
-        memcpy(_buf, data + untilEnd, len - untilEnd);
-    }
+        char c = data[i];
 
-    _head   = (_head + len) % _size;
-    _filled = (_filled + len > _size) ? _size : _filled + len;
+        if (_atLineStart && c != '\n' && c != '\r')
+        {
+            for (size_t j = 0; j < stampLen; j++)
+            {
+                _buf[_head] = stamp[j];
+                _head = (_head + 1) % _size;
+            }
+            _filled = (_filled + stampLen > _size) ? _size : _filled + stampLen;
+            _atLineStart = false;
+        }
+
+        _buf[_head] = c;
+        _head = (_head + 1) % _size;
+        if (_filled < _size) _filled++;
+
+        if (c == '\n') _atLineStart = true;
+    }
 
     portEXIT_CRITICAL(&_lock);
 }
 
-String LogBuffer::tail(size_t max) const
+size_t LogBuffer::tailStart(size_t want, size_t& available) const
 {
-    if (_buf == nullptr || _filled == 0 || max == 0)
+    if (_buf == nullptr || _filled == 0 || want == 0)
     {
-        return String();
-    }
-
-    size_t want = (max < _filled) ? max : _filled;
-
-    // Allocated up front: growing a String inside the critical section would
-    // call malloc with interrupts disabled.
-    char* copy = (char*)malloc(want + 1);
-
-    if (copy == nullptr)
-    {
-        return String();
+        available = 0;
+        return 0;
     }
 
     portENTER_CRITICAL(&_lock);
+    available = (want < _filled) ? want : _filled;
+    size_t start = (_head + _size - available) % _size;
+    portEXIT_CRITICAL(&_lock);
 
-    size_t start    = (_head + _size - want) % _size;
-    size_t untilEnd = _size - start;
+    return start;
+}
+
+size_t LogBuffer::readAt(size_t& pos, size_t& left, char* out, size_t max) const
+{
+    if (_buf == nullptr || left == 0 || max == 0)
+    {
+        return 0;
+    }
+
+    size_t want = (left < max) ? left : max;
+
+    portENTER_CRITICAL(&_lock);
+
+    size_t untilEnd = _size - pos;
 
     if (want <= untilEnd)
     {
-        memcpy(copy, _buf + start, want);
+        memcpy(out, _buf + pos, want);
     }
     else
     {
-        memcpy(copy, _buf + start, untilEnd);
-        memcpy(copy + untilEnd, _buf, want - untilEnd);
+        memcpy(out, _buf + pos, untilEnd);
+        memcpy(out + untilEnd, _buf, want - untilEnd);
     }
 
     portEXIT_CRITICAL(&_lock);
 
-    copy[want] = '\0';
-    String out(copy);
-    free(copy);
+    pos = (pos + want) % _size;
+    left -= want;
 
-    return out;
+    return want;
 }
 
 void LogBuffer::clear()
 {
     portENTER_CRITICAL(&_lock);
-    _head   = 0;
-    _filled = 0;
+    _head        = 0;
+    _filled      = 0;
+    _atLineStart = true;
     portEXIT_CRITICAL(&_lock);
 }

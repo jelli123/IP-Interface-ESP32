@@ -263,11 +263,14 @@ small{color:var(--dim)}
   <pre id="logText"></pre>
   <div class="actions">
     <button class="sec" onclick="loadLog()">Aktualisieren</button>
+    <button class="sec" id="logCopy" onclick="copyLog()">Kopieren</button>
+    <button class="sec" onclick="downloadLog()">Herunterladen</button>
     <button class="sec" onclick="clearLog()">Leeren</button>
     <button class="sec" onclick="logDlg.close()">Schließen</button>
   </div>
-  <p><small>Die letzten Meldungen der Firmware, älteste zuerst. Der Puffer
-  überlebt keinen Neustart.</small></p>
+  <p><small>Die letzten Meldungen der Firmware, älteste zuerst. Kopiert wird
+  die Markierung, sonst alles Angezeigte. Der Puffer überlebt keinen
+  Neustart.</small></p>
 </dialog>
 
 <dialog id="partDlg">
@@ -693,10 +696,13 @@ const EN = {
 'nicht aktiviert':'not enabled',
 'Protokoll':'Log', 'Protokollpuffer':'Log buffer',
 'Aktualisieren':'Refresh', 'Leeren':'Clear', 'internes RAM':'internal RAM',
-['Die letzten Meldungen der Firmware, älteste zuerst. Der Puffer überlebt '
-+ 'keinen Neustart.']:
-  'The most recent firmware messages, oldest first. The buffer does not '
-+ 'survive a restart.',
+'Kopieren':'Copy', 'Kopiert':'Copied',
+'Kopieren nicht moeglich':'Copy failed',
+'Herunterladen':'Download',
+['Die letzten Meldungen der Firmware, älteste zuerst. Kopiert wird die '
++ 'Markierung, sonst alles Angezeigte. Der Puffer überlebt keinen Neustart.']:
+  'The most recent firmware messages, oldest first. Copying takes the '
++ 'selection, or everything shown. The buffer does not survive a restart.',
 'noch keine vergeben':'none assigned yet',
 'Image-Standard':'image defaults',
 'ungültig &rarr; Standard':'invalid &rarr; defaults',
@@ -996,6 +1002,43 @@ function showLog(){
 async function clearLog(){
   await fetch('/api/log/clear', {method:'POST'});
   loadLog();
+}
+
+/*
+ * navigator.clipboard gibt es nur im sicheren Kontext, den es hier ueber
+ * http nicht gibt - genau wie bei crypto.subtle. Deshalb der Umweg ueber ein
+ * kurzzeitiges textarea, das in allen Browsern auch ohne HTTPS funktioniert.
+ */
+async function copyLog(){
+  const sel = String(window.getSelection());
+  const text = sel.trim() ? sel : $('logText').textContent;
+  let ok = false;
+
+  if(window.isSecureContext && navigator.clipboard){
+    try { await navigator.clipboard.writeText(text); ok = true; } catch(e){}
+  }
+  if(!ok){
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { ok = document.execCommand('copy'); } catch(e){}
+    ta.remove();
+  }
+
+  const btn = $('logCopy');
+  btn.textContent = t(ok ? 'Kopiert' : 'Kopieren nicht moeglich');
+  setTimeout(() => { btn.textContent = t('Kopieren'); }, 1500);
+}
+
+function downloadLog(){
+  const stamp = new Date().toISOString().slice(0,19).replace(/[-:]/g,'').replace('T','-');
+  const a = document.createElement('a');
+  a.href = '/api/log?download=1&bytes=65536';
+  a.download = 'sbip-log-' + stamp + '.txt';
+  a.click();
 }
 
 async function showParts(){  $('partList').innerHTML = '<tr class="hd"><th>' + t('lese Filtertabelle...') + '</th></tr>';

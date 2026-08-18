@@ -391,11 +391,24 @@ KNX-Stack – und der ESP-IDF-Log (die `[E][Preferences.cpp:47]`-Zeilen), der
 unverändert: `sysLog` schreibt durch.
 
 Der Puffer liegt im RAM und überlebt keinen Neustart. `GET /api/log` liefert
-die neuesten 8 KiB als Text (`?bytes=` bis 16384), `POST /api/log/clear`
-leert ihn.
+die neuesten 8 KiB als Text, `?bytes=` mehr, `?download=1` setzt zusätzlich
+einen Dateinamen. `POST /api/log/clear` leert ihn.
+
+Die Antwort wird **gestückelt** direkt aus dem Ring gesendet: Ein voller
+Auszug ist 64 KiB, und als `String` gebaut würde er kurzzeitig das Doppelte an
+Heap kosten. Läuft während eines Downloads viel Neues auf, sieht man die Naht
+– das ist der Preis dafür, den Puffer nicht doppelt zu halten.
+
+Jede Zeile trägt einen Zeitstempel: `12:34:56` sobald die Uhr steht, davor
+`+00:01:23` seit dem Start. Das Pluszeichen unterscheidet beides.
 
 > Im Code steht deshalb `sysLog.printf(...)` statt `Serial.printf(...)`.
 > `Serial` selbst bleibt für `begin()`, `flush()` und `setTxTimeoutMs()`.
+
+Kopieren in die Zwischenablage nimmt die Markierung, sonst das ganze
+angezeigte Protokoll. `navigator.clipboard` gibt es dabei nur im sicheren
+Kontext, den es über `http` nicht gibt – genau wie bei `crypto.subtle` beim
+Firmware-Upload. Deshalb der Umweg über ein kurzzeitiges `textarea`.
 
 ### Speicherung
 
