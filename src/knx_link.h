@@ -28,6 +28,7 @@ public:
         uint32_t ipRxFrames;      //!< frames received from KNXnet/IP
         uint32_t ipTxFrames;      //!< frames sent to KNXnet/IP
         uint16_t busLoadPermille; //!< TP1 utilisation over the last second
+        uint16_t busLoadPeak;     //!< highest value since the peaks were cleared
     };
 
     /**
@@ -187,6 +188,9 @@ public:
     bool sendGroupValue(uint16_t groupAddress, const uint8_t* payload, uint8_t length);
 
     const Stats& stats() const { return _stats; }
+
+    /** Drop the bus load high water mark. */
+    void resetPeak() { _stats.busLoadPeak = _stats.busLoadPermille; }
 
     /** Result of the boot time link check, for /api/status. */
     const char* selfTestResult() const { return _selfTest; }

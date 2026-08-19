@@ -13,6 +13,7 @@
 
 #include "eth_interface.h"
 #include "button_service.h"
+#include "cpu_load.h"
 #include "hw_config.h"
 #include "interface_config.h"
 #include "improv_service.h"
@@ -182,6 +183,9 @@ void setup()
     {
         knxLink.restartIpLayer();
     }
+
+    // Last: the first sample would otherwise cover the whole of startup.
+    cpuLoad.begin();
 }
 
 void loop()
@@ -193,4 +197,5 @@ void loop()
     hwConfig.loop();
     buttonService.loop();
     statusLed.loop();
+    cpuLoad.loop();
 }

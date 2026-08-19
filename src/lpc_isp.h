@@ -105,6 +105,7 @@ private:
     bool writeImage();
 
     /* --- image parsing --------------------------------------------------- */
+    bool ensure(uint32_t need);
     bool storeByte(uint32_t address, uint8_t value);
     bool parseHexLine(const char* line);
 
@@ -137,6 +138,7 @@ private:
 
     /* --- staged image ---------------------------------------------------- */
     uint8_t* _image     = nullptr;
+    uint32_t _capacity  = 0;   //!< allocated, grows with the file
     uint32_t _imageSize = 0;   //!< highest written address plus one
     bool     _imageOk   = false;
     bool     _uploading = false;

@@ -11,6 +11,7 @@
 
 #include "build_info.h"
 #include "auth.h"
+#include "cpu_load.h"
 #include "eth_interface.h"
 #include "fw_hash.h"
 #include "hw_config.h"
@@ -253,6 +254,7 @@ static String statusJson()
     json += "\"tx_frames\":" + String(stats.tpTxFrames) + ",";
     json += "\"tx_processed\":" + String(stats.tpTxProcessed) + ",";
     json += "\"bus_load\":" + String(stats.busLoadPermille) + ",";
+    json += "\"bus_load_peak\":" + String(stats.busLoadPeak) + ",";
     json += "\"isp\":" + String(lpcIsp.available() ? "true" : "false") + ",";
     json += "\"self_test\":\"" + jsonEscape(String(knxLink.selfTestResult())) + "\"";
     json += "},";
@@ -275,6 +277,22 @@ static String statusJson()
     json += "\"chip_model\":\"" + String(ESP.getChipModel()) + "\",";
     json += "\"chip_rev\":" + String(ESP.getChipRevision()) + ",";
     json += "\"cpu_freq\":" + String(ESP.getCpuFreqMHz()) + ",";
+    json += "\"cpu_cores\":" + String(cpuLoad.cores()) + ",";
+
+    json += "\"cpu_load\":[";
+    for (uint8_t c = 0; c < cpuLoad.cores(); c++)
+    {
+        if (c) json += ",";
+        json += String(cpuLoad.permille(c));
+    }
+    json += "],\"cpu_peak\":[";
+    for (uint8_t c = 0; c < cpuLoad.cores(); c++)
+    {
+        if (c) json += ",";
+        json += String(cpuLoad.peak(c));
+    }
+    json += "],";
+    json += "\"peak_age\":" + String(cpuLoad.peakAge()) + ",";
     json += "\"heap_total\":" + String(ESP.getHeapSize()) + ",";
     json += "\"heap_free\":" + String(ESP.getFreeHeap()) + ",";
     json += "\"flash_size\":" + String(ESP.getFlashChipSize()) + ",";
@@ -805,6 +823,17 @@ static void registerHardwareRoutes()
         hwConfig.resetToDefaults();
         request->send(200, "application/json",
                       "{\"status\":\"ok\",\"reboot_required\":true}");
+    });
+
+    /*
+     * Every high water mark at once, on purpose: peaks only compare with each
+     * other when they share a starting point.
+     */
+    server.on("/api/peaks/reset", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+        knxLink.resetPeak();
+        cpuLoad.resetPeaks();
+        request->send(200, "application/json", "{\"status\":\"ok\"}");
     });
 
     server.on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest* request) {

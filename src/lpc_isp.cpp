@@ -33,6 +33,21 @@ const uint32_t SECTOR_SIZE  = 4096;    //!< uniform across the LPC11xx family
 const uint32_t RAM_BUFFER   = 0x10000300; //!< above what the bootloader uses
 const uint32_t CHUNK        = 1024;    //!< fits the 4 KB RAM of the smallest part
 const uint32_t RAM_BASE     = 0x10000000;
+const uint32_t GROW         = 4096;    //!< allocation granularity of the staging buffer
+
+/** Internal RAM the rest of the firmware must keep when there is no PSRAM. */
+const uint32_t HEADROOM     = 48u * 1024u;
+
+/*
+ * Where the job runs. Core 0's idle task is watched by the task watchdog
+ * (CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0), and a job that waits on the
+ * UART for seconds has no business competing with it.
+ */
+#if CONFIG_FREERTOS_UNICORE
+const BaseType_t JOB_CORE = 0;
+#else
+const BaseType_t JOB_CORE = 1;
+#endif
 
 /*
  * Part identification numbers of the LPC11xx family, from UM10398 table 349.
@@ -504,6 +519,11 @@ bool LpcIsp::writeImage()
         fail("image does not fit into the flash of this chip");
         return false;
     }
+    if (!ensure(size))
+    {
+        fail("not enough memory to pad the image");
+        return false;
+    }
 
     char    cmd[64];
     char    note[64];
@@ -671,6 +691,10 @@ void LpcIsp::run()
             {
                 inspect();
                 _lastOk = true;
+
+                // Its job is done, and on a board without PSRAM it is a
+                // sizeable piece of the internal heap.
+                uploadDiscard();
             }
         }
         else
@@ -714,7 +738,8 @@ bool LpcIsp::start(Job job, String& error)
 
     // 6 KB is comfortable: the deepest frame here is one UU line plus a
     // handful of small buffers, and nothing recurses.
-    if (xTaskCreate(jobTask, "lpc_isp", 6144, this, 1, nullptr) != pdPASS)
+    if (xTaskCreatePinnedToCore(jobTask, "lpc_isp", 6144, this, 1, nullptr,
+                                JOB_CORE) != pdPASS)
     {
         _job  = NONE;
         error = "no memory for the programming task";
@@ -754,23 +779,8 @@ bool LpcIsp::uploadBegin(String& error)
         return false;
     }
 
-    if (_image == nullptr)
-    {
-        _image = (uint8_t*)heap_caps_malloc(MAX_IMAGE, MALLOC_CAP_SPIRAM);
-        if (_image == nullptr) _image = (uint8_t*)malloc(MAX_IMAGE);
-        if (_image == nullptr)
-        {
-            error = "no memory for the image";
-            return false;
-        }
-    }
+    uploadDiscard();
 
-    // Erased flash reads as 0xFF, so anything the file leaves out is written
-    // as what is already there.
-    memset(_image, 0xFF, MAX_IMAGE);
-
-    _imageSize   = 0;
-    _imageOk     = false;
     _uploading   = true;
     _hexFormat   = false;
     _hexEnded    = false;
@@ -781,6 +791,44 @@ bool LpcIsp::uploadBegin(String& error)
     return true;
 }
 
+/*
+ * Grow the staging buffer to hold at least @p need bytes.
+ *
+ * Sized to the file rather than to the 64 KiB an LPC1115 could take: without
+ * PSRAM this competes with the network stack for internal RAM, and a
+ * TP-UART emulator is a fraction of that. New space reads as erased flash,
+ * so anything the file leaves out is written as what is already there.
+ */
+bool LpcIsp::ensure(uint32_t need)
+{
+    if (need <= _capacity) return true;
+    if (need > MAX_IMAGE) return false;
+
+    uint32_t want = ((need + GROW - 1) / GROW) * GROW;
+    if (want > MAX_IMAGE) want = MAX_IMAGE;
+
+    uint8_t* grown = (uint8_t*)heap_caps_realloc(_image, want, MALLOC_CAP_SPIRAM);
+
+    if (grown == nullptr)
+    {
+        // No PSRAM on this board. Leave the rest of the firmware room to
+        // breathe instead of succeeding here and failing somewhere unrelated.
+        if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < want + HEADROOM)
+        {
+            return false;
+        }
+        grown = (uint8_t*)heap_caps_realloc(_image, want,
+                                            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+
+    if (grown == nullptr) return false;
+
+    memset(grown + _capacity, 0xFF, want - _capacity);
+    _image    = grown;
+    _capacity = want;
+    return true;
+}
+
 bool LpcIsp::storeByte(uint32_t address, uint8_t value)
 {
     if (address >= MAX_IMAGE)
@@ -788,6 +836,12 @@ bool LpcIsp::storeByte(uint32_t address, uint8_t value)
         _uploadError = "the file reaches beyond 64 KiB";
         return false;
     }
+    if (!ensure(address + 1))
+    {
+        _uploadError = "not enough memory for a file this size";
+        return false;
+    }
+
     _image[address] = value;
     if (address + 1 > _imageSize) _imageSize = address + 1;
     return true;
@@ -1001,9 +1055,12 @@ bool LpcIsp::uploadEnd(String& error)
 
 void LpcIsp::uploadDiscard()
 {
-    _uploading = false;
-    _imageOk   = false;
+    free(_image);
+    _image     = nullptr;
+    _capacity  = 0;
     _imageSize = 0;
+    _imageOk   = false;
+    _uploading = false;
     _lineLen   = 0;
 }
 

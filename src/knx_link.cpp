@@ -454,6 +454,10 @@ void KnxLink::updateBusLoad()
 
     uint32_t permille = (_framesInWindow * 1000) / BUS_LOAD_FRAMES_PER_SEC;
     _stats.busLoadPermille = (permille > 1000) ? 1000 : (uint16_t)permille;
+    if (_stats.busLoadPermille > _stats.busLoadPeak)
+    {
+        _stats.busLoadPeak = _stats.busLoadPermille;
+    }
     _framesInWindow = 0;
 }
 

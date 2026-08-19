@@ -60,8 +60,13 @@ font-weight:700;border-radius:50%;margin-left:6px}
  * laeuft das Geraet nicht auf dem, was in der Maske steht. */
 .warnbadge{display:inline-block;padding:2px 8px;border-radius:20px;
 font-size:11px;font-weight:600;background:var(--err);color:#fff}
-.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:8px}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;
+margin-top:8px;position:relative}
 .bar>i{display:block;height:100%;background:var(--acc);width:0;transition:width .3s}
+/* Hoechststand seit dem letzten Ruecksetzen. Innen liegend, damit er am
+ * rechten Anschlag nicht vom overflow abgeschnitten wird. */
+.bar>b{position:absolute;top:0;bottom:0;left:0;width:2px;margin-left:-2px;
+background:var(--warn);opacity:.9;transition:left .3s}
 .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 dialog{background:var(--card);color:var(--fg);border:1px solid var(--line);
 border-radius:10px;padding:20px;min-width:300px;max-width:92vw}
@@ -154,7 +159,7 @@ small{color:var(--dim)}
     <div class="row"><span>Baudrate</span><span id="tpBaud">-</span></div>
     <div class="row"><span>Selbsttest</span><span id="tpTest">-</span></div>
     <div class="row"><span>Buslast</span><span id="tpLoad">-</span></div>
-    <div class="bar"><i id="tpLoadBar"></i></div>
+    <div class="bar"><i id="tpLoadBar"></i><b id="tpLoadPeak"></b></div>
     <div class="actions" id="ispRow" style="display:none">
       <button class="sec" onclick="openLpc()">SB-Interface programmieren</button>
     </div>
@@ -208,6 +213,12 @@ small{color:var(--dim)}
     <h2>System</h2>
     <div class="row"><span>Chip</span><span id="chip">-</span></div>
     <div class="row"><span>Takt</span><span id="cpu">-</span></div>
+    <div class="row"><span>Last Kern 0</span><span id="cpu0">-</span></div>
+    <div class="bar"><i id="cpu0Bar"></i><b id="cpu0Peak"></b></div>
+    <div id="cpu1Box" style="display:none">
+      <div class="row"><span>Last Kern 1</span><span id="cpu1">-</span></div>
+      <div class="bar"><i id="cpu1Bar"></i><b id="cpu1Peak"></b></div>
+    </div>
     <div class="row"><span>Freier Speicher</span><span id="heap">-</span></div>
     <div class="row"><span>Flash</span><span id="flash">-</span></div>
     <div class="row"><span>PSRAM</span><span id="psram">-</span></div>
@@ -217,6 +228,7 @@ small{color:var(--dim)}
       <button class="sec" onclick="showParts()">Partitionstabelle</button>
       <button class="sec" onclick="showLog()">Protokoll</button>
       <button class="sec" onclick="openAuth()">Zugang</button>
+      <button class="sec" onclick="resetPeaks()">Spitzenwerte zur&uuml;cksetzen</button>
     </div>
   </section>
 
@@ -897,6 +909,8 @@ const EN = {
 + '"Get-FileHash firmware.bin" or "sha256sum firmware.bin", or leave empty.',
 
 /* --- SB-Interface programmieren --- */
+'Last Kern 0':'Core 0 load', 'Last Kern 1':'Core 1 load', 'max.':'peak',
+'Spitzenwerte zurücksetzen':'Clear the peaks',
 'SB-Interface programmieren':'Program the SB-Interface',
 'SB-Interface ISP':'SB-Interface ISP', 'Seriennummer':'Serial number',
 'Bootloader':'Boot loader', 'Flash-Inhalt':'Flash contents',
@@ -1011,6 +1025,19 @@ function prefixLen(mask){
              .reduce((n, o) => n + ((+o).toString(2).match(/1/g) || []).length, 0);
 }
 
+// Auslastung in Promille: Zahl, Balken und der Hoechststand als Strich.
+function loadBar(id, permille, peak){
+  $(id).textContent = (permille/10).toFixed(1) + ' % \u00b7 '
+                    + t('max.') + ' ' + (peak/10).toFixed(1) + ' %';
+  $(id + 'Bar').style.width = (permille/10) + '%';
+  $(id + 'Peak').style.left = (peak/10) + '%';
+}
+
+async function resetPeaks(){
+  await fetch('/api/peaks/reset', {method:'POST'});
+  refresh();
+}
+
 // Dim a group while its leading checkbox is off, so the fields read as
 // belonging to the switch above them rather than standing on their own.
 // Only a checkbox that IS the group's first element counts - the row editors
@@ -1080,8 +1107,7 @@ async function refresh(){
   $('tpType').textContent = s.tp.type;
   $('tpBaud').textContent = s.tp.baud + ' Bd, 8E1';
   $('tpTest').textContent = s.tp.self_test;
-  $('tpLoad').textContent = (s.tp.bus_load/10).toFixed(1) + ' %';
-  $('tpLoadBar').style.width = (s.tp.bus_load/10) + '%';
+  loadBar('tpLoad', s.tp.bus_load, s.tp.bus_load_peak);
   $('ispRow').style.display = s.tp.isp ? 'flex' : 'none';
 
   $('tpRx').textContent = s.tp.rx_frames;
@@ -1116,6 +1142,11 @@ async function refresh(){
 
   $('chip').textContent = s.hardware.chip_model + ' rev ' + s.hardware.chip_rev;
   $('cpu').textContent  = s.hardware.cpu_freq + ' MHz';
+
+  const load = s.hardware.cpu_load || [];
+  const cpk  = s.hardware.cpu_peak || [];
+  for(let c = 0; c < load.length && c < 2; c++) loadBar('cpu' + c, load[c], cpk[c]);
+  $('cpu1Box').style.display = (load.length > 1) ? '' : 'none';
   $('heap').textContent = Math.round(s.hardware.heap_free/1024) + ' / '
                         + Math.round(s.hardware.heap_total/1024) + ' KiB';
 

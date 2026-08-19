@@ -28,6 +28,7 @@ NCN5130-Transceiver; hier sitzt stattdessen ein Selfbus-Interface am UART.
 | Anti-Brick | zwei App-Partitionen + Bootloader-Rollback |
 | WLAN-Watchdog | erkennt stille Abbrüche und verlorene DHCP-Leases |
 | TP-Link-Watchdog | erneuert den Reset-Handshake, wenn das SB-Interface stumm wird |
+| Auslastung | TP1-Buslast und CPU-Last je Kern, mit Spitzenwertmarker |
 | mDNS | `http://sbip.local` |
 | CSRF-Schutz | Origin-Prüfung auf allen schreibenden Endpunkten |
 
@@ -435,8 +436,17 @@ heißt „da läuft etwas, aber nicht die TPUART-Emulation".
 
 Angenommen werden **Intel-Hex** und **rohe Binärdateien**, jeweils ab Adresse
 0; das erste Byte entscheidet, welches von beidem es ist. Die Datei landet
-zunächst nur in einem Zwischenpuffer im PSRAM – geschrieben wird erst nach
-einem zweiten, ausdrücklichen Klick.
+zunächst nur in einem Zwischenpuffer – geschrieben wird erst nach einem
+zweiten, ausdrücklichen Klick.
+
+Der Puffer **wächst mit der Datei** in 4-KiB-Schritten und liegt im PSRAM,
+wenn welches da ist. Auf Boards ohne PSRAM kommt er aus dem internen Heap:
+Deshalb wird nur die tatsächliche Dateigröße belegt – eine TPUART-Emulation
+ist ein Bruchteil der 64 KiB, die ein LPC1115 fassen könnte –, deshalb prüft
+das Gerät vorher, ob danach noch 48 KiB frei bleiben, und deshalb wird der
+Puffer nach erfolgreichem Schreiben wieder freigegeben. Ein
+fehlgeschlagener Versuch behält ihn, damit ein zweiter Anlauf ohne erneutes
+Hochladen geht.
 
 Beim Ablegen wird die **Prüfsumme der Vektortabelle** nachgerechnet und, wenn
 sie nicht stimmt, gesetzt. Ob ein Werkzeug das schon getan hat, ist von der
@@ -946,6 +956,7 @@ das Passwort und ein zweiter Ort für Fehler.
 | GET | `/api/hwconfig` | aktives, gespeichertes und Image-Profil |
 | POST | `/api/hwconfig` | JSON-Profil speichern (Teilfelder erlaubt) |
 | POST | `/api/hwconfig/reset` | gespeichertes Profil verwerfen |
+| POST | `/api/peaks/reset` | Spitzenwertmarker aller Auslastungen löschen |
 | POST | `/api/led/heartbeat` | `enabled=1\|0` → Herzschlag schalten |
 | POST | `/api/led/brightness` | `percent=1..100` → Helligkeit aller LEDs |
 | GET | `/api/partitions` | Partitionstabelle des Flash |
@@ -1484,6 +1495,33 @@ beider Seiten inkonsistent. `KnxLink::superviseTpLink()` stößt deshalb alle
 Die Anzeige ist ein **Indikator, keine Messung**. Der Stack meldet Frames, nicht
 Bytes; die Rechnung nimmt 50 Frames/s als 100 % an (TP1 mit 9600 bit/s und
 minimalen L_Data-Frames). Lange Frames verfälschen den Wert nach unten.
+
+### CPU-Last
+
+FreeRTOS führt je Task einen Laufzeitzähler, gespeist aus `esp_timer`. Der
+Idle-Task eines Kerns sammelt genau die Zeit, in der dieser Kern nichts zu tun
+hatte – die Last ist also das, was vom Sekundenfenster übrig bleibt.
+
+Der Zähler ist auf 32 Bit gekürzt und läuft alle ~71 Minuten über. Alle Werte
+hier sind Differenzen zweier Messungen im Sekundenabstand, und vorzeichenlose
+Arithmetik trägt das von allein über den Überlauf.
+
+Einkern-Varianten (C3, C6) zeigen nur einen Balken; die Kernanzahl kommt aus
+`CONFIG_FREERTOS_NUMBER_OF_CORES`, nicht aus dem Chiptyp – ein Dual-Core kann
+per Konfiguration unicore laufen.
+
+### Spitzenwertmarker
+
+Jeder Auslastungsbalken trägt einen zweiten, schmalen Strich: den höchsten
+Wert seit dem letzten Zurücksetzen. Die Zahl daneben nennt ihn ebenfalls, denn
+ein 2-px-Strich auf einem 6-px-Balken ist zum Ablesen zu grob.
+
+`POST /api/peaks/reset` löscht **alle** Marker zugleich – Buslast wie CPU.
+Getrennt wären sie zwar feiner steuerbar, aber nicht mehr vergleichbar: Ein
+Höchststand sagt nur etwas aus, wenn man weiß, über welchen Zeitraum er gilt,
+und das ist bei einem gemeinsamen Startpunkt eine Angabe statt drei. Der erste
+Messzyklus nach dem Start wird verworfen; sonst stünde die Startlast für den
+Rest der Laufzeit im Marker.
 
 ---
 
