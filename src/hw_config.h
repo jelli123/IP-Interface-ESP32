@@ -166,6 +166,18 @@ struct HwProfile
     int8_t  knxRxPin     = -1;
     int8_t  knxTxPin     = -1;
 
+    /*
+     * In-system programming of the SB-Interface, over the same UART.
+     *
+     * Idle means the ESP32 lets go of both lines and the pull-ups on the LPC
+     * decide - /RESET high, PIO0_1 high, user code runs. lpcInvert is for a
+     * board that puts an inverter in between and therefore needs a driven
+     * level in both directions.
+     */
+    int8_t  lpcResetPin  = -1;
+    int8_t  lpcIspPin    = -1;
+    bool    lpcInvert    = false;
+
     // Buttons and LEDs, plus what each one is used for
     uint8_t      buttonCount = 0;
     HwButton     buttons[HW_MAX_BUTTONS];

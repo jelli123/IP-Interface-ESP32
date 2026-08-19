@@ -17,6 +17,7 @@
 #include "interface_config.h"
 #include "improv_service.h"
 #include "knx_link.h"
+#include "lpc_isp.h"
 #include "net_manager.h"
 #include "ota_service.h"
 #include "status_led.h"
@@ -61,6 +62,11 @@ void setup()
      * within the two seconds ESP Web Tools waits for.
      */
     hwConfig.begin();
+
+    // Straight after the profile and before anything else touches a pin: the
+    // two ISP lines have to reach their idle state early, or a board with
+    // inverters holds the LPC in reset for the whole of our own startup.
+    lpcIsp.begin();
 
     // Both need the profile for their pins, and come before the noisy parts
     // so the indicators work while the rest boots.

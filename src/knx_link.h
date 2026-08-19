@@ -5,6 +5,8 @@
 
 #include <stdint.h>
 
+class HardwareSerial;
+
 /**
  * Owns the KNX stack and the serial link to the Selfbus SB-Interface.
  *
@@ -189,6 +191,30 @@ public:
     /** Result of the boot time link check, for /api/status. */
     const char* selfTestResult() const { return _selfTest; }
 
+    /**
+     * Hand the KNX UART over to someone else, closing the port.
+     *
+     * Programming the SB-Interface talks to the LPC's ROM bootloader at
+     * 115200 baud 8N1 on the very port the stack drives at 19200 8E1, so the
+     * two cannot overlap. Only the main task may touch the stack, which is
+     * why this asks rather than acts: the flag is picked up in loop(), and
+     * the call returns once loop() has confirmed it stopped.
+     *
+     * Callable from any task except the main one - it would deadlock there.
+     *
+     * @param timeoutMs how long to wait for the main task to acknowledge
+     * @return true once the stack is idle and the port is closed
+     */
+    bool suspend(uint32_t timeoutMs = 3000);
+
+    /** Resume, re-running the TP-UART reset handshake from the main task. */
+    void resume();
+
+    bool suspended() const { return _suspended; }
+
+    /** The port the stack uses. Null until begin() has run. */
+    HardwareSerial* uart() const;
+
 private:
     static void activityTrampoline(uint8_t info);
     void applyIdentity();
@@ -201,6 +227,9 @@ private:
 
     volatile bool _progModePending = false;
     volatile bool _progModeValue   = false;
+
+    volatile bool _suspendRequest = false;
+    volatile bool _suspended      = false;
 
     uint32_t _lastBusLoadWindow = 0;
     uint32_t _framesInWindow    = 0;

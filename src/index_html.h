@@ -104,7 +104,8 @@ button.ico{width:38px;padding:7px 0;font-size:16px;line-height:1;flex:0 0 auto}
 /* Eine Checkbox-Zeile direkt unter einer Schaltflaechenreihe oder einem
  * Absatz klebte am Vorgaenger - sie braucht denselben Luftraum wie ein
  * eigener Abschnitt. */
-.actions + label.chk, p + label.chk, .bar + label.chk{margin-top:14px}
+.actions + label.chk, p + label.chk, .bar + label.chk,
+.trio + label.chk{margin-top:14px}
 label.chk{display:flex;align-items:center;gap:9px;font-size:13px}
 small{color:var(--dim)}
 </style>
@@ -154,6 +155,9 @@ small{color:var(--dim)}
     <div class="row"><span>Selbsttest</span><span id="tpTest">-</span></div>
     <div class="row"><span>Buslast</span><span id="tpLoad">-</span></div>
     <div class="bar"><i id="tpLoadBar"></i></div>
+    <div class="actions" id="ispRow" style="display:none">
+      <button class="sec" onclick="openLpc()">SB-Interface programmieren</button>
+    </div>
   </section>
 
   <section class="card">
@@ -220,6 +224,7 @@ small{color:var(--dim)}
     <h2>Hardware-Profil</h2>
     <div class="row"><span>Quelle</span><span id="hwSrc">-</span></div>
     <div class="row"><span>KNX-UART</span><span id="hwKnx">-</span></div>
+    <div class="row"><span>SB-Interface ISP</span><span id="hwLpc">-</span></div>
     <div class="row"><span>Taster</span><span id="hwBtns">-</span></div>
     <div class="row"><span>LEDs</span><span id="hwLeds">-</span></div>
     <div class="row"><span>I2C (RTC)</span><span id="hwI2c">-</span></div>
@@ -376,6 +381,36 @@ small{color:var(--dim)}
   </div>
 </dialog>
 
+<dialog id="lpcDlg">
+  <h2>SB-Interface programmieren</h2>
+  <div class="row"><span>Chip</span><span id="lpcChip" data-dyn>-</span></div>
+  <div class="row"><span>Seriennummer</span><span id="lpcUid" data-dyn>-</span></div>
+  <div class="row"><span>Bootloader</span><span id="lpcBoot" data-dyn>-</span></div>
+  <div class="row"><span>Flash-Inhalt</span><span id="lpcImg" data-dyn>-</span></div>
+  <div class="row"><span>TP-UART-Emulation</span><span id="lpcTp" data-dyn>-</span></div>
+  <div class="row"><span>Gewählte Datei</span><span id="lpcFileSt" data-dyn>-</span></div>
+  <div class="row"><span>Zustand</span><span id="lpcState" data-dyn>-</span></div>
+  <div class="bar" id="lpcBar" style="display:none"><i id="lpcFill"></i></div>
+  <div class="actions">
+    <button class="sec" onclick="lpcProbe()">Erkennen</button>
+    <button class="sec" onclick="lpcFile.click()">Datei w&auml;hlen</button>
+    <input type="file" id="lpcFile" accept=".hex,.bin" style="display:none"
+           onchange="lpcUpload()">
+    <button id="lpcWriteBtn" onclick="lpcWrite()" disabled>Programmieren</button>
+    <button class="sec" onclick="lpcRun()">SB-Interface neu starten</button>
+    <button class="sec" onclick="closeLpc()">Schließen</button>
+  </div>
+  <p><small>Der ESP32 legt den LPC über zwei Steuerleitungen in seinen
+  ROM-Bootlader und spricht ihn über dieselbe UART an, die sonst der
+  KNX-Stack benutzt. Während eines Auftrags ruht der Busverkehr für einige
+  Sekunden.</small></p>
+  <p><small>Angenommen werden Intel-Hex und rohe Binärdateien, jeweils ab
+  Adresse 0. Die Prüfsumme der Vektortabelle wird nachgerechnet und
+  nötigenfalls gesetzt &ndash; ohne sie startet der Bootlader das Programm
+  nicht. Geschrieben wird erst nach einem zweiten Klick, und jeder Block
+  wird gegen die Kopie im RAM des LPC verglichen.</small></p>
+</dialog>
+
 <dialog id="timeDlg">  <h2>Zeitserver</h2>
   <div class="grp">
     <label class="chk"><input type="checkbox" id="tsEn"> Zeit auf den KNX-Bus senden</label>
@@ -418,6 +453,19 @@ small{color:var(--dim)}
     <input id="hwRx"   type="number" min="-1">
     <input id="hwTx"   type="number" min="-1">
   </div>
+
+  <label>SB-Interface programmieren &ndash; Reset / ISP (&minus;1 = nicht verdrahtet)</label>
+  <div class="trio">
+    <input id="hwLpcRst" type="number" min="-1">
+    <input id="hwLpcIsp" type="number" min="-1">
+    <span></span>
+  </div>
+  <label class="chk"><input type="checkbox" id="hwLpcInv">
+    Steuerleitungen laufen über Inverter</label>
+  <p><small>Zwei Leitungen zum LPC des SB-Interface: /RESET und PIO0_1. Ohne
+  Inverter werden sie nur nach Masse gezogen und sonst losgelassen &ndash; die
+  Pull-ups des LPC halten ihn dann im Anwendungsprogramm. Die UART teilen sie
+  sich mit dem KNX-Stack.</small></p>
 
   <div class="grp">
     <label>Taster</label>
@@ -846,7 +894,58 @@ const EN = {
 + 'mit "Get-FileHash firmware.bin" bzw. "sha256sum firmware.bin", oder leer '
 + 'lassen.']:
   'Automatic computation needs HTTPS and is unavailable here. Obtain it with '
-+ '"Get-FileHash firmware.bin" or "sha256sum firmware.bin", or leave empty.'
++ '"Get-FileHash firmware.bin" or "sha256sum firmware.bin", or leave empty.',
+
+/* --- SB-Interface programmieren --- */
+'SB-Interface programmieren':'Program the SB-Interface',
+'SB-Interface ISP':'SB-Interface ISP', 'Seriennummer':'Serial number',
+'Bootloader':'Boot loader', 'Flash-Inhalt':'Flash contents',
+'TP-UART-Emulation':'TP-UART emulation', 'Gewählte Datei':'Selected file',
+'Erkennen':'Identify', 'Datei wählen':'Choose a file',
+'Programmieren':'Program',
+'SB-Interface neu starten':'Restart the SB-Interface',
+'noch nicht abgefragt':'not read yet', 'unbekannter Typ':'unknown type',
+'leer, nie programmiert':'empty, never programmed',
+'startfähiges Programm':'a program that will start',
+'Inhalt ohne gültige Prüfsumme':'contents without a valid checksum',
+'antwortet':'answering', 'keine Antwort':'no answer',
+'bereit':'ready', 'Datei geladen':'file loaded', 'invertiert':'inverted',
+'Datei wird übertragen...':'transferring the file...',
+'KNX-Stack anhalten':'Pausing the KNX stack',
+'Bootlader suchen':'Looking for the boot loader',
+'Flash löschen':'Erasing the flash', 'schreiben':'writing',
+'fertig':'finished',
+'Steuerleitungen laufen über Inverter':'Control lines run through inverters',
+'SB-Interface programmieren – Reset / ISP (−1 = nicht verdrahtet)':
+  'Program the SB-Interface – reset / ISP (−1 = not wired)',
+['Den LPC jetzt löschen und neu programmieren? Die KNX-Verbindung ruht dabei '
++ 'für einige Sekunden.']:
+  'Erase and reprogram the LPC now? The KNX connection rests for a few '
++ 'seconds while it runs.',
+['Zwei Leitungen zum LPC des SB-Interface: /RESET und PIO0_1. Ohne Inverter '
++ 'werden sie nur nach Masse gezogen und sonst losgelassen – die Pull-ups des '
++ 'LPC halten ihn dann im Anwendungsprogramm. Die UART teilen sie sich mit '
++ 'dem KNX-Stack.']:
+  'Two lines to the SB-Interface\'s LPC: /RESET and PIO0_1. Without inverters '
++ 'they are only pulled to ground and otherwise let go - the pull-ups on the '
++ 'LPC then keep it in the application. They share the UART with the KNX '
++ 'stack.',
+['Der ESP32 legt den LPC über zwei Steuerleitungen in seinen ROM-Bootlader '
++ 'und spricht ihn über dieselbe UART an, die sonst der KNX-Stack benutzt. '
++ 'Während eines Auftrags ruht der Busverkehr für einige Sekunden.']:
+  'Two control lines put the LPC into its ROM boot loader, and the ESP32 then '
++ 'talks to it over the same UART the KNX stack otherwise uses. Bus traffic '
++ 'rests for a few seconds while a job runs.',
+['Angenommen werden Intel-Hex und rohe Binärdateien, jeweils ab Adresse 0. '
++ 'Die Prüfsumme der Vektortabelle wird nachgerechnet und nötigenfalls '
++ 'gesetzt – ohne sie startet der Bootlader das Programm nicht. Geschrieben '
++ 'wird erst nach einem zweiten Klick, und jeder Block wird gegen die Kopie '
++ 'im RAM des LPC verglichen.']:
+  'Intel Hex and raw binaries are both accepted, each starting at address 0. '
++ 'The vector table checksum is recomputed and set where needed - without it '
++ 'the boot loader will not start the program. Nothing is written until a '
++ 'second click, and every block is compared against the copy in the LPC\'s '
++ 'RAM.'
 };
 
 /** Translate a single string. Unknown text stays German. */
@@ -983,6 +1082,7 @@ async function refresh(){
   $('tpTest').textContent = s.tp.self_test;
   $('tpLoad').textContent = (s.tp.bus_load/10).toFixed(1) + ' %';
   $('tpLoadBar').style.width = (s.tp.bus_load/10) + '%';
+  $('ispRow').style.display = s.tp.isp ? 'flex' : 'none';
 
   $('tpRx').textContent = s.tp.rx_frames;
   $('tpIgn').textContent= s.tp.rx_ignored;
@@ -1353,6 +1453,116 @@ async function showFilter(){
   $('filterList').textContent = f.addresses.join('   ');
 }
 
+/* --- SB-Interface programmieren ------------------------------------------ *
+ * Jeder Auftrag läuft im Gerät auf einer eigenen Task und dauert Sekunden.
+ * Die Oberfläche stößt ihn nur an und fragt danach den Fortschritt ab.
+ * ------------------------------------------------------------------------ */
+
+const LSTAGE = {pause:'KNX-Stack anhalten', detect:'Bootlader suchen',
+                erase:'Flash löschen', write:'schreiben',
+                reset:'SB-Interface neu starten',
+                done:'fertig', failed:'fehlgeschlagen'};
+
+let lpcLast = null, lpcTimer = null;
+
+function openLpc(){ lpcDlg.showModal(); lpcRefresh(); }
+
+function closeLpc(){
+  if(lpcTimer){ clearTimeout(lpcTimer); lpcTimer = null; }
+  lpcDlg.close();
+}
+
+async function lpcRefresh(){
+  let s;
+  try { s = await (await fetch('/api/lpc')).json(); } catch(e){ return; }
+  lpcLast = s;
+  const c = s.chip;
+  const kib = b => Math.round(b/1024) + ' KiB';
+
+  $('lpcChip').textContent = c.answered
+      ? (c.part || t('unbekannter Typ')) + ' \u00b7 ' + c.part_id + ' \u00b7 '
+        + kib(c.flash) + ' Flash, ' + kib(c.ram) + ' RAM'
+      : t('noch nicht abgefragt');
+  $('lpcUid').textContent  = c.answered ? c.uid : '-';
+  $('lpcBoot').textContent = c.answered ? c.boot : '-';
+
+  // Der Bootlader kann nur sagen, dass überhaupt ein startfähiges Programm
+  // dasteht. Ob es die richtige Firmware ist, beantwortet die Zeile darunter.
+  $('lpcImg').innerHTML = !c.answered ? '-'
+      : c.blank         ? '<span class="dot warn"></span>' + t('leer, nie programmiert')
+      : c.image_valid   ? dot(true) + ' ' + t('startfähiges Programm')
+                        : '<span class="dot err"></span>' + t('Inhalt ohne gültige Prüfsumme');
+  $('lpcTp').innerHTML = s.tp_connected
+      ? dot(true) + ' ' + t('antwortet')
+      : '<span class="dot err"></span>' + t('keine Antwort');
+
+  $('lpcFileSt').textContent = s.image_size
+      ? kib(s.image_size) + ' ' + t('bereit')
+      : t('keine');
+
+  let state = t(LSTAGE[s.stage] || s.stage || '-');
+  if(!s.busy && s.ran && s.error) state = t('fehlgeschlagen') + ' \u2013 ' + s.error;
+  $('lpcState').textContent = state;
+
+  const show = s.busy && s.total > 0;
+  $('lpcBar').style.display = show ? 'block' : 'none';
+  if(show) $('lpcFill').style.width = (100*s.progress/s.total) + '%';
+
+  $('lpcWriteBtn').disabled = s.busy || !s.image_size;
+  return s;
+}
+
+function lpcTick(){
+  if(lpcTimer) clearTimeout(lpcTimer);
+  lpcTimer = setTimeout(async () => {
+    lpcTimer = null;
+    const s = await lpcRefresh();
+    if(s && s.busy) lpcTick();
+  }, 700);
+}
+
+async function lpcStart(path){
+  const r = await fetch(path, {method:'POST'});
+  if(!r.ok){
+    let msg = t('abgelehnt');
+    try { const j = await r.json(); if(j.error) msg = j.error; } catch(e){}
+    $('lpcState').textContent = msg;
+    return;
+  }
+  lpcRefresh(); lpcTick();
+}
+
+function lpcProbe(){ return lpcStart('/api/lpc/probe'); }
+function lpcRun(){ return lpcStart('/api/lpc/run'); }
+
+function lpcWrite(){
+  if(!confirm(t('Den LPC jetzt löschen und neu programmieren? Die '
+             + 'KNX-Verbindung ruht dabei für einige Sekunden.'))) return;
+  return lpcStart('/api/lpc/write');
+}
+
+async function lpcUpload(){
+  const f = $('lpcFile').files[0];
+  if(!f) return;
+  $('lpcFile').value = '';
+
+  $('lpcState').textContent = t('Datei wird übertragen...');
+  const fd = new FormData();
+  fd.append('firmware', f);
+
+  let r;
+  try { r = await fetch('/api/lpc/upload', {method:'POST', body:fd}); }
+  catch(e){ $('lpcState').textContent = t('Übertragung abgebrochen'); return; }
+
+  if(r.ok){ await lpcRefresh(); $('lpcState').textContent = t('Datei geladen'); }
+  else {
+    let msg = t('abgelehnt');
+    try { const j = await r.json(); if(j.error) msg = j.error; } catch(e){}
+    $('lpcState').textContent = msg;
+    await lpcRefresh();
+  }
+}
+
 async function switchPart(){
   const p = ((last && last.build.partitions) || [])[1];
 
@@ -1464,10 +1674,11 @@ async function sendTime(){
 }
 
 // --- Hardware-Profil ---
-const HWF = ['knx_uart','knx_rx','knx_tx',
+const HWF = ['knx_uart','knx_rx','knx_tx','lpc_reset','lpc_isp',
              'i2c_sda','i2c_scl','eth_sck','eth_miso','eth_mosi',
              'eth_cs','eth_irq','eth_rst','eth_spi_mhz'];
 const HWID = {knx_uart:'hwUart', knx_rx:'hwRx', knx_tx:'hwTx',
+              lpc_reset:'hwLpcRst', lpc_isp:'hwLpcIsp',
               i2c_sda:'hwSda', i2c_scl:'hwScl',
               eth_sck:'hwSck', eth_miso:'hwMiso', eth_mosi:'hwMosi',
               eth_cs:'hwCs', eth_irq:'hwIrq', eth_rst:'hwRst'};
@@ -1506,6 +1717,10 @@ async function refreshHw(){
     $('hwSrc').innerHTML += ' <span class="warnbadge">' + t('Neustart nötig') + '</span>';
 
   $('hwKnx').textContent = 'UART' + a.knx_uart + ', RX ' + a.knx_rx + ', TX ' + a.knx_tx;
+  $('hwLpc').textContent = (a.lpc_reset >= 0 && a.lpc_isp >= 0)
+      ? 'Reset ' + a.lpc_reset + ', ISP ' + a.lpc_isp
+        + (a.lpc_invert ? ', ' + t('invertiert') : '')
+      : t('aus');
 
   const named = (list, fn) => list.length
       ? list.map(fn).join(', ') : t('keine');
@@ -1523,6 +1738,7 @@ async function refreshHw(){
 
 function hwFill(p){
   for(const k of HWF){ if(HWID[k]) $(HWID[k]).value = p[k]; }
+  $('hwLpcInv').checked = p.lpc_invert;
   $('hwI2cEn').checked  = p.i2c_enabled;
   $('hwEthEn').checked  = p.eth_enabled;
   // Deep copy: editing a row must not change the document we compare against
@@ -1777,6 +1993,7 @@ function hwDefaults(){ if(hwState) hwFill(hwState.defaults); }
 function hwCollect(){
   const p = {};
   for(const k of HWF){ if(HWID[k]) p[k] = parseInt($(HWID[k]).value, 10); }
+  p.lpc_invert     = $('hwLpcInv').checked;
   p.i2c_enabled    = $('hwI2cEn').checked;
   p.eth_enabled    = $('hwEthEn').checked;
   for(const kind in RTBL){

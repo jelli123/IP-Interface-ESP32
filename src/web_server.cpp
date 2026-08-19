@@ -18,6 +18,7 @@
 #include "index_html.h"
 #include "json_util.h"
 #include "knx_link.h"
+#include "lpc_isp.h"
 #include "net_manager.h"
 #include "ota_service.h"
 #include "status_led.h"
@@ -39,6 +40,10 @@ static bool   g_uploadHashFailed = false;
 /* Reason the upload never got off the ground. Update.errorString() cannot
  * carry it: a refused begin() leaves the previous error in place. */
 static String g_uploadError;
+
+/* Same for an LPC image: the body handler has to remember why it bailed out
+ * so the response handler can say so. */
+static String g_lpcUploadError;
 
 /* ------------------------------------------------------------------------- *
  * Request gating
@@ -248,6 +253,7 @@ static String statusJson()
     json += "\"tx_frames\":" + String(stats.tpTxFrames) + ",";
     json += "\"tx_processed\":" + String(stats.tpTxProcessed) + ",";
     json += "\"bus_load\":" + String(stats.busLoadPermille) + ",";
+    json += "\"isp\":" + String(lpcIsp.available() ? "true" : "false") + ",";
     json += "\"self_test\":\"" + jsonEscape(String(knxLink.selfTestResult())) + "\"";
     json += "},";
 
@@ -1068,6 +1074,108 @@ static void registerOtaRoutes()
     });
 }
 
+/* ------------------------------------------------------------------------- *
+ * Programming the SB-Interface
+ *
+ * Every job takes the KNX UART away from the stack for a few seconds, so all
+ * of these only kick one off and answer straight away. The dashboard polls
+ * /api/lpc for the outcome.
+ * ------------------------------------------------------------------------- */
+
+static void registerLpcRoutes()
+{
+    server.on("/api/lpc", HTTP_GET, [](AsyncWebServerRequest* request) {
+        request->send(200, "application/json", lpcIsp.statusJson());
+    });
+
+    auto startJob = [](AsyncWebServerRequest* request, bool flash, bool run) {
+        if (!mutationAllowed(request)) return;
+
+        String error;
+        bool   ok = run     ? lpcIsp.startRun(error)
+                    : flash ? lpcIsp.startFlash(error)
+                            : lpcIsp.startProbe(error);
+
+        if (!ok)
+        {
+            request->send(409, "application/json",
+                          String("{\"error\":\"") + jsonEscape(error) + "\"}");
+            return;
+        }
+        request->send(202, "application/json", lpcIsp.statusJson());
+    };
+
+    server.on("/api/lpc/probe", HTTP_POST, [startJob](AsyncWebServerRequest* request) {
+        startJob(request, false, false);
+    });
+
+    server.on("/api/lpc/run", HTTP_POST, [startJob](AsyncWebServerRequest* request) {
+        startJob(request, false, true);
+    });
+
+    server.on("/api/lpc/write", HTTP_POST, [startJob](AsyncWebServerRequest* request) {
+        startJob(request, true, false);
+    });
+
+    /*
+     * Upload of the image, multipart field "firmware". Intel Hex or raw
+     * binary; nothing is written to the LPC here, the file only lands in the
+     * staging buffer so /api/lpc/write can be a separate, deliberate step.
+     */
+    server.on(
+        "/api/lpc/upload", HTTP_POST,
+        [](AsyncWebServerRequest* request) {
+            if (!mutationAllowed(request)) return;
+
+            String error;
+            bool   ok = g_lpcUploadError.isEmpty() && lpcIsp.uploadEnd(error);
+
+            if (!ok)
+            {
+                if (!g_lpcUploadError.isEmpty()) error = g_lpcUploadError;
+                lpcIsp.uploadDiscard();
+                request->send(400, "application/json",
+                              String("{\"error\":\"") + jsonEscape(error) + "\"}");
+                return;
+            }
+            request->send(200, "application/json", lpcIsp.statusJson());
+        },
+        [](AsyncWebServerRequest* request, String filename, size_t index,
+           uint8_t* data, size_t len, bool final) {
+            if (index == 0)
+            {
+                g_lpcUploadError = "";
+
+                // The body handler runs ahead of the response handler, so the
+                // gate has to be repeated here - later chunks then drain into
+                // nothing because the buffer was never armed.
+                if (!originAllowed(request) || netManager.isApMode())
+                {
+                    g_lpcUploadError = "not allowed in AP mode";
+                    return;
+                }
+
+                String error;
+                if (!lpcIsp.uploadBegin(error))
+                {
+                    g_lpcUploadError = error;
+                    return;
+                }
+                sysLog.printf("LPC: upload start: %s\n", filename.c_str());
+            }
+
+            if (len && g_lpcUploadError.isEmpty())
+            {
+                if (!lpcIsp.uploadData(data, len))
+                {
+                    g_lpcUploadError = "the file was rejected";
+                }
+            }
+
+            (void)final;
+        });
+}
+
 void webServerBegin()
 {
     server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
@@ -1194,6 +1302,7 @@ void webServerBegin()
     registerTimeRoutes();
     registerHardwareRoutes();
     registerOtaRoutes();
+    registerLpcRoutes();
 
     // After the routes: the middleware wraps whatever is registered.
     Auth::attach(server);

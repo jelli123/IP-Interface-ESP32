@@ -24,6 +24,7 @@ NCN5130-Transceiver; hier sitzt stattdessen ein Selfbus-Interface am UART.
 | WLAN-Einrichtung | Captive Portal (offener AP) **oder** Improv über USB |
 | Programmiermodus | per Klick im Dashboard, kein Tastendruck am Gerät nötig |
 | OTA-Update | Datei-Upload **und** Online-Pull aus einem Manifest |
+| **LPC-Programmierung** | SB-Interface über zwei GPIO erkennen und flashen |
 | Anti-Brick | zwei App-Partitionen + Bootloader-Rollback |
 | WLAN-Watchdog | erkennt stille Abbrüche und verlorene DHCP-Leases |
 | TP-Link-Watchdog | erneuert den Reset-Handshake, wenn das SB-Interface stumm wird |
@@ -66,9 +67,14 @@ noch einen 19200-Baud-Bytestrom.
 | --- | --- |
 | `PIN_TX` (PIO1_7) | RX (`SBIP_KNX_RX_PIN`) |
 | `PIN_RX` (PIO1_6) | TX (`SBIP_KNX_TX_PIN`) |
+| `/RESET` (PIO0_0) | `SBIP_LPC_RESET_PIN`, optional |
+| `PIO0_1` | `SBIP_LPC_ISP_PIN`, optional |
 | GND | GND |
 
 Beide Seiten 3,3 V TTL, kein Pegelwandler. **19200 Baud, 8E1.**
+
+Die beiden letzten Leitungen sind nur für das Programmieren des LPC nötig,
+siehe *SB-Interface programmieren*. Ohne sie läuft alles andere unverändert.
 
 Die Stromversorgung des ESP32 sollte **nicht** aus dem SB-Interface kommen. Das
 KNX-Busnetzteil des Selfbus-Interfaces ist für die WLAN-Stromspitzen (bis
@@ -125,6 +131,7 @@ konfigurierbar. Das Dashboard bietet ein Formular, JSON-Upload und -Download.
 | Feld | Bedeutung |
 | --- | --- |
 | `knx_uart`, `knx_rx`, `knx_tx` | KNX-Anbindung zum SB-Interface |
+| `lpc_reset`, `lpc_isp`, `lpc_invert` | Steuerleitungen zum LPC, siehe *SB-Interface programmieren* |
 | `buttons[]`, `leds[]` | vorhandene Taster und LEDs, siehe *Taster und LEDs* |
 | `button_assign[]`, `led_assign[]` | wozu sie dienen |
 | `i2c_enabled`, `i2c_sda`, `i2c_scl` | RV-3028-C7 |
@@ -142,6 +149,9 @@ Beispiel:
   "knx_uart": 1,
   "knx_rx": 18,
   "knx_tx": 17,
+  "lpc_reset": 4,
+  "lpc_isp": 5,
+  "lpc_invert": false,
   "buttons": [
     { "name": "prog",  "pin": 0, "trigger": 0 },
     { "name": "setup", "pin": 0, "trigger": 1 }
@@ -348,6 +358,122 @@ die gesamte NVS-Partition, siehe *Taster und LEDs*.
 Auf S3-Modulen mit **Octal**-Flash/PSRAM sind zusätzlich GPIO 35–37 belegt.
 Bei aktiviertem PSRAM (`memory_type = qio_opi`, siehe unten) erkennt die
 Validierung das über `CONFIG_SPIRAM_MODE_OCT` und weist diese Pins ab.
+
+---
+
+## SB-Interface programmieren
+
+Der LPC1115 des SB-Interface trägt einen **ROM-Bootlader**, der ein
+zeilenweises ASCII-Protokoll über UART0 spricht (NXP UM10398, Kapitel 26).
+Genau die UART, an der ohnehin der KNX-Stack hängt. Zwei zusätzliche
+Steuerleitungen genügen daher, um den LPC ohne Debug-Adapter zu erkennen, zu
+löschen und neu zu programmieren.
+
+### Welche GPIO
+
+Vorgeschlagen und in [platformio.ini](platformio.ini) für den S3 eingetragen:
+
+| Signal | GPIO | LPC-Pin |
+| --- | --- | --- |
+| `lpc_reset` | **4** | `/RESET` (PIO0_0) |
+| `lpc_isp` | **5** | `PIO0_1` |
+
+Auf dem S3-DevKitC-1 bleiben nach KNX-UART, I2C, SPI, Taster und RGB-LED nur
+wenige Pins ohne Zweitaufgabe übrig. GPIO 4 und 5 sind zwei davon: kein
+Strapping-Pin, nicht Flash oder PSRAM (26–37), nicht USB (19/20), nicht JTAG
+(39–42), nicht UART0 (43/44) und nicht die RGB-LED (38/48). Sie liegen
+nebeneinander und direkt neben dem I2C-Paar, was die Verdrahtung kurz hält.
+
+Beide sind für andere Boards frei wählbar; die Validierung des Profils prüft
+sie wie jeden anderen Pin.
+
+### Ruhezustand heißt loslassen
+
+Die Leitungen werden **open drain** betrieben: Zum Auslösen zieht der ESP32
+sie auf Masse, sonst schaltet er den Pin auf Eingang. `/RESET` und `PIO0_1`
+haben Pull-ups am LPC, also bleibt der LPC in seinem Anwendungsprogramm,
+solange der ESP32 nichts tut.
+
+Das ist keine Kosmetik. Ein ESP32 kommt mit hochohmigen Eingängen aus dem
+Reset, und bis `hwConfig.begin()` gelaufen ist, ist jeder Pin unbestimmt.
+Würde der Ruhezustand ein getriebener Pegel sein, hinge der LPC während des
+gesamten ESP32-Starts in einem undefinierten Zustand – im ungünstigen Fall im
+Reset.
+
+Für Platinen mit **Invertern** in beiden Leitungen – etwa der vorhandene
+Raspberry-Pi-Aufsatz – gibt es `lpc_invert`. Dann wird in beide Richtungen
+getrieben, und die Platine braucht Pull-downs an den Invertereingängen.
+
+### Was erkannt wird
+
+Der Dialog *SB-Interface programmieren* (Karte **KNX TP1**) beantwortet drei
+verschiedene Fragen:
+
+**Welcher Chip hängt dran?** Der Bootlader liefert auf `J` seine Part-ID. Die
+Tabelle in [src/lpc_isp.cpp](src/lpc_isp.cpp) übersetzt sie in einen Typnamen
+samt Flash- und RAM-Größe und deckt die ganze LPC11xx-Familie ab. Dazu
+kommen Bootlader-Version (`K`) und die 128-Bit-Seriennummer (`N`).
+
+**Ist er schon programmiert?** Zwei unabhängige Aussagen. Der *Blank Check*
+(`I 0 0`) sagt, ob Sektor 0 je beschrieben wurde. Ergiebiger ist die
+Vektortabelle: Der Bootlader startet ein Anwendungsprogramm nur, wenn die
+ersten acht Wörter in Summe null ergeben (UM10398, 26.3.3). Genau das rechnet
+das Gerät nach, plus die Plausibilität des ersten Wortes – des initialen
+Stapelzeigers, der ins RAM zeigen muss. Ergebnis: *leer*, *startfähiges
+Programm* oder *Inhalt ohne gültige Prüfsumme*.
+
+**Ist es die richtige Firmware?** Das kann der Bootlader nicht sagen. Die
+TP-UART-2-Emulation kennt keinen Versions- oder Produktbefehl – ein echter
+TP-UART hat keinen, und die Emulation bildet einen echten nach. Was das Gerät
+stattdessen zeigt, ist die **funktionale** Antwort: ob die Emulation auf den
+`U_Reset.req` des KNX-Stacks antwortet. Das ist dieselbe Information wie
+*Verbindung* auf der Hauptseite, hier nur neben den Bootlader-Angaben. Zusammen
+ergibt das eine brauchbare Diagnose: gültiges Programm **und** keine Antwort
+heißt „da läuft etwas, aber nicht die TPUART-Emulation".
+
+### Programmieren
+
+Angenommen werden **Intel-Hex** und **rohe Binärdateien**, jeweils ab Adresse
+0; das erste Byte entscheidet, welches von beidem es ist. Die Datei landet
+zunächst nur in einem Zwischenpuffer im PSRAM – geschrieben wird erst nach
+einem zweiten, ausdrücklichen Klick.
+
+Beim Ablegen wird die **Prüfsumme der Vektortabelle** nachgerechnet und, wenn
+sie nicht stimmt, gesetzt. Ob ein Werkzeug das schon getan hat, ist von der
+Toolchain abhängig; fehlt sie, bleibt der LPC nach dem Reset im Bootlader und
+sieht aus wie tot.
+
+Der Ablauf danach folgt dem Protokoll: entsperren (`U`), Sektoren vorbereiten
+(`P`), löschen (`E`), dann blockweise 1 KiB ins RAM des LPC (`W`,
+UU-kodiert), noch einmal vorbereiten und ins Flash kopieren (`C`). Die
+RAM-Kopie liegt danach noch da, also verifiziert ein `M` jeden Block, ohne
+etwas ein zweites Mal zu übertragen.
+
+Warum 1 KiB und nicht 4: Der kleinste Vertreter der Familie hat 4 KiB RAM,
+und der Bootlader belegt davon die ersten 0x300 Bytes.
+
+### Während ein Auftrag läuft
+
+Die UART kann nicht zwei Herren dienen. Jeder Auftrag bittet deshalb zuerst
+`KnxLink::suspend()` um sie. Das setzt nur ein Flag – anhalten darf sich der
+Stack ausschließlich selbst, in `loop()` auf dem Haupt-Task, wo er nicht
+mitten in einem Telegramm steht. Erst wenn das quittiert ist, öffnet der
+Auftrag den Port mit 115200 Baud 8N1.
+
+Danach läuft der umgekehrte Weg: Der LPC wird in sein Anwendungsprogramm
+zurückgesetzt, der Port geschlossen, und `resume()` lässt den Haupt-Task den
+TP-UART-Reset-Handshake neu fahren – was zugleich die Uhr des Stacks mit dem
+gerade neu gestarteten SB-Interface synchronisiert.
+
+Der Auftrag selbst läuft auf einer eigenen Task, damit die Oberfläche
+bedienbar bleibt. Sie fragt `/api/lpc` ab, solange `busy` gesetzt ist.
+
+Autobaud: Der Bootlader misst die Bitzeit eines einzelnen `?`. Ein zweites,
+das während der Messung eintrifft, ist der häufigste Grund für sporadisches
+Scheitern – deshalb genau eines pro Versuch. Drei Versuche, der letzte mit
+57600 Baud, falls die Leitung lang oder verrauscht ist.
+
+---
 
 ### PSRAM
 
@@ -837,6 +963,11 @@ das Passwort und ein zweiter Ort für Fehler.
 | GET | `/api/update/check` | Manifest prüfen (asynchron) |
 | POST | `/api/update/install` | Online-Update installieren |
 | GET | `/api/update/status` | Fortschritt des Updates |
+| GET | `/api/lpc` | Zustand des SB-Interface und des laufenden Auftrags |
+| POST | `/api/lpc/probe` | LPC erkennen (asynchron) |
+| POST | `/api/lpc/upload` | Multipart `firmware`, Intel-Hex oder Binär |
+| POST | `/api/lpc/write` | die hochgeladene Datei schreiben (asynchron) |
+| POST | `/api/lpc/run` | LPC ins Anwendungsprogramm zurücksetzen |
 
 Alle `POST`-Endpunkte sind Origin-geprüft und im AP-Modus gesperrt (Ausnahme:
 `/api/wifi/connect`, sonst wäre keine Einrichtung möglich).

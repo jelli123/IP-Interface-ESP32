@@ -141,6 +141,29 @@
 #endif
 
 /* ------------------------------------------------------------------------- *
+ * In-system programming of the SB-Interface (LPC1115)
+ *
+ * Two control lines next to the KNX UART let the ESP32 put the LPC into its
+ * ROM bootloader and program it. -1 on either disables the feature; the KNX
+ * UART is then never taken away from the stack.
+ *
+ * Both lines are driven open drain by default: asserted means the ESP32 pulls
+ * them low, idle means it lets go and the pull-ups on the LPC take over. That
+ * is what makes a floating pin during the ESP32's own boot harmless - the LPC
+ * keeps running. Set lpc_invert in the profile for a board that puts an
+ * inverter in between; those need a real push-pull level.
+ * ------------------------------------------------------------------------- */
+
+/** LPC /RESET, active low. */
+#ifndef SBIP_LPC_RESET_PIN
+#define SBIP_LPC_RESET_PIN     (-1)
+#endif
+/** LPC PIO0_1, sampled at the rising edge of /RESET. Low selects the ISP. */
+#ifndef SBIP_LPC_ISP_PIN
+#define SBIP_LPC_ISP_PIN       (-1)
+#endif
+
+/* ------------------------------------------------------------------------- *
  * Networking
  * ------------------------------------------------------------------------- */
 

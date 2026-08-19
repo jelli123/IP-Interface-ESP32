@@ -365,6 +365,37 @@ bool KnxLink::begin()
 
 void KnxLink::loop()
 {
+    /*
+     * The UART belongs to someone else for a while.
+     *
+     * Acknowledging here rather than in suspend() is the whole point: the
+     * stack is only ever driven from this task, so this is the one place
+     * where stopping it cannot land in the middle of a frame.
+     */
+    if (_suspendRequest)
+    {
+        if (!_suspended)
+        {
+            if (knxSerial != nullptr) knxSerial->end();
+            _suspended = true;
+            sysLog.println("KNX: stack paused, UART handed over");
+        }
+        return;
+    }
+
+    if (_suspended)
+    {
+        _suspended = false;
+
+        // reset() runs Esp32Platform::setupUart(), which reopens the port
+        // with 19200 baud and 8E1 - so this both re-arms the port and
+        // resynchronises with a TP-UART that was just power cycled.
+        TpUartDataLinkLayer* tp = knxBau.getSecondaryDataLinkLayer();
+        if (tp != nullptr) tp->reset();
+        _lastLinkCheck = millis();
+        sysLog.println("KNX: stack resumed");
+    }
+
     knx.loop();
 
     // Apply a web requested programming mode change from the main task.
@@ -432,6 +463,34 @@ void KnxLink::activityTrampoline(uint8_t info)
     {
         s_instance->onActivity(info);
     }
+}
+
+HardwareSerial* KnxLink::uart() const
+{
+    return knxSerial;
+}
+
+bool KnxLink::suspend(uint32_t timeoutMs)
+{
+    _suspendRequest = true;
+
+    uint32_t deadline = millis() + timeoutMs;
+    while (!_suspended && (int32_t)(millis() - deadline) < 0)
+    {
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+
+    if (!_suspended)
+    {
+        _suspendRequest = false;
+        return false;
+    }
+    return true;
+}
+
+void KnxLink::resume()
+{
+    _suspendRequest = false;
 }
 
 /*
