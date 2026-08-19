@@ -73,6 +73,7 @@ enum HwLedCondition : uint8_t
     HW_COND_ONLINE,        //!< network and bus are up
     HW_COND_OFFLINE,       //!< no address, or the cable is unplugged
     HW_COND_HEARTBEAT,     //!< always, while the heartbeat switch is on
+    HW_COND_ROUTE_ALL,     //!< group address filtering is switched off
     HW_COND_COUNT
 };
 
@@ -103,6 +104,7 @@ enum HwLedColour : uint8_t
     HW_COL_CYAN,
     HW_COL_MAGENTA,
     HW_COL_WHITE,
+    HW_COL_ORANGE,
     HW_COL_COUNT
 };
 

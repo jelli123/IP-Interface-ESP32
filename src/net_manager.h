@@ -100,7 +100,21 @@ public:
      */
     bool wifiCanBeDisabled() const;
 
+    /**
+     * Name this device answers to, also its mDNS host name.
+     *
+     * Worth setting when an installation holds more than one router: it is
+     * what tells them apart in the log and under .local. Falls back to the
+     * compiled-in default when nothing is stored. Applied at startup, so a
+     * change needs a restart.
+     */
+    String deviceName() const;
+
+    /** @return false when the name is empty or holds anything but [A-Za-z0-9-] */
+    bool setDeviceName(const String& name);
+
 private:
+    bool startStation();
     void handleWifiWatchdog();
     String apName() const;
 

@@ -59,11 +59,19 @@ void TimeService::loadConfig()
     _config.ntpEnabled  = prefs.getBool("ntpen", _config.ntpEnabled);
     _config.ntpFromDhcp = prefs.getBool("ntpdhcp", _config.ntpFromDhcp);
 
-    String server = prefs.getString("ntpsrv", _config.ntpServer);
-    strlcpy(_config.ntpServer, server.c_str(), sizeof(_config.ntpServer));
+    // isKey() first: getString() on a missing key logs an ESP-IDF error, and
+    // "nothing stored yet" is the normal case on a fresh device.
+    if (prefs.isKey("ntpsrv"))
+    {
+        String server = prefs.getString("ntpsrv", _config.ntpServer);
+        strlcpy(_config.ntpServer, server.c_str(), sizeof(_config.ntpServer));
+    }
 
-    String tz = prefs.getString("tz", _config.tz);
-    strlcpy(_config.tz, tz.c_str(), sizeof(_config.tz));
+    if (prefs.isKey("tz"))
+    {
+        String tz = prefs.getString("tz", _config.tz);
+        strlcpy(_config.tz, tz.c_str(), sizeof(_config.tz));
+    }
 
     prefs.end();
 

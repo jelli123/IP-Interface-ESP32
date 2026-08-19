@@ -7,6 +7,7 @@
 #include <nvs_flash.h>
 #include <soc/soc_caps.h>
 
+#include "auth.h"
 #include "hw_config.h"
 #include "interface_config.h"
 #include "json_util.h"
@@ -1114,6 +1115,15 @@ bool HwConfig::applyJson(const String& json, String& error)
 
     if (!validate(p, error))
     {
+        return false;
+    }
+
+    // Checked here rather than in validate(): a stored profile that predates
+    // the rule still has to boot.
+    if (Auth::enabled() && p.findButtonFor(HW_BTNF_FACTORY) < 0)
+    {
+        error = "a password is set - keep a button assigned to the factory "
+                "reset, it is the only way back in";
         return false;
     }
 

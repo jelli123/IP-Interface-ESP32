@@ -85,8 +85,8 @@ input[type=checkbox]{width:auto;margin:0;flex:0 0 auto;accent-color:var(--acc)}
 .trio input{margin:6px 0}
 /* Row editors. The selected row is what the minus button acts on, so it has
  * to be obvious which one that is - a border alone is too quiet here. */
-#logDlg{max-width:min(96vw,900px)}
-#logText{max-height:60vh;overflow:auto;white-space:pre-wrap;word-break:break-word;
+#logDlg{max-width:min(96vw,900px);width:900px}
+#logText{height:60vh;overflow:auto;white-space:pre-wrap;word-break:break-word;
 font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.45;
 background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:10px;
 margin:6px 0}
@@ -112,6 +112,7 @@ small{color:var(--dim)}
 <body>
 <header>
   <h1>Selfbus KNX/IP Interface</h1>
+  <span class="badge" id="knxBadge" data-dyn></span>
   <span class="badge" id="netBadge" onclick="openWifi()">...</span>
   <button class="sec" id="langBtn" onclick="toggleLang()"
           title="Sprache / Language">EN</button>
@@ -124,6 +125,7 @@ small{color:var(--dim)}
     <h2>Status</h2>
     <div class="row"><span>Laufzeit</span><span id="uptime">-</span></div>
     <div class="row"><span>Physikalische Adresse</span><span id="pa">-</span></div>
+    <div class="row"><span>Name in der ETS</span><span id="knxName">-</span></div>
     <div class="row"><span>ETS-Konfiguration</span><span id="cfg">-</span></div>
     <div class="row"><span>Tunnel (max.)</span><span id="tun">-</span></div>
     <div class="row"><span>Tunnel-Adressen</span><span id="tunPa">-</span></div>
@@ -180,6 +182,8 @@ small{color:var(--dim)}
 
   <section class="card">
     <h2>Netzwerk</h2>
+    <div class="row"><span>Gerätename</span><span id="devName">-</span></div>
+    <div class="row"><span>Hostname</span><span id="hostName">-</span></div>
     <div class="row"><span>Schnittstelle</span><span id="ifc">-</span></div>
     <div class="row"><span>SSID</span><span id="ssid">-</span></div>
     <div class="row"><span>IP-Adresse</span><span id="ip">-</span></div>
@@ -192,6 +196,7 @@ small{color:var(--dim)}
     <div class="row"><span>Ethernet (W5500)</span><span id="ethSt">-</span></div>
     <div class="actions">
       <button class="sec" onclick="openWifi()">WLAN einrichten</button>
+      <button class="sec" onclick="openName()">Name ändern</button>
     </div>
   </section>
 
@@ -203,9 +208,11 @@ small{color:var(--dim)}
     <div class="row"><span>Flash</span><span id="flash">-</span></div>
     <div class="row"><span>PSRAM</span><span id="psram">-</span></div>
     <div class="row"><span>Protokollpuffer</span><span id="logbuf">-</span></div>
+    <div class="row"><span>Zugangsschutz</span><span id="authSt">-</span></div>
     <div class="actions">
       <button class="sec" onclick="showParts()">Partitionstabelle</button>
       <button class="sec" onclick="showLog()">Protokoll</button>
+      <button class="sec" onclick="openAuth()">Zugang</button>
     </div>
   </section>
 
@@ -258,19 +265,63 @@ small{color:var(--dim)}
   </section>
 </main>
 
+<dialog id="authDlg">
+  <h2>Zugangsschutz</h2>
+  <label>Benutzername (leer lässt die Oberfläche offen)</label>
+  <input id="authUser" maxlength="31" autocomplete="username">
+  <label>Passwort (mindestens 8 Zeichen)</label>
+  <input id="authPass" type="password" autocomplete="new-password">
+  <p id="authErr" style="color:var(--err);font-size:12px"></p>
+  <div class="actions">
+    <button onclick="saveAuth()">Speichern</button>
+    <button class="sec" onclick="authDlg.close()">Abbrechen</button>
+  </div>
+  <p><small>Digest-Verfahren: Das Passwort wird nicht im Klartext übertragen.
+  Alles andere schon &ndash; ohne HTTPS schützt das vor unbefugtem Zugriff im
+  Netz, nicht vor Mitlesen. Wirkt nach einem Neustart. Setzbar nur, wenn ein
+  Taster auf Werkeinstellungen liegt: Das ist der einzige Weg zurück, wenn
+  das Passwort verloren geht.</small></p>
+</dialog>
+
+<dialog id="nameDlg">
+  <h2>Gerätename</h2>
+  <label>1 bis 31 Zeichen aus A-Z a-z 0-9 und Bindestrich</label>
+  <input id="nameIn" maxlength="31" pattern="[A-Za-z0-9-]{1,31}">
+  <p id="nameErr" style="color:var(--err);font-size:12px"></p>
+  <div class="actions">
+    <button onclick="saveName()">Speichern</button>
+    <button class="sec" onclick="nameDlg.close()">Abbrechen</button>
+  </div>
+  <p><small>Unterscheidet mehrere Router in derselben Anlage. Der Name ist
+  zugleich der mDNS-Hostname und steht im Protokoll. Wird nach einem Neustart
+  wirksam.</small></p>
+</dialog>
+
 <dialog id="logDlg">
   <h2>Protokoll</h2>
   <pre id="logText"></pre>
-  <div class="actions">
-    <button class="sec" onclick="loadLog()">Aktualisieren</button>
-    <button class="sec" id="logCopy" onclick="copyLog()">Kopieren</button>
-    <button class="sec" onclick="downloadLog()">Herunterladen</button>
-    <button class="sec" onclick="clearLog()">Leeren</button>
-    <button class="sec" onclick="logDlg.close()">Schließen</button>
+  <p><small id="logInfo" data-dyn></small></p>
+  <label class="chk">
+    <input type="checkbox" id="logKeep" onchange="setKeep()">
+    Neustart überdauern (RTC-Speicher)</label>
+  <div class="rowbtns" style="margin-top:12px">
+    <button class="sec ico" onclick="logJump(0)" title="An den Anfang">&#8593;</button>
+    <button class="sec ico" onclick="logJump(1)" title="An das Ende">&#8595;</button>
+    <button class="sec ico" id="logFollow" onclick="toggleFollow()"
+            title="Laufend aktualisieren">&#9654;</button>
+    <button class="sec ico" onclick="loadLog()" title="Aktualisieren">&#8635;</button>
+    <button class="sec ico" id="logCopy" onclick="copyLog()"
+            title="In die Zwischenablage">&#10697;</button>
+    <button class="sec ico" onclick="downloadLog()"
+            title="Als Datei speichern">&#8659;</button>
+    <button class="sec ico" onclick="loadResetLog()"
+            title="Vor dem Neustart">&#9200;</button>
+    <button class="sec ico" onclick="clearLog()" title="Leeren">&#9003;</button>
+    <button class="sec" onclick="closeLog()">Schließen</button>
   </div>
-  <p><small>Die letzten Meldungen der Firmware, älteste zuerst. Kopiert wird
-  die Markierung, sonst alles Angezeigte. Der Puffer überlebt keinen
-  Neustart.</small></p>
+  <p><small>Das Fenster zeigt einen Ausschnitt des Ringpuffers und lädt beim
+  Blättern nach. Kopiert wird die Markierung, sonst der sichtbare Ausschnitt;
+  gespeichert wird der ganze Puffer.</small></p>
 </dialog>
 
 <dialog id="partDlg">
@@ -694,15 +745,58 @@ const EN = {
 'manuell':'manual', 'keine':'none', 'nicht gesetzt':'not set',
 'keiner':'none', 'nicht bestückt':'not fitted', 'deaktiviert':'disabled',
 'nicht aktiviert':'not enabled',
+'Ausschnitt':'Window', 'von':'of', 'An den Anfang':'To the top', 'An das Ende':'To the end',
+'Laufend aktualisieren':'Follow', 'In die Zwischenablage':'Copy to clipboard',
+'Als Datei speichern':'Save to a file', 'Ülteres wurde überschrieben':'older lines overwritten',
 'Protokoll':'Log', 'Protokollpuffer':'Log buffer',
+'Name in der ETS':'Name in ETS', 'nicht gesetzt':'not set',
+'Zugangsschutz':'Access control', 'Zugang':'Access', 'offen':'open',
+'Benutzername (leer lässt die Oberfläche offen)':
+  'User name (empty leaves the dashboard open)',
+'Passwort (mindestens 8 Zeichen)':'Password (at least 8 characters)',
+'Gespeichert. Jetzt neu starten?':'Saved. Restart now?',
+['Digest-Verfahren: Das Passwort wird nicht im Klartext übertragen. Alles '
++ 'andere schon – ohne HTTPS schützt das vor unbefugtem Zugriff im Netz, '
++ 'nicht vor Mitlesen. Wirkt nach einem Neustart. Setzbar nur, wenn ein '
++ 'Taster auf Werkeinstellungen liegt: Das ist der einzige Weg zurück, wenn '
++ 'das Passwort verloren geht.']:
+  'Digest scheme: the password never crosses the wire in clear. Everything '
++ 'else does - without HTTPS this keeps others out, it does not stop anyone '
++ 'reading along. Takes effect after a restart. Can only be set while a '
++ 'button is assigned to the factory reset: that is the only way back in if '
++ 'the password is lost.',
+['Erst einen Taster auf Werkeinstellungen legen - sonst gibt es kein '
++ 'Zurueck.']:
+  'Assign a button to the factory reset first - otherwise there is no way '
++ 'back.',
+'Neustart überdauern (RTC-Speicher)':'Survive a restart (RTC memory)',
+'Vor dem Neustart':'Before the restart',
+'Nichts hat den letzten Neustart überdauert.':
+  'Nothing survived the last restart.',
+'Gerätename':'Device name', 'Hostname':'Host name',
+'Name ändern':'Change the name',
+'1 bis 31 Zeichen aus A-Z a-z 0-9 und Bindestrich':
+  '1 to 31 characters from A-Z a-z 0-9 and hyphen',
+'Name gespeichert. Jetzt neu starten?':'Name saved. Restart now?',
+['Unterscheidet mehrere Router in derselben Anlage. Der Name ist zugleich der '
++ 'mDNS-Hostname und steht im Protokoll. Wird nach einem Neustart wirksam.']:
+  'Tells several routers in one installation apart. The name is also the '
++ 'mDNS host name and appears in the log. Takes effect after a restart.',
+'Anfang':'Top', 'Ende':'Bottom',
+'GA-Filter deaktiviert':'Group address filter off',
+'Puffer voll, Älteres wurde überschrieben':
+  'buffer full, older lines have been overwritten',
+'Automatisch aktualisieren':'Refresh automatically',
+['Die letzten Meldungen der Firmware. Das Fenster zeigt das Ende des Puffers '
++ '– oben fällt weg, was hinten nachrückt. Anfang lädt den ganzen Puffer. '
++ 'Kopiert wird die Markierung, sonst alles Angezeigte.']:
+  'The most recent firmware messages. The window shows the end of the buffer '
++ '- what arrives at the bottom pushes lines off the top. Top loads the whole '
++ 'buffer. Copying takes the selection, or everything shown.',
 'Aktualisieren':'Refresh', 'Leeren':'Clear', 'internes RAM':'internal RAM',
 'Kopieren':'Copy', 'Kopiert':'Copied',
 'Kopieren nicht moeglich':'Copy failed',
 'Herunterladen':'Download',
-['Die letzten Meldungen der Firmware, älteste zuerst. Kopiert wird die '
-+ 'Markierung, sonst alles Angezeigte. Der Puffer überlebt keinen Neustart.']:
-  'The most recent firmware messages, oldest first. Copying takes the '
-+ 'selection, or everything shown. The buffer does not survive a restart.',
 'noch keine vergeben':'none assigned yet',
 'Image-Standard':'image defaults',
 'ungültig &rarr; Standard':'invalid &rarr; defaults',
@@ -856,6 +950,8 @@ async function refresh(){
 
   $('uptime').textContent = s.uptime;
   $('pa').textContent     = s.knx_pa;
+  $('knxName').textContent = s.knx_name || t('nicht gesetzt');
+  $('knxBadge').textContent = s.knx_name || s.device_name;
   $('cfg').innerHTML      = s.knx_configured ? dot(true)
                           : '<span class="dot err"></span>' + t('nicht programmiert');
   $('tun').textContent    = s.knx_max_tunnels;
@@ -915,6 +1011,8 @@ async function refresh(){
 
   const ifn = {ethernet:'Ethernet', wifi:'WLAN'};
   $('ifc').textContent = t(ifn[s.iface] || s.iface);
+  $('devName').textContent  = s.device_name;
+  $('hostName').textContent = s.device_name + '.local';
 
   $('chip').textContent = s.hardware.chip_model + ' rev ' + s.hardware.chip_rev;
   $('cpu').textContent  = s.hardware.cpu_freq + ' MHz';
@@ -935,6 +1033,10 @@ async function refresh(){
       ? (kib(s.hardware.log_used) + ' / ' + kib(s.hardware.log_size) + ' \u00b7 '
          + (s.hardware.log_psram ? 'PSRAM' : t('internes RAM')))
       : t('nicht aktiviert');
+  $('authSt').innerHTML = s.auth_user
+      ? dot(true) + ' ' + s.auth_user
+      : '<span class="dot off"></span>' + t('offen');
+  if(logDlg.open) $('logKeep').checked = s.hardware.log_rtc;
   // Both application slots with what is stored in each, so "switch" is an
   // informed decision rather than a leap.
   const PST = {valid:'geprüft', pending_verify:'auf Bewährung',
@@ -986,17 +1088,187 @@ async function setBright(){
   await fetch('/api/led/brightness', {method:'POST', body});
 }
 
-async function loadLog(){
+/* --- Protokollfenster ---------------------------------------------------- *
+ * Der Ring ist ein halbes Megabyte gross. Alles davon in ein <pre> zu legen
+ * macht das Blaettern zaeh, deshalb haelt der Browser nur einen Ausschnitt:
+ * etwa doppelt so viel wie sichtbar, je ein Viertel als Reserve vor und nach
+ * dem Sichtbaren. Wer an den Rand blaettert, bekommt den naechsten Abschnitt
+ * nachgeladen, waehrend am anderen Ende einer wegfaellt. Nur der Download
+ * holt den ganzen Puffer.
+ * ------------------------------------------------------------------------- */
+
+const LOG_WIN  = 49152; //!< Fensterbreite in Byte
+const LOG_STEP = 12288; //!< Sprungweite beim Nachladen, ein Viertel davon
+
+let logFrom = 0, logOldest = 0, logWritten = 0;
+let logBusy = false, logFollow = false, logTimer = null;
+
+/** Holt den Ausschnitt ab @p from. anchor: 'end', 'start' oder 'keep'. */
+async function loadWindow(from, anchor){
+  if(logBusy) return;
+  logBusy = true;
+
   const box = $('logText');
-  box.textContent = t('lese Filtertabelle...');
-  try { box.textContent = await (await fetch('/api/log')).text(); }
+  const beforeHeight = box.scrollHeight;
+  const beforeTop = box.scrollTop;
+
+  try {
+    const url = '/api/log?bytes=' + LOG_WIN
+              + (from === null ? '' : '&from=' + from);
+    const r = await fetch(url);
+    const text = await r.text();
+
+    logFrom    = Number(r.headers.get('X-Log-From') || 0);
+    logOldest  = Number(r.headers.get('X-Log-Oldest') || 0);
+    logWritten = Number(r.headers.get('X-Log-Written') || 0);
+
+    box.textContent = text;
+
+    if(anchor === 'start')      box.scrollTop = 0;
+    else if(anchor === 'end')   box.scrollTop = box.scrollHeight;
+    else                        box.scrollTop = beforeTop + (box.scrollHeight - beforeHeight);
+  }
+  catch(e){ if(anchor !== 'keep') box.textContent = t('Lesen fehlgeschlagen.'); }
+  finally { logBusy = false; }
+
+  logInfoUpdate();
+}
+
+function logInfoUpdate(){
+  const kb = n => Math.round(n/1024) + ' KiB';
+  const shown = Math.min(LOG_WIN, logWritten - logFrom);
+  $('logInfo').textContent =
+      t('Ausschnitt') + ' ' + kb(shown) + ' ' + t('von') + ' '
+      + kb(logWritten - logOldest)
+      + (logOldest > 0 ? ' \u2013 ' + t('Älteres wurde überschrieben') : '');
+}
+
+/* Beim Blaettern an den Rand nachladen. Ein Viertel Fenster als Schwelle,
+ * damit das Nachladen fertig ist, bevor der Rand erreicht wird. */
+function logScrolled(){
+  if(logBusy) return;
+
+  const box = $('logText');
+  const nearTop = box.scrollTop < box.clientHeight * 0.5;
+  const nearEnd = box.scrollHeight - box.scrollTop - box.clientHeight
+                  < box.clientHeight * 0.5;
+
+  if(nearTop && logFrom > logOldest){
+    loadWindow(Math.max(logOldest, logFrom - LOG_STEP), 'keep');
+  }
+  else if(nearEnd && logFrom + LOG_WIN < logWritten){
+    loadWindow(logFrom + LOG_STEP, 'keep');
+  }
+}
+
+/** Ohne Argument: das Ende des Puffers. */
+async function loadLog(){
+  await loadWindow(null, 'end');
+}
+
+async function logJump(toEnd){
+  if(toEnd){
+    await loadWindow(null, 'end');
+    return;
+  }
+  setFollow(false);
+  await loadWindow(0, 'start'); // 0 wird serverseitig auf oldest() gehoben
+}
+
+function openAuth(){
+  $('authUser').value = last ? last.auth_user : '';
+  $('authPass').value = '';
+
+  // Nur warnen, nicht sperren: das Loeschen eines Passworts muss auch dann
+  // gehen, wenn der Taster inzwischen fehlt.
+  $('authErr').textContent = (last && last.auth_possible) ? ''
+      : t('Erst einen Taster auf Werkeinstellungen legen - sonst gibt es kein Zurueck.');
+
+  authDlg.showModal();
+}
+
+async function saveAuth(){
+  const body = new URLSearchParams({
+    user: $('authUser').value.trim(),
+    password: $('authPass').value
+  });
+  const r = await fetch('/api/auth', {method:'POST', body});
+
+  if(!r.ok){
+    let msg = t('abgelehnt');
+    try { const j = await r.json(); if(j.error) msg = j.error; } catch(e){}
+    $('authErr').textContent = msg;
+    return;
+  }
+
+  authDlg.close();
+  if(confirm(t('Gespeichert. Jetzt neu starten?'))) doReboot();
+}
+
+async function setKeep(){
+  const body = new URLSearchParams({enabled: $('logKeep').checked ? '1' : '0'});
+  await fetch('/api/log/keep', {method:'POST', body});
+}
+
+async function loadResetLog(){
+  const box = $('logText');
+  setFollow(false);
+  try { box.textContent = await (await fetch('/api/log/reset')).text(); }
   catch(e){ box.textContent = t('Lesen fehlgeschlagen.'); return; }
-  box.scrollTop = box.scrollHeight;
+  if(!box.textContent) box.textContent = t('Nichts hat den letzten Neustart überdauert.');
+  box.scrollTop = 0;
+  $('logInfo').textContent = t('Vor dem Neustart');
+}
+
+function openName(){
+  $('nameIn').value = last ? last.device_name : '';
+  $('nameErr').textContent = '';
+  nameDlg.showModal();
+}
+
+async function saveName(){
+  const body = new URLSearchParams({name: $('nameIn').value.trim()});
+  const r = await fetch('/api/name', {method:'POST', body});
+
+  if(!r.ok){
+    let msg = t('abgelehnt');
+    try { const j = await r.json(); if(j.error) msg = j.error; } catch(e){}
+    $('nameErr').textContent = msg;
+    return;
+  }
+
+  nameDlg.close();
+  if(confirm(t('Name gespeichert. Jetzt neu starten?'))) doReboot();
 }
 
 function showLog(){
   logDlg.showModal();
+  if(last) $('logKeep').checked = last.hardware.log_rtc;
+  $('logText').onscroll = logScrolled;
+  setFollow(false);
   loadLog();
+}
+
+function closeLog(){
+  setFollow(false);
+  logDlg.close();
+}
+
+function setFollow(on){
+  logFollow = on;
+  $('logFollow').innerHTML = on ? '&#9632;' : '&#9654;';
+  $('logFollow').classList.toggle('on', on);
+
+  if(logTimer){ clearTimeout(logTimer); logTimer = null; }
+  if(on) logTick();
+}
+
+function toggleFollow(){ setFollow(!logFollow); }
+
+async function logTick(){
+  if(!logDlg.open || !logFollow){ logTimer = null; return; }
+  await loadWindow(null, 'end');
+  logTimer = setTimeout(logTick, 3000);
 }
 
 async function clearLog(){
@@ -1036,12 +1308,13 @@ async function copyLog(){
 function downloadLog(){
   const stamp = new Date().toISOString().slice(0,19).replace(/[-:]/g,'').replace('T','-');
   const a = document.createElement('a');
-  a.href = '/api/log?download=1&bytes=65536';
+  a.href = '/api/log?download=1&bytes=' + ((last && last.hardware.log_size) || LOG_WIN);
   a.download = 'sbip-log-' + stamp + '.txt';
   a.click();
 }
 
-async function showParts(){  $('partList').innerHTML = '<tr class="hd"><th>' + t('lese Filtertabelle...') + '</th></tr>';
+async function showParts(){
+  $('partList').innerHTML = '<tr class="hd"><th>' + t('lese Filtertabelle...') + '</th></tr>';
   partDlg.showModal();
 
   let p;
@@ -1208,8 +1481,8 @@ const RGBT  = ['WS2812','SK6812'];
 const BFUNC = ['Programmiermodus','Werkeinstellungen','WLAN Grundeinstellung',
                'Gerät neu starten','WLAN ein/aus'];
 const LCOND = ['Programmiermodus aktiv','AP-Modus offen','keine TP-Verbindung',
-               'online','offline','Herzschlag'];
-const LCOL  = ['rot','grün','blau','gelb','cyan','magenta','weiß'];
+               'online','offline','Heartbeat','GA-Filter deaktiviert'];
+const LCOL  = ['rot','grün','blau','gelb','cyan','magenta','weiß','orange'];
 const LPAT  = ['Dauerlicht','langsam blinken','schnell blinken','Doppelblitz',
                'kurzer Blitz'];
 

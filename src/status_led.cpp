@@ -62,6 +62,7 @@ static const uint8_t PALETTE[HW_COL_COUNT][3] = {
     { 0, L, L }, // cyan
     { L, 0, L }, // magenta
     { L, L, L }, // white
+    { L, 90, 0 }, // orange - red with just enough green to read as amber
 };
 
 int8_t StatusLed::chainFor(int8_t pin) const
@@ -243,6 +244,7 @@ bool StatusLed::conditionHolds(uint8_t condition) const
     case HW_COND_ONLINE:    return netManager.isOnline() && knxLink.tpConnected();
     case HW_COND_OFFLINE:   return !netManager.isOnline() && !netManager.isApMode();
     case HW_COND_HEARTBEAT: return _heartbeat;
+    case HW_COND_ROUTE_ALL: return knxLink.routeUnfiltered();
     default:                return false;
     }
 }

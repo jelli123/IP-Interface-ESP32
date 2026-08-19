@@ -254,8 +254,8 @@ vorkommen – genau darum geht es.
 | Feld | Werte |
 | --- | --- |
 | `target` | Name aus `leds` |
-| `condition` | `0` Programmiermodus aktiv, `1` AP-Modus offen, `2` keine TP-Verbindung, `3` online, `4` offline, `5` Herzschlag |
-| `colour` | `0` rot, `1` grün, `2` blau, `3` gelb, `4` cyan, `5` magenta, `6` weiß |
+| `condition` | `0` Programmiermodus aktiv, `1` AP-Modus offen, `2` keine TP-Verbindung, `3` online, `4` offline, `5` Heartbeat, `6` GA-Filter deaktiviert |
+| `colour` | `0` rot, `1` grün, `2` blau, `3` gelb, `4` cyan, `5` magenta, `6` weiß, `7` orange |
 | `pattern` | `0` Dauerlicht, `1` langsam blinken (1 Hz), `2` schnell blinken (5 Hz), `3` Doppelblitz, `4` kurzer Blitz alle 2 s |
 
 **Die Reihenfolge ist die Rangfolge.** Pro LED gilt die oberste Zeile, deren
@@ -390,8 +390,7 @@ KNX-Stack – und der ESP-IDF-Log (die `[E][Preferences.cpp:47]`-Zeilen), der
 über `esp_log_set_vprintf()` mitgeschnitten wird. Die serielle Ausgabe bleibt
 unverändert: `sysLog` schreibt durch.
 
-Der Puffer liegt im RAM und überlebt keinen Neustart. `GET /api/log` liefert
-die neuesten 8 KiB als Text, `?bytes=` mehr, `?download=1` setzt zusätzlich
+Der Puffer liegt im RAM und überlebt keinen Neustart. `GET /api/log` liefertdie neuesten 8 KiB als Text, `?bytes=` mehr, `?download=1` setzt zusätzlich
 einen Dateinamen. `POST /api/log/clear` leert ihn.
 
 Die Antwort wird **gestückelt** direkt aus dem Ring gesendet: Ein voller
@@ -409,6 +408,75 @@ Kopieren in die Zwischenablage nimmt die Markierung, sonst das ganze
 angezeigte Protokoll. `navigator.clipboard` gibt es dabei nur im sicheren
 Kontext, den es über `http` nicht gibt – genau wie bei `crypto.subtle` beim
 Firmware-Upload. Deshalb der Umweg über ein kurzzeitiges `textarea`.
+
+### Was einen Neustart überdauert
+
+PSRAM ist DRAM: Es braucht ständiges Refresh, und der Startcode initialisiert
+den Controller neu. Der große Ringpuffer ist nach jedem Reset leer – daran
+lässt sich nichts ändern.
+
+Ein **Reset** überlebt dagegen der **RTC-Slow-Speicher**, den der Startcode
+bewusst unangetastet lässt (`RTC_NOINIT_ATTR`). Dort liegt ein zweiter, 3 KiB
+großer Ring mit denselben Zeilen. Nach einem Watchdog oder einer Panik steht
+darin, was unmittelbar davor passiert ist – im Dashboard über *Vor dem
+Neustart*.
+
+Ein **Stromausfall** löscht auch diesen. Ein gültiges Kennzeichen im
+RTC-Speicher unterscheidet beide Fälle; fehlt es, wird der Ring verworfen
+statt Zufallsdaten anzuzeigen. Geprüft wird das **vor** allem anderen in
+`LogBuffer::begin()` – sonst würde die erste Logzeile den Ring mit einem
+zufälligen Offset indizieren.
+
+Die erste Zeile nach dem Start nennt den **Neustartgrund** im Klartext
+(`power-on`, `software`, `panic`, `task watchdog`, `brownout` …). Damit ist
+auch ohne überlebten Ring erkennbar, ob ein Neustart gewollt war.
+
+> Nach einem `upload` über esptool steht dort `power-on` und der Ring ist
+> leer: Der Reset über die EN-Leitung löscht auch den RTC-Bereich. Überdauert
+> wird nur ein **Software**-Neustart – also Watchdog, Panik oder der Neustart
+> aus dem Dashboard.
+
+Was überdauert hat, wird beim Start **vorne in den großen Ring kopiert**,
+getrennt durch `----- restart -----`. Das Fenster liest sich dadurch als ein
+durchgehendes Protokoll über den Neustart hinweg. Über *Vor dem Neustart* ist
+der RTC-Teil weiterhin für sich abrufbar.
+
+### Der Ring ist ein Ring
+
+Ist der Puffer voll, überschreibt Neues das Älteste – etwas anderes kann ein
+Ringpuffer nicht. Der Füllstand steht unter dem Fenster und weist darauf hin,
+sobald überschrieben wird.
+
+Wie schnell das geht, hängt an der Redseligkeit der Firmware. Mit
+`-DKNX_LOG_TUNNELING` protokolliert der KNX-Stack **jedes** Telegramm; für
+alles außer der Fehlersuche am Tunneling gehört das Flag weggelassen.
+
+### Blättern statt alles laden
+
+Ein halbes Megabyte in einem `<pre>` macht das Blättern zäh. Das Dashboard
+hält deshalb nur einen **Ausschnitt von 48 KiB** – ungefähr doppelt so viel
+wie sichtbar, je ein Viertel als Reserve davor und dahinter. Wer an einen
+Rand blättert, bekommt den nächsten Abschnitt nachgeladen, während am anderen
+Ende einer wegfällt.
+
+Dafür kennt der Puffer **absolute Positionen**: `written()` zählt alle je
+geschriebenen Bytes, gehalten wird `[oldest(), written())`. `GET /api/log`
+nimmt deshalb ein `from=` und liefert die aktuelle Lage in den Kopfzeilen
+`X-Log-From`, `X-Log-Oldest` und `X-Log-Written` zurück. Ohne `from` antwortet
+es wie bisher mit dem Ende.
+
+Hat der Schreiber den Leser überholt, setzt `copyFrom()` die Position auf den
+ältesten noch vorhandenen Eintrag – der Ausschnitt springt dann, statt Bytes
+auszugeben, die inzwischen etwas anderes bedeuten.
+
+Nur der **Download** holt den ganzen Puffer; er geht gestückelt und kennt
+diese Grenze nicht.
+
+Zu den Kosten: Geschrieben wird ein Byte pro Zeichen über den RTC-Bus,
+zusätzlich zum Hauptring. Bei einem Protokoll, das ein paar Zeilen pro Sekunde
+produziert, sind das einige Mikrosekunden – gemessen an dem, was ein
+unerklärter Neustart sonst an Suche kostet, ist das nichts. Abschaltbar ist es
+trotzdem.
 
 ### Speicherung
 
@@ -679,6 +747,64 @@ das spart die Fork-Abhängigkeit ohne funktionalen Nachteil.
 
 Abschaltbar mit `-DDISABLE_IMPROV` (spart rund 9 KB Flash und 2 s Bootzeit).
 
+### Gerätename
+
+Enthält eine Anlage mehrere dieser Router, unterscheidet sie der Gerätename.
+Er ist zugleich der **mDNS-Hostname** (`<name>.local`) und steht als zweite
+Zeile im Protokoll. Erlaubt sind 1 bis 31 Zeichen aus `A-Z a-z 0-9 -`, nicht
+mit Bindestrich beginnend oder endend – die Beschränkung kommt daher, dass
+der Name als Hostname endet. Ohne eigene Angabe gilt `SBIP_MDNS_HOSTNAME`.
+
+> Der Name im **KNXnet/IP-Discovery** ist ein anderer: Den schreibt die ETS
+> beim Download in das Gerät (bei der ABB-Vorlage etwa
+> `IPR/S3.1.1 IP-Router,REG`). Solange nicht programmiert wurde, ist dort der
+> Produktname der Firmware zu sehen. Der Gerätename hier ändert daran nichts.
+> Angezeigt wird er als *Name in der ETS* und in der Kopfzeile.
+
+### Zugangsschutz
+
+Optional, standardmäßig aus. Ist ein Benutzername mit Passwort gesetzt,
+verlangt **jede** Seite und jeder Endpunkt eine Anmeldung nach
+**Digest**-Verfahren (`AsyncAuthenticationMiddleware`).
+
+Was das leistet und was nicht: Das Passwort geht **nicht im Klartext** über
+die Leitung – anders als bei Basic-Auth. Alles andere schon. Ohne TLS, und
+HTTPS ist hier bewusst nicht umgesetzt, schützt das vor unbefugtem Zugriff
+durch andere im selben Netz, **nicht** vor jemandem, der den Verkehr
+mitschneidet. Für ein Gerät, das eine KNX-Anlage bedient, ist das der
+Unterschied zwischen offen und nicht offen.
+
+Gespeichert wird nur der Digest-Hash über Benutzername, Realm und Passwort,
+nicht das Passwort selbst. Der Realm ist Teil des Hashes – wird er geändert,
+sind alle Passwörter ungültig.
+
+Zwei Dinge sind ausgenommen:
+
+* Der **Provisioning-Accesspoint**. Dort ist noch nichts eingerichtet, und
+  eine Passwortabfrage vor der Einrichtungsseite ist der sicherste Weg, sich
+  auszusperren.
+* Ein **vergessenes Passwort** lässt sich nur über *Werkeinstellungen*
+  zurücksetzen.
+
+### Ohne Rückweg kein Passwort
+
+Ein Passwort lässt sich deshalb **nur setzen, wenn ein Taster auf
+*Werkeinstellungen* liegt** – siehe *Taster und LEDs*. Ohne einen solchen
+Taster wäre die einzige Antwort auf ein vergessenes Passwort ein USB-Kabel und
+`erase_flash`, und das ist kein Rettungsweg für ein Gerät im Verteiler.
+
+Umgekehrt gilt dasselbe: Solange ein Passwort gesetzt ist, weist das
+Hardware-Profil eine Änderung ab, die diesen Taster entfernen würde. Geprüft
+wird das in `applyJson()`, nicht in `validate()` – ein bereits gespeichertes
+Profil aus der Zeit vor dieser Regel muss weiterhin starten können.
+
+Die Vorgabe enthält **keinen** solchen Taster. Wer ein Passwort setzen will,
+legt ihn zuerst an – ein sehr langer Druck auf den vorhandenen Taster ist
+dafür die naheliegende Wahl.
+
+Ein separates API-Token gibt es bewusst nicht: Es wäre genauso mitlesbar wie
+das Passwort und ein zweiter Ort für Fehler.
+
 ---
 
 ## REST-API
@@ -689,6 +815,7 @@ Abschaltbar mit `-DDISABLE_IMPROV` (spart rund 9 KB Flash und 2 s Bootzeit).
 | GET | `/api/wifi/scan[?start=1]` | asynchroner Netzwerk-Scan |
 | POST | `/api/wifi/connect` | `ssid`, `password` → speichern + Neustart |
 | POST | `/api/wifi/ap_mode` | Zugangsdaten löschen, AP starten |
+| POST | `/api/name` | `name=` → Geräte- und mDNS-Name |
 | POST | `/api/progmode` | `state=on\|off\|toggle` |
 | GET | `/api/hwconfig` | aktives, gespeichertes und Image-Profil |
 | POST | `/api/hwconfig` | JSON-Profil speichern (Teilfelder erlaubt) |
@@ -698,6 +825,9 @@ Abschaltbar mit `-DDISABLE_IMPROV` (spart rund 9 KB Flash und 2 s Bootzeit).
 | GET | `/api/partitions` | Partitionstabelle des Flash |
 | GET | `/api/log` | Protokollpuffer als Text, `?bytes=` |
 | POST | `/api/log/clear` | Protokollpuffer leeren |
+| GET | `/api/log/reset` | was den letzten Neustart überdauert hat |
+| POST | `/api/log/keep` | `enabled=1\|0` → RTC-Mitschrift |
+| POST | `/api/auth` | `user=`, `password=` → Zugangsschutz |
 | POST | `/api/reboot` | Neustart auslösen |
 | GET | `/api/time` | Zustand und Konfiguration des Zeitservers |
 | POST | `/api/time/config` | Konfiguration schreiben (Teilfelder erlaubt) |

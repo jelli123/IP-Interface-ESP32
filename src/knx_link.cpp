@@ -520,6 +520,32 @@ uint8_t KnxLink::tunnelAddresses(uint16_t* out, uint8_t max) const
     return written;
 }
 
+String KnxLink::friendlyName() const
+{
+    // Lives in the IP parameter object, not the device object - the name is
+    // part of the KNXnet/IP device DIB, not of the KNX device description.
+    uint8_t  count  = 30; // PID_FRIENDLY_NAME is a fixed 30 octet string
+    uint32_t length = 0;
+    uint8_t* data   = nullptr;
+
+    knxBau.propertyValueRead(OT_IP_PARAMETER, 1, PID_FRIENDLY_NAME, count, 1,
+                             &data, length);
+    if (data == nullptr) return String();
+
+    String name;
+    for (uint32_t i = 0; i < length; i++)
+    {
+        char c = (char)data[i];
+        if (c == '\0') break;
+        // Anything outside plain ASCII is a half written property, not a name.
+        name += (c >= 0x20 && c < 0x7F) ? c : '?';
+    }
+
+    delete[] data;
+    name.trim();
+    return name;
+}
+
 bool KnxLink::progMode() const
 {
     return knx.progMode();

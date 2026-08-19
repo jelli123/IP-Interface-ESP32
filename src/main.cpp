@@ -75,6 +75,7 @@ void setup()
 
     sysLog.println();
     sysLog.println("Selfbus KNX/IP Interface " FIRMWARE_VERSION);
+    sysLog.printf("Device: %s\n", netManager.deviceName().c_str());
 
     if (hwConfig.usingDefaults())
     {
@@ -136,6 +137,12 @@ void setup()
         sysLog.println("WARNING: no answer from the SB-Interface on the KNX UART");
     }
 
+    {
+        String knxName = knxLink.friendlyName();
+        sysLog.printf("KNX: discovery name \"%s\"\n",
+                      knxName.length() ? knxName.c_str() : "(empty)");
+    }
+
     /*
      * A fixed address entered in the ETS device properties wins over DHCP.
      * Only readable once the KNX stack has restored its memory, hence here
@@ -151,10 +158,12 @@ void setup()
     timeService.begin();
     webServerBegin();
 
-    if (MDNS.begin(MDNS_HOSTNAME))
+    String host = netManager.deviceName();
+
+    if (MDNS.begin(host.c_str()))
     {
         MDNS.addService("http", "tcp", 80);
-        sysLog.println("mDNS: http://" MDNS_HOSTNAME ".local");
+        sysLog.printf("mDNS: http://%s.local\n", host.c_str());
     }
 
     // Blocks until the interface is up or the provisioning window closes.

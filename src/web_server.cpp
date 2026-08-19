@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "build_info.h"
+#include "auth.h"
 #include "eth_interface.h"
 #include "fw_hash.h"
 #include "hw_config.h"
@@ -186,6 +187,10 @@ static String statusJson()
 
     String json = "{";
     json += "\"uptime\":\"" + uptimeString() + "\",";
+    json += "\"device_name\":\"" + jsonEscape(netManager.deviceName()) + "\",";
+    json += "\"knx_name\":\"" + jsonEscape(knxLink.friendlyName()) + "\",";
+    json += "\"auth_user\":\"" + jsonEscape(Auth::user()) + "\",";
+    json += "\"auth_possible\":" + String(Auth::recoveryPossible() ? "true" : "false") + ",";
     json += "\"iface\":\"" + String(netManager.activeInterface()) + "\",";
     json += "\"is_ap_mode\":" + String(netManager.isApMode() ? "true" : "false") + ",";
     json += "\"ssid\":\"" + jsonEscape(netManager.currentSsid()) + "\",";
@@ -274,6 +279,8 @@ static String statusJson()
     json += "\"log_size\":" + String(sysLog.capacity()) + ",";
     json += "\"log_used\":" + String(sysLog.used()) + ",";
     json += "\"log_psram\":" + String(sysLog.inPsram() ? "true" : "false") + ",";
+    json += "\"log_rtc\":" + String(sysLog.keepAcrossReset() ? "true" : "false") + ",";
+    json += "\"log_rtc_used\":" + String(sysLog.rtcUsed()) + ",";
     json += "\"profile_default\":" + String(hwConfig.usingDefaults() ? "true" : "false") + ",";
     json += "\"profile_fallback\":\"" + String(hwConfig.fallbackReason()) + "\",";
     json += "\"reboot_pending\":" + String(hwConfig.rebootPending() ? "true" : "false");
@@ -400,6 +407,27 @@ static void registerWifiRoutes()
 
         request->send(200, "application/json", "{\"status\":\"ok\"}");
         netManager.forgetCredentials();
+    });
+
+    server.on("/api/name", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        if (!request->hasParam("name", true))
+        {
+            request->send(400, "application/json", "{\"error\":\"missing name\"}");
+            return;
+        }
+
+        if (!netManager.setDeviceName(request->getParam("name", true)->value()))
+        {
+            request->send(400, "application/json",
+                          "{\"error\":\"1 to 31 characters from A-Z a-z 0-9 -, "
+                          "not starting or ending with a hyphen\"}");
+            return;
+        }
+
+        request->send(200, "application/json",
+                      "{\"status\":\"ok\",\"reboot_required\":true}");
     });
 }
 
@@ -1061,11 +1089,11 @@ void webServerBegin()
     });
 
     /*
-     * The captured serial log, newest part last.
+     * A slice of the captured log, sent in pieces straight out of the ring.
      *
-     * Sent in pieces straight out of the ring: a full dump is 64 KiB, and
-     * building that as a String would cost twice as much heap as the whole
-     * answer is worth.
+     * Without "from" it answers with the newest "bytes". With it, the slice
+     * starts at that absolute position, which is what lets the dashboard
+     * scroll through half a megabyte without holding all of it.
      */
     server.on("/api/log", HTTP_GET, [](AsyncWebServerRequest* request) {
         size_t want = 8192;
@@ -1076,16 +1104,33 @@ void webServerBegin()
             if (value > 0) want = (size_t)value;
         }
 
-        auto state = std::make_shared<std::pair<size_t, size_t>>(0, 0);
-        state->first = sysLog.tailStart(want, state->second);
+        uint64_t from = (sysLog.written() > want) ? sysLog.written() - want : 0;
+
+        if (request->hasParam("from"))
+        {
+            from = strtoull(request->getParam("from")->value().c_str(), nullptr, 10);
+        }
+        if (from < sysLog.oldest())
+        {
+            from = sysLog.oldest();
+        }
+
+        auto cursor = std::make_shared<std::pair<uint64_t, size_t>>(from, want);
 
         AsyncWebServerResponse* response = request->beginChunkedResponse(
-            "text/plain", [state](uint8_t* buffer, size_t maxLen, size_t) -> size_t {
-                return sysLog.readAt(state->first, state->second,
-                                     (char*)buffer, maxLen);
+            "text/plain", [cursor](uint8_t* buffer, size_t maxLen, size_t) -> size_t {
+                if (cursor->second == 0) return 0;
+                size_t chunk = (cursor->second < maxLen) ? cursor->second : maxLen;
+                size_t n = sysLog.copyFrom(cursor->first, (char*)buffer, chunk);
+                cursor->second -= n;
+                return n;
             });
 
+        // The client positions its window from these.
         response->addHeader("Cache-Control", "no-store");
+        response->addHeader("X-Log-From", String((unsigned long)from));
+        response->addHeader("X-Log-Oldest", String((unsigned long)sysLog.oldest()));
+        response->addHeader("X-Log-Written", String((unsigned long)sysLog.written()));
 
         if (request->hasParam("download"))
         {
@@ -1102,12 +1147,56 @@ void webServerBegin()
         request->send(200, "application/json", "{\"status\":\"ok\"}");
     });
 
+    /* What survived the last reset. Small enough to send in one piece. */
+    server.on("/api/log/reset", HTTP_GET, [](AsyncWebServerRequest* request) {
+        request->send(200, "text/plain", sysLog.rtcTail());
+    });
+
+    server.on("/api/log/keep", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        bool enable = true;
+        if (request->hasParam("enabled", true))
+        {
+            String value = request->getParam("enabled", true)->value();
+            enable = (value == "1" || value == "true");
+        }
+
+        sysLog.keepAcrossReset(enable);
+        request->send(200, "application/json", "{\"status\":\"ok\"}");
+    });
+
+    server.on("/api/auth", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        String user = request->hasParam("user", true)
+                          ? request->getParam("user", true)->value()
+                          : String();
+        String pass = request->hasParam("password", true)
+                          ? request->getParam("password", true)->value()
+                          : String();
+        String error;
+
+        if (!Auth::set(user, pass, error))
+        {
+            request->send(400, "application/json",
+                          String("{\"error\":\"") + jsonEscape(error) + "\"}");
+            return;
+        }
+
+        request->send(200, "application/json",
+                      "{\"status\":\"ok\",\"reboot_required\":true}");
+    });
+
     registerCaptivePortalRoutes();
     registerWifiRoutes();
     registerKnxRoutes();
     registerTimeRoutes();
     registerHardwareRoutes();
     registerOtaRoutes();
+
+    // After the routes: the middleware wraps whatever is registered.
+    Auth::attach(server);
 
     server.begin();
     sysLog.println("Web server started");

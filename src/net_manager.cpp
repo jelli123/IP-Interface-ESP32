@@ -40,6 +40,48 @@ static const char*  NET_NS   = "sbip-net";
 static const char*  KEY_SSID = "ssid";
 static const char*  KEY_PASS = "pass";
 static const char*  KEY_WIFI = "wifien";
+static const char*  KEY_NAME = "devname";
+
+/** Host names have no room for much else. NAME_MAX is taken by limits.h. */
+static const size_t DEVICE_NAME_MAX = 31;
+
+String NetManager::deviceName() const
+{
+    netPrefs.begin(NET_NS, false);
+    String name = netPrefs.isKey(KEY_NAME) ? netPrefs.getString(KEY_NAME, "") : String();
+    netPrefs.end();
+
+    return name.length() ? name : String(MDNS_HOSTNAME);
+}
+
+bool NetManager::setDeviceName(const String& name)
+{
+    if (name.length() == 0 || name.length() > DEVICE_NAME_MAX)
+    {
+        return false;
+    }
+
+    // Letters, digits and hyphens only: the name becomes a host name, and a
+    // space or a dot there produces something no resolver will find.
+    for (size_t i = 0; i < name.length(); i++)
+    {
+        char c = name[i];
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                  (c >= '0' && c <= '9') || c == '-';
+        if (!ok) return false;
+    }
+
+    if (name[0] == '-' || name[name.length() - 1] == '-')
+    {
+        return false;
+    }
+
+    netPrefs.begin(NET_NS, false);
+    netPrefs.putString(KEY_NAME, name);
+    netPrefs.end();
+
+    return true;
+}
 
 void NetManager::setWifiEnabled(bool enable)
 {
@@ -103,32 +145,37 @@ void NetManager::begin()
         return;
     }
 
-    /*
-     * Read our own copy before touching the radio.
-     *
-     * WiFi.SSID() would need the station up first, and bringing it up only to
-     * find nothing stored is what forced the mode juggling that kept losing
-     * the credentials.
-     */
-    netPrefs.begin(NET_NS, false);
-    String storedSsid = netPrefs.getString(KEY_SSID, "");
-    String storedPass = netPrefs.getString(KEY_PASS, "");
-    netPrefs.end();
-
     if (!_wifiEnabled)
     {
         sysLog.println("WiFi is switched off in the settings");
         return;
     }
 
-    sysLog.printf("Stored SSID: %s\n",
-                  storedSsid.length() ? storedSsid.c_str() : "(none)");
-
-    if (storedSsid.length() == 0)
+    if (!startStation())
     {
         sysLog.println("No credentials stored - starting provisioning AP");
         startAccessPoint();
-        return;
+    }
+}
+
+/*
+ * Reads the credentials from our own namespace rather than asking the driver.
+ * WiFi.SSID() would need the station up first, and bringing it up only to
+ * find nothing stored is what forced the mode juggling that kept losing them.
+ */
+bool NetManager::startStation()
+{
+    netPrefs.begin(NET_NS, false);
+    // isKey() first: getString() on a missing key logs an ESP-IDF error.
+    String ssid = netPrefs.isKey(KEY_SSID) ? netPrefs.getString(KEY_SSID, "") : String();
+    String pass = netPrefs.isKey(KEY_PASS) ? netPrefs.getString(KEY_PASS, "") : String();
+    netPrefs.end();
+
+    sysLog.printf("Stored SSID: %s\n", ssid.length() ? ssid.c_str() : "(none)");
+
+    if (ssid.length() == 0)
+    {
+        return false;
     }
 
     WiFi.persistent(false); // our namespace is the source of truth
@@ -140,7 +187,9 @@ void NetManager::begin()
     // WiFi.begin().
     WiFi.setSleep(WIFI_PS_NONE);
     WiFi.setAutoReconnect(true);
-    WiFi.begin(storedSsid.c_str(), storedPass.c_str());
+    WiFi.begin(ssid.c_str(), pass.c_str());
+
+    return true;
 }
 
 String NetManager::apName() const
@@ -217,6 +266,21 @@ void NetManager::waitForConnection(void (*keepAlive)())
         return; // already up, nothing to wait for
     }
 
+    /*
+     * One retry before giving up to the access point.
+     *
+     * The first association after provisioning fails often enough to be
+     * annoying - the radio has just been switched from access point to
+     * station, and the driver occasionally never completes the handshake.
+     * Auto-reconnect does not cover that case, because from its point of
+     * view there was never a connection to lose.
+     */
+    static const uint32_t RETRY_AFTER_MS = 15000;
+
+    bool     retried  = false;
+    int      lastSeen = -1;
+    uint32_t started  = millis();
+
     while (!isOnline() && (uint32_t)(millis() - _bootTime) < IMPROV_WINDOW_MS)
     {
         improvService.loop();
@@ -232,6 +296,27 @@ void NetManager::waitForConnection(void (*keepAlive)())
         if (_apMode)
         {
             dnsServer.processNextRequest();
+        }
+        else
+        {
+            int status = WiFi.status();
+
+            if (status != lastSeen)
+            {
+                lastSeen = status;
+                sysLog.printf("WiFi status %d after %lu ms\n", status,
+                              (unsigned long)(millis() - started));
+            }
+
+            if (!retried && status != WL_CONNECTED &&
+                (uint32_t)(millis() - started) > RETRY_AFTER_MS)
+            {
+                retried = true;
+                sysLog.println("WiFi did not associate - trying once more");
+                WiFi.disconnect(false, true);
+                delay(100);
+                startStation();
+            }
         }
 
         buttonService.loop();

@@ -128,8 +128,17 @@ public:
     bool filterTable(uint16_t* out, uint16_t max, uint16_t& total) const;
 
     /** @return true if programming mode is active */
-    bool progMode() const;
+    /**
+     * The name this device answers with during KNXnet/IP discovery.
+     *
+     * Written by ETS during a download, which is why it usually reads like a
+     * catalogue entry. Before that it holds whatever the firmware announced.
+     * This is the name ETS shows when picking an interface - not the device
+     * name from the dashboard.
+     */
+    String friendlyName() const;
 
+    bool progMode() const;
     /**
      * Request a programming mode change.
      *

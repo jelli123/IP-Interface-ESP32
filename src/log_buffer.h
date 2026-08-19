@@ -47,7 +47,44 @@ public:
      */
     size_t readAt(size_t& pos, size_t& left, char* out, size_t max) const;
 
+    /**
+     * Bytes ever written, counting from the first one.
+     *
+     * The ring holds [oldest(), written()). Positions stay meaningful after
+     * older text has been dropped, which is what lets the dashboard scroll
+     * through the buffer instead of only reading its end.
+     */
+    uint64_t written() const { return _written; }
+
+    /** Position of the oldest byte still held. */
+    uint64_t oldest() const { return _written - _filled; }
+
+    /**
+     * Copy from an absolute position, clamped to what is still there.
+     *
+     * @param at  advanced by the number of bytes copied
+     * @return bytes copied, 0 once @p at has caught up with written()
+     */
+    size_t copyFrom(uint64_t& at, char* out, size_t max) const;
+
     void clear();
+
+    /**
+     * Also keep the newest lines in RTC slow memory, which a reset does not
+     * clear - the only way to see what happened just before a watchdog or a
+     * panic restarted the device. Persisted; a power cycle loses it anyway.
+     */
+    /** Why the device last restarted, as a word rather than a number. */
+    static const char* resetReason();
+
+    void keepAcrossReset(bool enable);
+    bool keepAcrossReset() const { return _toRtc; }
+
+    /** Bytes currently held in the reset-proof ring. */
+    size_t rtcUsed() const;
+
+    /** The reset-proof ring, oldest first. Small enough to hand over whole. */
+    String rtcTail() const;
 
     size_t write(uint8_t value) override;
     size_t write(const uint8_t* data, size_t len) override;
@@ -60,6 +97,7 @@ public:
 
 private:
     void store(const char* data, size_t len);
+    void appendRaw(const char* data, size_t len);
 
     static size_t makeStamp(char* out, size_t max);
     static int    idfHook(const char* format, va_list args);
@@ -68,8 +106,10 @@ private:
     size_t _size   = 0;
     size_t _head   = 0; //!< next write position
     size_t _filled = 0;
+    uint64_t _written = 0;
     bool   _psram  = false;
     bool   _atLineStart = true;
+    bool   _toRtc  = true;
 
     mutable portMUX_TYPE _lock = portMUX_INITIALIZER_UNLOCKED;
 };
