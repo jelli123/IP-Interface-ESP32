@@ -691,7 +691,6 @@ const EN = {
 + 'text of each component ships with its own source archive.',
 'Partitionstabelle':'Partition table', 'Typ':'Type', 'Adresse':'Address',
 'Größe':'Size', 'Firmware':'Firmware',
-'frei in der Partition':'free in the partition',
 'frei':'free',
 'LED-Helligkeit':'LED brightness', 'Heartbeat aktiv':'Heartbeat active',
 'Neustart nötig':'Restart required',
@@ -1285,9 +1284,11 @@ async function refresh(){
   const kib = b => Math.round(b/1024) + ' KiB';
   // sketch_size wird einmalig kurz nach dem Start gemessen; bis dahin 0.
   $('flash').textContent = mib(s.hardware.flash_size)
+      + ' \u00b7 ' + t('Partition') + ' ' + kib(s.hardware.part_size)
       + (s.hardware.sketch_size
-          ? ' \u00b7 ' + t('Firmware') + ' ' + kib(s.hardware.sketch_size) : '')
-      + ' \u00b7 ' + t('frei in der Partition') + ' ' + kib(s.hardware.sketch_free);
+          ? ' \u00b7 ' + t('Firmware') + ' ' + kib(s.hardware.sketch_size)
+            + ' \u00b7 ' + kib(s.hardware.part_size - s.hardware.sketch_size)
+            + ' ' + t('frei') : '');
   $('psram').textContent = s.hardware.psram_total
       ? (kib(s.hardware.psram_free) + ' / ' + mib(s.hardware.psram_total) + ' ' + t('frei'))
       : t('nicht aktiviert');

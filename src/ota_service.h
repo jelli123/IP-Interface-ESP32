@@ -85,6 +85,9 @@ public:
      */
     static uint32_t sketchSize();
 
+    /** Size of the app partition the running image sits in, in bytes. */
+    static uint32_t partitionSize();
+
     /**
      * Boot from the other slot next time.
      *

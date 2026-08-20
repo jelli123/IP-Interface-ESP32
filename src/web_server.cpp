@@ -338,7 +338,7 @@ static String statusJson()
     json += "\"heap_free\":" + String(ESP.getFreeHeap()) + ",";
     json += "\"flash_size\":" + String(ESP.getFlashChipSize()) + ",";
     json += "\"sketch_size\":" + String(OtaService::sketchSize()) + ",";
-    json += "\"sketch_free\":" + String(ESP.getFreeSketchSpace()) + ",";
+    json += "\"part_size\":" + String(OtaService::partitionSize()) + ",";
     json += "\"psram_total\":" + String(ESP.getPsramSize()) + ",";
     json += "\"psram_free\":" + String(ESP.getFreePsram()) + ",";
     json += "\"log_size\":" + String(sysLog.capacity()) + ",";

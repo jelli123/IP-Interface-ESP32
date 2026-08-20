@@ -50,7 +50,8 @@ Die Bindung entsteht über `ARDUINO_ARCH_ESP32` in `esp32_platform.h` des
 KNX-Stacks – grundsätzlich läuft jedes Arduino-ESP32-Ziel mit WLAN.
 
 **Anforderungen:** ein freier Hardware-UART für KNX (getrennt vom Debug-/USB-
-Port), WLAN, ≥ 4 MB Flash für das Dual-OTA-Layout.
+Port), WLAN, ≥ 4 MB Flash für das Dual-OTA-Layout (siehe *Flash-Größe und
+Partitionslayout*).
 
 **Zur Kernanzahl:** Auf Single-Core-Varianten teilen sich WLAN-Stack und
 `loop()` einen Kern. Das ist unkritisch, weil das SB-Interface das zeitkritische
@@ -751,6 +752,48 @@ pio run -e esp32dev     # nur eines
 
 Der Pre-Script [scripts/version_bump.py](scripts/version_bump.py) erzeugt
 `src/build_info.h` mit Buildnummer und Git-Hash.
+
+### Flash-Größe und Partitionslayout
+
+Vorgabe ist [partitions_4mb_ota.csv](partitions_4mb_ota.csv): zwei App-Slots zu
+je 1,94 MB, dazu `nvs`, `otadata`, `knxcfg` und `coredump`. Für Module mit 8 MB
+gibt es [partitions_8mb_ota.csv](partitions_8mb_ota.csv) mit doppelt großen
+Slots und dazu fertige Umgebungen:
+
+```
+pio run -e esp32dev_8mb
+pio run -e esp32s3_8mb
+pio run -e esp32c6_8mb
+```
+
+Sie erben alles vom jeweiligen 4-MB-Ziel und ändern nur die Tabelle und
+`board_upload.flash_size`. Dieselben drei Zeilen machen jede andere Umgebung
+zur 8-MB-Variante.
+
+> **Der Wechsel geht nicht über OTA.** Die Partitionstabelle liegt außerhalb
+> jeder Partition und wird nur von esptool geschrieben; ein Gerät im 4-MB-Layout
+> muss dafür über USB geflasht werden. `nvs` bleibt bei `0x9000` – WLAN-Zugang
+> und Hardware-Profil überstehen das. `knxcfg` wandert von `0x3F0000` nach
+> `0x7F0000` und ist danach leer: **das Gerät muss in der ETS neu programmiert
+> werden.**
+
+#### Warum 2 MB nicht geht
+
+Es gibt keinen Trick. OTA braucht zwei Slots, die jeder ein *vollständiges*
+Image aufnehmen; diese Firmware ist rund 1,6 MB groß. In 2 MB bleiben nach
+Bootloader, Partitionstabelle, `nvs` und `otadata` etwa 1,87 MB für alles
+Weitere – genug für **ein** Image, nicht für zwei.
+
+Möglich wäre also nur eine einzelne App-Partition ohne OTA. Damit entfällt
+zugleich der Rollback, der ein fehlerhaftes Update abfängt – die
+Anti-Brick-Eigenschaft aus der Übersicht oben ist genau dieses zweite Slot.
+Über USB bleibt das Gerät natürlich flashbar. Der Tausch lautet also „kein
+Fernupdate und kein Rollback" gegen „halber Flash", und deshalb ist dafür
+keine Umgebung vorbereitet.
+
+Die Größe selbst lässt sich nicht nennenswert drücken: Arduino-Core, WLAN,
+lwIP, Mbed TLS, der asynchrone Webserver und der KNX-Stack machen den
+Löwenanteil aus, und keiner davon ist optional.
 
 ### Bewusst *nicht* gesetzte Build-Flags
 

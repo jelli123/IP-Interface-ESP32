@@ -402,6 +402,12 @@ const char* OtaService::runningPartition()
     return (running != nullptr) ? running->label : "?";
 }
 
+uint32_t OtaService::partitionSize()
+{
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    return (running != nullptr) ? running->size : 0;
+}
+
 const char* OtaService::runningPartitionState()
 {
     const esp_partition_t* running = esp_ota_get_running_partition();
