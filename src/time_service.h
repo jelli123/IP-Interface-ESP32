@@ -22,7 +22,8 @@ public:
         SRC_NONE = 0, //!< no usable time
         SRC_NTP,      //!< synchronised from an NTP server
         SRC_RTC,      //!< restored from the RTC at boot
-        SRC_MANUAL    //!< entered by hand or taken from the browser
+        SRC_MANUAL,   //!< entered by hand or taken from the browser
+        SRC_CARRIED   //!< still running from before a software reset
     };
 
     struct Config

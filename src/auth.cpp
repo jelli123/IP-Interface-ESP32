@@ -22,6 +22,7 @@ const char*  REALM = "Selfbus KNX/IP";
 
 const size_t USER_MAX    = 31;
 const size_t PASS_MIN    = 8;
+const size_t PASS_MAX    = 128;
 
 // Lives as long as the server does; the middleware is not copied in.
 AsyncAuthenticationMiddleware guard;
@@ -106,9 +107,26 @@ bool Auth::set(const String& user, const String& password, String& error)
         error = "user name must not contain a colon"; // it separates the hash parts
         return false;
     }
+
+    // The name is echoed into the log and into the WWW-Authenticate header;
+    // a control character in either is a way to forge lines and headers.
+    for (size_t i = 0; i < user.length(); i++)
+    {
+        if (user[i] < 0x20 || user[i] > 0x7E)
+        {
+            error = "user name must be printable ASCII";
+            return false;
+        }
+    }
+
     if (password.length() < PASS_MIN)
     {
         error = "password needs at least 8 characters";
+        return false;
+    }
+    if (password.length() > PASS_MAX)
+    {
+        error = "password too long";
         return false;
     }
     if (!recoveryPossible())
