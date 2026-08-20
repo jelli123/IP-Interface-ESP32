@@ -116,6 +116,43 @@ static bool mutationAllowed(AsyncWebServerRequest* request, bool allowInApMode =
     return true;
 }
 
+/*
+ * Printable ASCII, nothing else.
+ *
+ * The values guarded by this reach places that trust them: the TZ string goes
+ * to setenv()/tzset(), the NTP server name to the resolver. Neither has a use
+ * for a control character, and a CR or LF in a value that is also written to
+ * the log would let a caller forge log lines around it.
+ */
+static bool printableAscii(const String& value, size_t max)
+{
+    if (value.length() == 0 || value.length() > max)
+    {
+        return false;
+    }
+    for (size_t i = 0; i < value.length(); i++)
+    {
+        char c = value[i];
+        if (c < 0x20 || c > 0x7E) return false;
+    }
+    return true;
+}
+
+/** An upload file name as it may appear in the log: no control characters. */
+static String logSafe(const String& value)
+{
+    String out;
+    size_t n = (value.length() > 64) ? 64 : value.length();
+    out.reserve(n);
+
+    for (size_t i = 0; i < n; i++)
+    {
+        char c = value[i];
+        out += (c < 0x20 || c > 0x7E) ? '?' : c;
+    }
+    return out;
+}
+
 /* ------------------------------------------------------------------------- *
  * Status document
  * ------------------------------------------------------------------------- */
@@ -678,11 +715,36 @@ static void registerTimeRoutes()
         if (param("ga_datetime", value))  config.gaDateTime = parseGroupAddress(value);
         if (param("ga_time", value))      config.gaTime = parseGroupAddress(value);
         if (param("ga_date", value))      config.gaDate = parseGroupAddress(value);
-        if (param("interval_min", value)) config.intervalMin = (uint16_t)value.toInt();
         if (param("ntp_enabled", value))  config.ntpEnabled = (value == "1" || value == "true");
         if (param("ntp_from_dhcp", value)) config.ntpFromDhcp = (value == "1" || value == "true");
-        if (param("ntp_server", value))   strlcpy(config.ntpServer, value.c_str(), sizeof(config.ntpServer));
-        if (param("tz", value))           strlcpy(config.tz, value.c_str(), sizeof(config.tz));
+
+        if (param("interval_min", value))
+        {
+            long minutes = value.toInt();
+            if (minutes < 1)     minutes = 1;
+            if (minutes > 10080) minutes = 10080; // a week
+            config.intervalMin = (uint16_t)minutes;
+        }
+
+        if (param("ntp_server", value))
+        {
+            if (!printableAscii(value, sizeof(config.ntpServer) - 1))
+            {
+                request->send(400, "application/json", "{\"error\":\"bad ntp_server\"}");
+                return;
+            }
+            strlcpy(config.ntpServer, value.c_str(), sizeof(config.ntpServer));
+        }
+
+        if (param("tz", value))
+        {
+            if (!printableAscii(value, sizeof(config.tz) - 1))
+            {
+                request->send(400, "application/json", "{\"error\":\"bad tz\"}");
+                return;
+            }
+            strlcpy(config.tz, value.c_str(), sizeof(config.tz));
+        }
 
         timeService.applyConfig(config);
         request->send(200, "application/json", timeJson());
@@ -918,7 +980,7 @@ static void registerOtaRoutes()
                     return;
                 }
 
-                sysLog.printf("OTA: upload start: %s\n", filename.c_str());
+                sysLog.printf("OTA: upload start: %s\n", logSafe(filename).c_str());
 
                 // A browser that walks away mid-upload leaves Update running:
                 // the final chunk never arrives, so end() is never reached.
@@ -1207,7 +1269,7 @@ static void registerLpcRoutes()
                     g_lpcUploadError = error;
                     return;
                 }
-                sysLog.printf("LPC: upload start: %s\n", filename.c_str());
+                sysLog.printf("LPC: upload start: %s\n", logSafe(filename).c_str());
             }
 
             if (len && g_lpcUploadError.isEmpty())
@@ -1257,6 +1319,11 @@ void webServerBegin()
             long value = request->getParam("bytes")->value().toInt();
             if (value > 0) want = (size_t)value;
         }
+
+        // More than the ring holds cannot exist, and asking for it would keep
+        // the chunked response alive over an empty buffer.
+        if (want > sysLog.capacity()) want = sysLog.capacity();
+        if (want == 0) want = 1;
 
         uint64_t from = (sysLog.written() > want) ? sysLog.written() - want : 0;
 

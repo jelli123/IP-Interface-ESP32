@@ -574,8 +574,9 @@ auch ohne überlebten Ring erkennbar, ob ein Neustart gewollt war.
 
 Was überdauert hat, wird beim Start **vorne in den großen Ring kopiert**,
 getrennt durch `----- restart -----`. Das Fenster liest sich dadurch als ein
-durchgehendes Protokoll über den Neustart hinweg. Über *Vor dem Neustart* ist
-der RTC-Teil weiterhin für sich abrufbar.
+durchgehendes Protokoll über den Neustart hinweg. Einen eigenen Knopf braucht
+der RTC-Teil deshalb nicht; für Werkzeuge bleibt er unter
+`GET /api/log/reset` für sich abrufbar.
 
 ### Der Ring ist ein Ring
 
@@ -983,6 +984,30 @@ das Passwort und ein zweiter Ort für Fehler.
 Alle `POST`-Endpunkte sind Origin-geprüft und im AP-Modus gesperrt (Ausnahme:
 `/api/wifi/connect`, sonst wäre keine Einrichtung möglich).
 
+### Was die Endpunkte annehmen
+
+Jeder Wert, der in einen Puffer fester Größe, in eine Umgebungsvariable oder
+ins Protokoll wandert, wird vorher geprüft – nicht nur abgeschnitten:
+
+| Feld | Regel | Bei Verstoß |
+|---|---|---|
+| `name` (Gerätename) | 1–31 Zeichen `A-Z a-z 0-9 -` | 400 |
+| `user` (Zugangsschutz) | ≤ 31 Zeichen, druckbares ASCII, kein `:` | 400 |
+| `password` | 8…128 Zeichen | 400 |
+| `tz` | druckbares ASCII, 1…`sizeof(tz)-1` | 400 |
+| `ntp_server` | druckbares ASCII, 1…`sizeof(ntpServer)-1` | 400 |
+| `interval_min` | auf 1…10080 geklemmt | stillschweigend geklemmt |
+| `epoch` | Plausibilitätsfenster im `TimeService` | 400 |
+| `percent` (LED) | 1…100 | 400 |
+| `bytes` (`/api/log`) | auf die Ringgröße geklemmt | geklemmt |
+| Profilnamen (JSON) | `A-Z a-z 0-9 _ -`, Länge `HW_NAME_MAX` | Profil abgewiesen |
+| Dateinamen aus Multipart | nur fürs Protokoll, dort auf druckbares ASCII gefiltert | – |
+
+**Warum druckbares ASCII und nicht nur Kürzen:** `tz` landet in
+`setenv()`/`tzset()`, `ntp_server` beim Resolver, und beide stehen zugleich im
+Protokoll. Ein CR oder LF darin ließe einen Aufrufer eigene Protokollzeilen
+fälschen – der billigste Weg, eine Spur zu verwischen.
+
 ---
 
 ## Zeitserver
@@ -1009,11 +1034,27 @@ Alle drei sind unabhängig konfigurierbar (leere Gruppenadresse = aus). Viele
 | RV-3028-C7 | ±1 ppm ≈ ±30 s/Jahr | zweite, läuft ohne Netz |
 | Browser | ~1 s | manuell |
 | Manuelle Eingabe | Eingabegenauigkeit | manuell |
+| Übernommen | Drift seit dem letzten echten Abgleich | nur als Zwischenzustand |
 
 Ohne Internetzugang – der Regelfall in einem abgeschotteten KNX-IP-Netz – NTP
 abschalten und die Zeit per Browser oder manuell setzen. Mit bestücktem
 RV-3028 überlebt sie den nächsten Stromausfall; ohne RTC muss sie nach jedem
 Neustart neu gesetzt werden.
+
+### „Übernommen“ – warum nach einem Neustart eine Zeit dasteht
+
+Ein **Software**-Neustart löscht die Systemuhr nicht. `esp_timer` hält seinen
+Startversatz im RTC-Slow-Speicher, also läuft `time()` nach einem Watchdog,
+einer Panik oder `ESP.restart()` einfach weiter – ohne bestückte RTC und vor
+der ersten NTP-Antwort. Das Protokoll stempelt seine Zeilen dann mit einer
+Uhrzeit statt mit `+HH:MM:SS`, weil die Uhr eben nicht ungültig ist.
+
+Das Dashboard weist diesen Zustand als eigene Quelle mit **gelbem** Punkt aus.
+Die Alternativen wären beide schlechter: „nicht gesetzt“ neben einer
+plausiblen Uhrzeit anzuzeigen, oder den Wert wegzuwerfen und damit eine
+Information zu vernichten, die im Zweifel auf Sekunden stimmt. Nach einem
+**Kaltstart** oder nach dem Flashen über esptool ist der Versatz weg und die
+Uhr steht wieder auf „nicht gesetzt“.
 
 ### Warum die RTC auch im laufenden Betrieb gebraucht wird
 
@@ -1614,3 +1655,41 @@ Die Binärdateien werden relativ zum Manifest aufgelöst. Das Zertifikat wird
 **nicht** geprüft (`setInsecure()`) – die Integrität sichert die SHA-256-Summe
 aus dem Manifest. Zur Reichweite dieser Zusicherung siehe *Firmware-Update und
 Integrität*.
+
+---
+
+## Lizenz und verwendete Komponenten
+
+Diese Firmware steht unter der **GPL-3.0**
+([Lizenztext](https://github.com/jelli123/IP-Interface-ESP32?tab=GPL-3.0-1-ov-file)).
+Das ist keine freie Wahl: der KNX-Stack ist selbst GPL-3.0, und ein damit
+gelinktes Werk kann nur unter derselben Lizenz weitergegeben werden.
+
+| Komponente | Lizenz | Nachweis |
+|---|---|---|
+| [thelsing/knx](https://github.com/thelsing/knx) | GPL-3.0 | `.pio/libdeps/*/knx/LICENSE` |
+| [ESPAsyncWebServer](https://github.com/ESP32Async/ESPAsyncWebServer) | LGPL-3.0 | `library.properties` → `license=LGPL-3.0` |
+| [AsyncTCP](https://github.com/ESP32Async/AsyncTCP) | LGPL-3.0 | `library.properties` → `license=LGPL-3.0` |
+| [Improv-WiFi-Library](https://github.com/jnthas/Improv-WiFi-Library) | MIT | `LICENSE` |
+| [Arduino-ESP32](https://github.com/espressif/arduino-esp32) | LGPL-2.1-or-later | `framework-arduinoespressif32/package.json` |
+| [ESP-IDF](https://github.com/espressif/esp-idf) | Apache-2.0 | `docs/en/COPYRIGHT.rst` |
+| [FreeRTOS-Kernel](https://github.com/FreeRTOS/FreeRTOS-Kernel) | MIT | Quelltextköpfe in `components/freertos` |
+| [lwIP](https://savannah.nongnu.org/projects/lwip/) | BSD-3-Clause | ESP-IDF `COPYRIGHT.rst` |
+| [Mbed TLS](https://github.com/Mbed-TLS/mbedtls) | Apache-2.0 | ESP-IDF `COPYRIGHT.rst` |
+
+Alle sind mit der GPL-3.0 vereinbar:
+
+* **Apache-2.0 → GPL-3.0** ist einseitig verträglich. Die FSF führt die
+  Apache-2.0 ausdrücklich als GPLv3-kompatibel; die Unverträglichkeit betrifft
+  nur die **GPLv2**, weil deren Text die Patentklauseln der Apache-2.0 als
+  zusätzliche Einschränkung liest. Für ESP-IDF und Mbed TLS ist das die
+  einzige relevante Frage.
+* **LGPL-2.1-or-later** (Arduino-ESP32) darf über die „or later“-Klausel als
+  LGPL-3.0 verwendet und damit in ein GPL-3.0-Werk übernommen werden.
+* **LGPL-3.0** (ESPAsyncWebServer, AsyncTCP) geht ohne Umweg in GPL-3.0 auf.
+* **MIT** und **BSD-3-Clause** sind permissiv und verlangen nur die
+  Weitergabe ihres Lizenzhinweises.
+
+Die Namensnennung leisten der Info-Dialog des Dashboards und diese Tabelle.
+Den vollständigen Lizenztext liefert jede Komponente in ihrem eigenen
+Quelltextarchiv mit; er wird hier nicht dupliziert.

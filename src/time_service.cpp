@@ -125,6 +125,20 @@ void TimeService::begin()
     setenv("TZ", _config.tz, 1);
     tzset();
 
+    /*
+     * The system clock is not zeroed by a software reset. esp_timer keeps its
+     * boot offset in RTC slow memory, so after a watchdog reboot or
+     * ESP.restart() time() carries on where it left off - with no RTC fitted
+     * and before the first NTP answer. Saying so beats both alternatives:
+     * reporting "not set" next to a plausible time of day, and throwing the
+     * value away, which would leave the log stamped with uptime again.
+     */
+    if (clockValid())
+    {
+        _source = SRC_CARRIED;
+        sysLog.printf("Time: carried over the reset, %s\n", localTimeString().c_str());
+    }
+
     const HwProfile& hw = hwConfig.active();
     if (hw.i2cEnabled)
     {
@@ -189,7 +203,7 @@ void TimeService::refreshSystemFromRtc()
     settimeofday(&tv, nullptr);
     _lastSyncMs = millis();
 
-    if (_source == SRC_NONE)
+    if (_source == SRC_NONE || _source == SRC_CARRIED)
     {
         _source = SRC_RTC;
         sysLog.printf("RTC: system clock restored, %s\n", localTimeString().c_str());
@@ -376,6 +390,7 @@ const char* TimeService::sourceName() const
     case SRC_NTP:    return "ntp";
     case SRC_RTC:    return "rtc";
     case SRC_MANUAL: return "manual";
+    case SRC_CARRIED: return "carried";
     default:         return "none";
     }
 }

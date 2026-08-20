@@ -77,6 +77,13 @@ border:1px solid var(--line);border-radius:7px;color:var(--fg);font-family:inher
 .dot.ok{background:var(--ok)} .dot.err{background:var(--err)}
 .dot.warn{background:var(--warn)} .dot.off{background:var(--line)}
 .dim{color:var(--dim)}
+/* Ohne eigene Regel nimmt der Browser sein Standardblau - auf dem dunklen
+ * Untergrund kaum lesbar, und besuchte Links faerbten sich auch noch um. */
+a{color:var(--acc);text-decoration:none}
+a:hover{text-decoration:underline}
+/* Quellenliste: Name links als Link, Lizenzkuerzel rechts als Nebenangabe. */
+#infoDlg{max-width:min(92vw,460px)}
+.cred .row span{color:var(--dim);white-space:nowrap}
 dialog label{display:block;margin-top:10px;font-size:12px;color:var(--dim)}
 /* Option groups: the checkbox heads the box it switches on, so it no longer
  * reads as just another field caption floating above unrelated inputs. */
@@ -106,6 +113,13 @@ table.rows input,table.rows select{margin:2px 0;padding:6px;font-size:13px}
 table.rows input[type=checkbox]{margin:0 0 0 6px}
 .rowbtns{display:flex;gap:8px}
 button.ico{width:38px;padding:7px 0;font-size:16px;line-height:1;flex:0 0 auto}
+/* Piktogramme als Strichzeichnung statt Unicode-Glyphen: U+23F0 und Verwandte
+ * rendern auf vielen Systemen als Farb-Emoji und passen dann weder zum Thema
+ * noch zueinander. currentColor haelt sie an der Schaltflaechenfarbe. */
+button.ico svg{display:block;width:16px;height:16px;margin:0 auto;
+fill:none;stroke:currentColor;stroke-width:1.5;
+stroke-linecap:round;stroke-linejoin:round}
+button.ico svg .sol{fill:currentColor;stroke:none}
 /* Eine Checkbox-Zeile direkt unter einer Schaltflaechenreihe oder einem
  * Absatz klebte am Vorgaenger - sie braucht denselben Luftraum wie ein
  * eigener Abschnitt. */
@@ -323,18 +337,29 @@ small{color:var(--dim)}
     <input type="checkbox" id="logKeep" onchange="setKeep()">
     Neustart überdauern (RTC-Speicher)</label>
   <div class="rowbtns" style="margin-top:12px">
-    <button class="sec ico" onclick="logJump(0)" title="An den Anfang">&#8593;</button>
-    <button class="sec ico" onclick="logJump(1)" title="An das Ende">&#8595;</button>
+    <button class="sec ico" onclick="logJump(0)" title="An den Anfang"><svg
+      viewBox="0 0 16 16"><path d="M3.5 2.5h9"/><path d="M8 13.5V5.3"/>
+      <path d="M4.6 8.7 8 5.3l3.4 3.4"/></svg></button>
+    <button class="sec ico" onclick="logJump(1)" title="An das Ende"><svg
+      viewBox="0 0 16 16"><path d="M3.5 13.5h9"/><path d="M8 2.5v8.2"/>
+      <path d="M4.6 7.3 8 10.7l3.4-3.4"/></svg></button>
     <button class="sec ico" id="logFollow" onclick="toggleFollow()"
-            title="Laufend aktualisieren">&#9654;</button>
-    <button class="sec ico" onclick="loadLog()" title="Aktualisieren">&#8635;</button>
+            title="Laufend aktualisieren"></button>
+    <button class="sec ico" onclick="loadLog()" title="Aktualisieren"><svg
+      viewBox="0 0 16 16"><path d="M2.7 8a5.3 5.3 0 0 1 9-3.8"/>
+      <path d="M13.3 8a5.3 5.3 0 0 1-9 3.8"/><path d="M11.9 1.9v2.6H9.3"/>
+      <path d="M4.1 14.1v-2.6h2.6"/></svg></button>
     <button class="sec ico" id="logCopy" onclick="copyLog()"
-            title="In die Zwischenablage">&#10697;</button>
+            title="In die Zwischenablage"></button>
     <button class="sec ico" onclick="downloadLog()"
-            title="Als Datei speichern">&#8659;</button>
-    <button class="sec ico" onclick="loadResetLog()"
-            title="Vor dem Neustart">&#9200;</button>
-    <button class="sec ico" onclick="clearLog()" title="Leeren">&#9003;</button>
+            title="Als Datei speichern"><svg viewBox="0 0 16 16"
+      ><path d="M2.6 3.4a.8.8 0 0 1 .8-.8h7.3l2.7 2.7v7.3a.8.8 0 0 1-.8.8H3.4a.8.8 0 0 1-.8-.8z"/>
+      <path d="M5.2 2.6v3.6h5.2V2.6"/><path d="M4.6 9.2h6.8v4.2H4.6z"/></svg></button>
+    <button class="sec ico" onclick="clearLog()" title="Leeren"><svg
+      viewBox="0 0 16 16"><path d="M2.8 4.3h10.4"/>
+      <path d="M6.3 4.3V3a.9.9 0 0 1 .9-.9h1.6a.9.9 0 0 1 .9.9v1.3"/>
+      <path d="m4.3 4.3.6 8.6a1 1 0 0 0 1 .9h4.2a1 1 0 0 0 1-.9l.6-8.6"/>
+      <path d="M6.8 6.7v4.6M9.2 6.7v4.6"/></svg></button>
     <button class="sec" onclick="closeLog()">Schließen</button>
   </div>
   <p><small>Das Fenster zeigt einen Ausschnitt des Ringpuffers und lädt beim
@@ -354,19 +379,45 @@ small{color:var(--dim)}
   <h2>Über dieses Projekt</h2>
   <p><small>Selfbus KNX/IP Interface &ndash; eine KNXnet/IP-Schnittstelle auf
   ESP32 für den freien KNX-Baukasten von Selfbus.</small></p>
-  <p><small>Selfbus ist ein offenes Projekt für KNX-Geräte zum Selbstbau:
-  Schaltpläne, Platinen und Firmware stehen unter freien Lizenzen.</small></p>
-  <div class="row"><span>Wiki</span>
-    <a href="https://selfbus.org" target="_blank" rel="noopener">selfbus.org</a></div>
   <div class="row"><span>Quelltext</span>
-    <a href="https://github.com/selfbus" target="_blank" rel="noopener">github.com/selfbus</a></div>
-  <div class="row"><span>KNX-Stack</span>
-    <a href="https://github.com/thelsing/knx" target="_blank" rel="noopener">thelsing/knx</a></div>
-  <div class="row"><span>Lizenz</span><span>GPL-3.0</span></div>
+    <a href="https://github.com/jelli123/IP-Interface-ESP32" target="_blank"
+       rel="noopener">jelli123/IP-Interface-ESP32</a></div>
+  <div class="row"><span>Lizenz</span>
+    <a href="https://github.com/jelli123/IP-Interface-ESP32?tab=GPL-3.0-1-ov-file"
+       target="_blank" rel="noopener">GPL-3.0</a></div>
+  <div class="row"><span>Selfbus</span>
+    <a href="https://selfbus.org" target="_blank" rel="noopener">selfbus.org</a></div>
   <p><small>Diese Firmware ist freie Software: weitergeben und ändern unter
   den Bedingungen der GNU General Public License, Version 3. Ohne jede
   Gewährleistung &ndash; auch ohne die implizite Zusicherung der
   Marktreife oder Eignung für einen bestimmten Zweck.</small></p>
+
+  <h2>Verwendete Komponenten</h2>
+  <div class="cred">
+    <div class="row"><a href="https://github.com/thelsing/knx" target="_blank"
+      rel="noopener">KNX-Stack (thelsing/knx)</a><span>GPL-3.0</span></div>
+    <div class="row"><a href="https://github.com/ESP32Async/ESPAsyncWebServer"
+      target="_blank" rel="noopener">ESPAsyncWebServer</a><span>LGPL-3.0</span></div>
+    <div class="row"><a href="https://github.com/ESP32Async/AsyncTCP"
+      target="_blank" rel="noopener">AsyncTCP</a><span>LGPL-3.0</span></div>
+    <div class="row"><a href="https://github.com/jnthas/Improv-WiFi-Library"
+      target="_blank" rel="noopener">Improv-WiFi-Library</a><span>MIT</span></div>
+    <div class="row"><a href="https://github.com/espressif/arduino-esp32"
+      target="_blank" rel="noopener">Arduino-ESP32</a><span>LGPL-2.1-or-later</span></div>
+    <div class="row"><a href="https://github.com/espressif/esp-idf" target="_blank"
+      rel="noopener">ESP-IDF</a><span>Apache-2.0</span></div>
+    <div class="row"><a href="https://github.com/FreeRTOS/FreeRTOS-Kernel"
+      target="_blank" rel="noopener">FreeRTOS-Kernel</a><span>MIT</span></div>
+    <div class="row"><a href="https://savannah.nongnu.org/projects/lwip/"
+      target="_blank" rel="noopener">lwIP</a><span>BSD-3-Clause</span></div>
+    <div class="row"><a href="https://github.com/Mbed-TLS/mbedtls" target="_blank"
+      rel="noopener">Mbed TLS</a><span>Apache-2.0</span></div>
+  </div>
+  <p><small>Alle genannten Lizenzen sind mit der GPL-3.0 vereinbar. Der
+  KNX-Stack steht selbst unter GPL-3.0 und bestimmt damit die Lizenz des
+  Ganzen. Den vollständigen Lizenztext jeder Komponente enthält ihr
+  Quelltextarchiv.</small></p>
+
   <div class="actions">
     <button class="sec" onclick="infoDlg.close()">Schließen</button>
   </div>
@@ -460,25 +511,29 @@ small{color:var(--dim)}
   <h2>Hardware-Profil</h2>
   <p><small id="hwChip" data-dyn></small></p>
 
-  <label>KNX &ndash; UART-Nummer / RX / TX</label>
-  <div class="trio">
-    <input id="hwUart" type="number" min="0">
-    <input id="hwRx"   type="number" min="-1">
-    <input id="hwTx"   type="number" min="-1">
+  <div class="grp">
+    <label>KNX &ndash; UART-Nummer / RX / TX</label>
+    <div class="trio">
+      <input id="hwUart" type="number" min="0">
+      <input id="hwRx"   type="number" min="-1">
+      <input id="hwTx"   type="number" min="-1">
+    </div>
   </div>
 
-  <label>SB-Interface programmieren &ndash; Reset / ISP (&minus;1 = nicht verdrahtet)</label>
-  <div class="trio">
-    <input id="hwLpcRst" type="number" min="-1">
-    <input id="hwLpcIsp" type="number" min="-1">
-    <span></span>
+  <div class="grp">
+    <label>SB-Interface programmieren &ndash; Reset / ISP (&minus;1 = nicht verdrahtet)</label>
+    <div class="trio">
+      <input id="hwLpcRst" type="number" min="-1">
+      <input id="hwLpcIsp" type="number" min="-1">
+      <span></span>
+    </div>
+    <label class="chk"><input type="checkbox" id="hwLpcInv">
+      Steuerleitungen laufen über Inverter</label>
+    <p><small>Zwei Leitungen zum LPC des SB-Interface: /RESET und PIO0_1. Ohne
+    Inverter werden sie nur nach Masse gezogen und sonst losgelassen &ndash; die
+    Pull-ups des LPC halten ihn dann im Anwendungsprogramm. Die UART teilen sie
+    sich mit dem KNX-Stack.</small></p>
   </div>
-  <label class="chk"><input type="checkbox" id="hwLpcInv">
-    Steuerleitungen laufen über Inverter</label>
-  <p><small>Zwei Leitungen zum LPC des SB-Interface: /RESET und PIO0_1. Ohne
-  Inverter werden sie nur nach Masse gezogen und sonst losgelassen &ndash; die
-  Pull-ups des LPC halten ihn dann im Anwendungsprogramm. Die UART teilen sie
-  sich mit dem KNX-Stack.</small></p>
 
   <div class="grp">
     <label>Taster</label>
@@ -606,7 +661,14 @@ const EN = {
 'Takt':'Clock', 'Freier Speicher':'Free memory',
 'Über dieses Projekt':'About this project',
 'Wiki':'Wiki', 'Quelltext':'Source code', 'KNX-Stack':'KNX stack',
-'Lizenz':'Licence',
+'Lizenz':'Licence', 'Selfbus':'Selfbus',
+'Verwendete Komponenten':'Components used',
+['Alle genannten Lizenzen sind mit der GPL-3.0 vereinbar. Der KNX-Stack steht '
++ 'selbst unter GPL-3.0 und bestimmt damit die Lizenz des Ganzen. Den '
++ 'vollständigen Lizenztext jeder Komponente enthält ihr Quelltextarchiv.']:
+  'Every licence listed is compatible with the GPL-3.0. The KNX stack is '
++ 'itself GPL-3.0 and thereby sets the licence of the whole. The full licence '
++ 'text of each component ships with its own source archive.',
 'Partitionstabelle':'Partition table', 'Typ':'Type', 'Adresse':'Address',
 'Größe':'Size', 'Firmware':'Firmware',
 'frei in der Partition':'free in the partition',
@@ -804,6 +866,7 @@ const EN = {
 'nicht konfiguriert':'not configured', 'WLAN':'Wi-Fi',
 'AP-Modus aktiv':'AP mode active', 'getrennt':'disconnected',
 'manuell':'manual', 'keine':'none', 'nicht gesetzt':'not set',
+'aus dem Betrieb vor dem Neustart':'carried over from before the restart',
 'keiner':'none', 'nicht bestückt':'not fitted', 'deaktiviert':'disabled',
 'nicht aktiviert':'not enabled',
 'Ausschnitt':'Window', 'von':'of', 'An den Anfang':'To the top', 'An das Ende':'To the end',
@@ -831,9 +894,6 @@ const EN = {
   'Assign a button to the factory reset first - otherwise there is no way '
 + 'back.',
 'Neustart überdauern (RTC-Speicher)':'Survive a restart (RTC memory)',
-'Vor dem Neustart':'Before the restart',
-'Nichts hat den letzten Neustart überdauert.':
-  'Nothing survived the last restart.',
 'Gerätename':'Device name', 'Hostname':'Host name',
 'Name ändern':'Change the name',
 '1 bis 31 Zeichen aus A-Z a-z 0-9 und Bindestrich':
@@ -855,8 +915,7 @@ const EN = {
 + '- what arrives at the bottom pushes lines off the top. Top loads the whole '
 + 'buffer. Copying takes the selection, or everything shown.',
 'Aktualisieren':'Refresh', 'Leeren':'Clear', 'internes RAM':'internal RAM',
-'Kopieren':'Copy', 'Kopiert':'Copied',
-'Kopieren nicht moeglich':'Copy failed',
+'Kopiert':'Copied',
 'Herunterladen':'Download',
 'noch keine vergeben':'none assigned yet',
 'Image-Standard':'image defaults',
@@ -1253,6 +1312,15 @@ async function setBright(){
 const LOG_WIN  = 49152; //!< Fensterbreite in Byte
 const LOG_STEP = 12288; //!< Sprungweite beim Nachladen, ein Viertel davon
 
+// Die drei Piktogramme, die zur Laufzeit wechseln. Der Rest steht im Markup.
+const SVG = '<svg viewBox="0 0 16 16">';
+const ICO_PLAY = SVG + '<path class="sol" d="M5.4 3 12.4 8l-7 5z"/></svg>';
+const ICO_STOP = SVG + '<rect class="sol" x="4.2" y="4.2" width="7.6" height="7.6" rx="1"/></svg>';
+const ICO_CLIP = SVG + '<path d="M6.2 3H4.6a1.6 1.6 0 0 0-1.6 1.6v8.8A1.6 1.6 0 0 0 4.6 15h6.8a1.6 1.6'
+               + ' 0 0 0 1.6-1.6V4.6A1.6 1.6 0 0 0 11.4 3H9.8"/>'
+               + '<rect x="6.1" y="1.4" width="3.8" height="2.5" rx=".8"/></svg>';
+const ICO_DONE = SVG + '<path d="m3.2 8.4 3.3 3.4 6.3-7"/></svg>';
+
 let logFrom = 0, logOldest = 0, logWritten = 0;
 let logBusy = false, logFollow = false, logTimer = null;
 
@@ -1363,16 +1431,6 @@ async function setKeep(){
   await fetch('/api/log/keep', {method:'POST', body});
 }
 
-async function loadResetLog(){
-  const box = $('logText');
-  setFollow(false);
-  try { box.textContent = await (await fetch('/api/log/reset')).text(); }
-  catch(e){ box.textContent = t('Lesen fehlgeschlagen.'); return; }
-  if(!box.textContent) box.textContent = t('Nichts hat den letzten Neustart überdauert.');
-  box.scrollTop = 0;
-  $('logInfo').textContent = t('Vor dem Neustart');
-}
-
 function openName(){
   $('nameIn').value = last ? last.device_name : '';
   $('nameErr').textContent = '';
@@ -1397,6 +1455,7 @@ async function saveName(){
 function showLog(){
   logDlg.showModal();
   if(last) $('logKeep').checked = last.hardware.log_rtc;
+  $('logCopy').innerHTML = ICO_CLIP;
   $('logText').onscroll = logScrolled;
   setFollow(false);
   loadLog();
@@ -1409,7 +1468,7 @@ function closeLog(){
 
 function setFollow(on){
   logFollow = on;
-  $('logFollow').innerHTML = on ? '&#9632;' : '&#9654;';
+  $('logFollow').innerHTML = on ? ICO_STOP : ICO_PLAY;
   $('logFollow').classList.toggle('on', on);
 
   if(logTimer){ clearTimeout(logTimer); logTimer = null; }
@@ -1453,9 +1512,12 @@ async function copyLog(){
     ta.remove();
   }
 
+  // Das Piktogramm quittiert selbst - eine Beschriftung wuerde es ersetzen.
   const btn = $('logCopy');
-  btn.textContent = t(ok ? 'Kopiert' : 'Kopieren nicht moeglich');
-  setTimeout(() => { btn.textContent = t('Kopieren'); }, 1500);
+  btn.innerHTML = ok ? ICO_DONE : ICO_CLIP;
+  btn.title = t(ok ? 'Kopiert' : 'In die Zwischenablage');
+  setTimeout(() => { btn.innerHTML = ICO_CLIP;
+                     btn.title = t('In die Zwischenablage'); }, 1500);
 }
 
 function downloadLog(){
@@ -1649,14 +1711,23 @@ async function resetKnx(){
 }
 
 // --- Zeitserver ---
-const SRC = {ntp:'NTP', rtc:'RTC', manual:'manuell', none:'keine'};
+const SRC = {ntp:'NTP', rtc:'RTC', manual:'manuell',
+             carried:'aus dem Betrieb vor dem Neustart', none:'keine'};
 
 async function refreshTime(){
   let ts;
   try { ts = await (await fetch('/api/time')).json(); } catch(e){ return; }
   $('tsNow').textContent  = ts.local_time;
-  $('tsSrc').innerHTML    = ts.clock_valid ? dot(true) + ' ' + t(SRC[ts.source]||ts.source)
-                                           : '<span class="dot err"></span>' + t('nicht gesetzt');
+
+  /*
+   * Eine mitgenommene Uhr ist gueltig, aber ungeprueft: der Software-Reset
+   * loescht die Systemzeit nicht, also laeuft sie ohne RTC und ohne NTP
+   * weiter. Gelb statt gruen, damit die Anzeige das nicht verschweigt.
+   */
+  $('tsSrc').innerHTML    = ts.clock_valid
+      ? '<span class="dot ' + (ts.source === 'carried' ? 'warn' : 'ok') + '"></span>'
+        + t(SRC[ts.source]||ts.source)
+      : '<span class="dot err"></span>' + t('nicht gesetzt');
   $('tsNtpAct').innerHTML = ts.ntp_enabled
       ? (ts.ntp_active ? ts.ntp_active + (ts.ntp_dhcp_active ? ' <small>(DHCP)</small>' : '')
                        : '<span class="dim">' + t('keiner') + '</span>')
