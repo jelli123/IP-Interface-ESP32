@@ -44,8 +44,9 @@ public:
      *
      * Split out of begin() because every log line is stamped with
      * localtime_r(): until this has run the stamps are UTC, and the moment
-     * begin() catches up the whole log jumps by the offset. Needs NVS, so it
-     * belongs directly after hwConfig.begin() - but before anything logs.
+     * begin() catches up the whole log jumps by the offset. Belongs directly
+     * behind sysLog.begin() - NVS is already up at that point, initArduino()
+     * brings it up before setup() runs.
      */
     void applyTimezone();
 

@@ -1,0 +1,18 @@
+# 8 MB layout - same structure as partitions_4mb_ota.csv, both app slots twice
+# the size. Everything below app1 keeps its distance to the end of the flash,
+# so only the two app partitions grow.
+#
+# NOT reachable over OTA. The partition table itself lives outside every
+# partition and is only written by esptool, so moving a device from the 4 MB
+# layout to this one means a USB flash. nvs stays at 0x9000 and keeps the WiFi
+# credentials and the hardware profile; knxcfg moves from 0x3F0000 to 0x7F0000
+# and is therefore empty afterwards - the device has to be programmed by ETS
+# again.
+#
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x5000,
+otadata,  data, ota,     0xe000,   0x2000,
+app0,     app,  ota_0,   0x10000,  0x3F0000,
+app1,     app,  ota_1,   0x400000, 0x3F0000,
+knxcfg,   data, 0x40,    0x7F0000, 0x8000,
+coredump, data, coredump,0x7F8000, 0x8000,

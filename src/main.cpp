@@ -51,25 +51,28 @@ void setup()
     sysLog.begin();
 
     /*
+     * Right behind it, because every log line is stamped with local time: a
+     * timezone applied later makes the log jump by its offset mid-file.
+     *
+     * NVS is already up here - initArduino() runs nvs_flash_init(), with its
+     * own erase-and-retry, before setup() is ever called. hwConfig.begin()
+     * repeats that call as a safety net, it does not enable NVS.
+     */
+    timeService.applyTimezone();
+
+    /*
      * Hardware profile before anything else.
      *
-     * It brings up NVS and decides which pins the rest of the firmware uses,
-     * so nothing may touch a peripheral before this returns. Also samples the
-     * recovery button, which is why it runs ahead of Improv rather than
-     * after: a device locked out by a bad profile has to be rescued before
-     * any of the code that could crash on it starts.
+     * It decides which pins the rest of the firmware uses, so nothing may
+     * touch a peripheral before this returns. Also samples the recovery
+     * button, which is why it runs ahead of Improv rather than after: a
+     * device locked out by a bad profile has to be rescued before any of the
+     * code that could crash on it starts.
      *
      * Costs about 20 ms, so the Improv window below is still comfortably
      * within the two seconds ESP Web Tools waits for.
      */
     hwConfig.begin();
-
-    /*
-     * Straight after NVS and before anything else logs: the timestamp of a
-     * log line is local time, so a timezone applied later makes the whole log
-     * jump by its offset mid-file.
-     */
-    timeService.applyTimezone();
 
     // Straight after the profile and before anything else touches a pin: the
     // two ISP lines have to reach their idle state early, or a board with
