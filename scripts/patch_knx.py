@@ -1,4 +1,4 @@
-"""Patches two spots in the KNX stack.
+"""Patches six spots in the KNX stack.
 
 1. Tunnel routing for cEMI management responses
 -----------------------------------------------
@@ -347,3 +347,128 @@ def patch_scope():
 
 
 patch_scope()
+
+
+# --------------------------------------------------------------------------
+# 6. Bus monitor hook
+# --------------------------------------------------------------------------
+#
+# The stack has no way to hand a telegram out. KNX_ACTIVITYCALLBACK comes
+# closest, but its callback carries a direction and a network index and no
+# frame at all - enough to count bus load, not to show one.
+#
+# Three call sites cover everything that crosses a medium:
+#
+#   frameReceived()         one frame in, on whichever layer received it
+#   sendTelegram()          one frame out, just before it reaches the medium
+#   dataRequestFromTunnel() a frame handed to us over a tunnel
+#
+# The third needs the suppression flag: it calls frameReceived() for local
+# delivery, which without it would log an IP-side telegram as a TP reception.
+#
+# Both symbols are defined in src/bus_monitor.cpp, not here. A patch that no
+# longer applies then costs the monitor its input, not the build - and the
+# CPPDEFINES below tells the firmware which of the two happened.
+
+MON_MARKER = "// sbip: bus monitor, defined in src/bus_monitor.cpp"
+
+MON_DECL = (
+    MON_MARKER + "\n"
+    "extern void (*sbipMonitorHook)(uint8_t side, bool outgoing,\n"
+    "                               const uint8_t* cemi, uint16_t length);\n"
+    "extern bool sbipMonitorSuppress;\n"
+    "\n"
+)
+
+MON_ANCHOR_DECL = "void DataLinkLayerCallbacks::activity(uint8_t info)\n"
+
+MON_ANCHOR_RX = (
+    "void DataLinkLayer::frameReceived(CemiFrame& frame)\n"
+    "{\n"
+    "    AckType ack = frame.ack();\n"
+)
+
+MON_NEW_RX = (
+    "void DataLinkLayer::frameReceived(CemiFrame& frame)\n"
+    "{\n"
+    "    if (sbipMonitorHook && !sbipMonitorSuppress)\n"
+    "        sbipMonitorHook(_networkLayerEntity.getEntityIndex(), false,\n"
+    "                        frame.data(), frame.totalLenght());\n"
+    "\n"
+    "    AckType ack = frame.ack();\n"
+)
+
+MON_ANCHOR_TX = (
+    "    if (sendTheFrame)\n"
+    "        success = sendFrame(frame);\n"
+)
+
+MON_NEW_TX = (
+    "    if (sendTheFrame)\n"
+    "    {\n"
+    "        if (sbipMonitorHook)\n"
+    "            sbipMonitorHook(_networkLayerEntity.getEntityIndex(), true,\n"
+    "                            frame.data(), frame.totalLenght());\n"
+    "\n"
+    "        success = sendFrame(frame);\n"
+    "    }\n"
+)
+
+MON_ANCHOR_TUNNEL = (
+    "    // Send to local stack ( => cemiServer for potential other tunnel and"
+    " network layer for routing)\n"
+    "    frameReceived(frame);\n"
+)
+
+MON_NEW_TUNNEL = (
+    "    // sbip: this one arrived over IP, and the call below is local\n"
+    "    // delivery - without the flag it would show up as a TP reception.\n"
+    "    if (sbipMonitorHook)\n"
+    "        sbipMonitorHook(0, false, frame.data(), frame.totalLenght());\n"
+    "\n"
+    "    // Send to local stack ( => cemiServer for potential other tunnel and"
+    " network layer for routing)\n"
+    "    sbipMonitorSuppress = true;\n"
+    "    frameReceived(frame);\n"
+    "    sbipMonitorSuppress = false;\n"
+)
+
+MON_EDITS = (
+    (MON_ANCHOR_DECL, MON_DECL + MON_ANCHOR_DECL),
+    (MON_ANCHOR_RX, MON_NEW_RX),
+    (MON_ANCHOR_TX, MON_NEW_TX),
+    (MON_ANCHOR_TUNNEL, MON_NEW_TUNNEL),
+)
+
+
+def patch_monitor():
+    """@return True when the firmware may rely on the hook."""
+    if not os.path.isfile(DLL_C):
+        return False
+
+    with open(DLL_C, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if MON_MARKER in source:
+        return True
+
+    patched = source
+    for anchor, replacement in MON_EDITS:
+        if patched.count(anchor) != 1:
+            sys.stderr.write(
+                "patch_knx.py: anchor no longer unique, the bus monitor gets NO "
+                "telegrams - check whether upstream changed data_link_layer.cpp:"
+                "\n  %s\n" % anchor.strip().splitlines()[0]
+            )
+            return False
+        patched = patched.replace(anchor, replacement)
+
+    with open(DLL_C, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(patched)
+
+    print("patch_knx.py: bus monitor hook applied to data_link_layer.cpp")
+    return True
+
+
+if patch_monitor():
+    env.Append(CPPDEFINES=["SBIP_MONITOR_HOOK"])  # noqa: F821

@@ -102,6 +102,26 @@ input[type=checkbox]{width:auto;margin:0;flex:0 0 auto;accent-color:var(--acc)}
 font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.45;
 background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:10px;
 margin:6px 0}
+/* Busmonitor. Eigene Tabelle statt table.rows: die Zeilen sind nicht
+ * auswaehlbar und die Spalten sollen nicht springen, wenn eine Adresse
+ * einstellig wird. */
+#monDlg{max-width:min(98vw,1100px);width:1100px}
+#monBox{height:56vh;overflow:auto;background:var(--bg);border:1px solid var(--line);
+border-radius:7px;margin:6px 0}
+table.mon{width:100%;border-collapse:collapse;
+font-family:ui-monospace,Consolas,monospace;font-size:12px;
+font-variant-numeric:tabular-nums}
+table.mon th{position:sticky;top:0;background:var(--card);text-align:left;
+padding:6px 7px;font-size:10px;letter-spacing:.4px;text-transform:uppercase;
+color:var(--dim);border-bottom:1px solid var(--line);font-family:inherit}
+table.mon td{padding:3px 7px;border-bottom:1px solid rgba(43,52,68,.5);
+white-space:nowrap}
+table.mon td.w{white-space:normal;word-break:break-all}
+table.mon tr.tx td:first-child{box-shadow:inset 3px 0 0 var(--acc)}
+.monf{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:6px 0}
+.monf label{margin:0 0 3px;display:block}
+.monf>div{flex:1 1 130px}
+.monf input,.monf select{margin:0}
 table.rows{width:100%;border-collapse:collapse;margin:6px 0 4px}table.rows td{padding:2px 3px}
 table.rows tr.hd th{padding:2px 4px 5px;text-align:left;font-size:11px;
 font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);
@@ -189,6 +209,10 @@ small{color:var(--dim)}
     <div class="row"><span>TP gesendet</span><span id="tpTx">-</span></div>
     <div class="row"><span>IP empfangen</span><span id="ipRx">-</span></div>
     <div class="row"><span>IP gesendet</span><span id="ipTx">-</span></div>
+    <div class="row"><span>Busmonitor</span><span id="monSt">-</span></div>
+    <div class="actions">
+      <button class="sec" onclick="openMon()">Busmonitor</button>
+    </div>
   </section>
 
   <section class="card">
@@ -373,6 +397,81 @@ small{color:var(--dim)}
   <div class="actions">
     <button class="sec" onclick="partDlg.close()">Schließen</button>
   </div>
+</dialog>
+
+<dialog id="monDlg">
+  <h2>Busmonitor</h2>
+
+  <div class="grp">
+    <label>Aufzeichnen</label>
+    <div class="monf">
+      <div><label>Seite</label>
+        <select id="monSides">
+          <option value="tp,ip">TP und IP</option>
+          <option value="tp">nur TP</option>
+          <option value="ip">nur IP</option>
+        </select></div>
+      <div><label>Start</label>
+        <select id="monMode" onchange="monModeChanged()">
+          <option value="now">sofort</option>
+          <option value="trigger">bei Gruppenadresse</option>
+        </select></div>
+      <div><label>Trigger-Gruppenadresse</label>
+        <input id="monTrig" placeholder="z.B. 1/2/3"></div>
+    </div>
+    <label class="chk"><input type="checkbox" id="monStopFull">
+      Bei vollem Puffer anhalten statt zu überschreiben</label>
+    <div class="rowbtns" style="margin-top:12px">
+      <button id="monRun" onclick="monToggle()">Start</button>
+      <button class="sec" onclick="monClear()">Leeren</button>
+      <button class="sec ico" id="monFollow" onclick="monToggleFollow()"
+              title="Laufend aktualisieren"></button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <label>Anzeige filtern</label>
+    <div class="monf">
+      <div><label>Seite</label>
+        <select id="fSide" onchange="monRender()">
+          <option value="">alle</option>
+          <option value="1">TP</option>
+          <option value="0">IP</option>
+        </select></div>
+      <div><label>Richtung</label>
+        <select id="fDir" onchange="monRender()">
+          <option value="">alle</option>
+          <option value="0">empfangen</option>
+          <option value="1">gesendet</option>
+        </select></div>
+      <div><label>Adressart</label>
+        <select id="fKind" onchange="monRender()">
+          <option value="">alle</option>
+          <option value="1">Gruppe</option>
+          <option value="0">physikalisch</option>
+        </select></div>
+      <div><label>Quelle enthält</label>
+        <input id="fSrc" oninput="monRender()" placeholder="1.1."></div>
+      <div><label>Ziel enthält</label>
+        <input id="fDst" oninput="monRender()" placeholder="1/2/"></div>
+      <div><label>Dienst enthält</label>
+        <input id="fSvc" oninput="monRender()" placeholder="Write"></div>
+    </div>
+  </div>
+
+  <p><small id="monInfo" data-dyn></small></p>
+  <div id="monBox"><table class="mon" id="monTbl"></table></div>
+
+  <div class="actions">
+    <button class="sec" onclick="monLoad(0)">Ältere laden</button>
+    <button class="sec" onclick="monLoad(1)">Neueste laden</button>
+    <button class="sec" onclick="monDownload()">Als CSV speichern</button>
+    <button class="sec" onclick="monClose()">Schließen</button>
+  </div>
+  <p><small>Der Ring liegt im PSRAM; ohne PSRAM bleibt der Monitor aus und
+  es hilft nur der Gruppenmonitor der ETS. Angezeigt wird immer nur ein
+  Ausschnitt &ndash; der Filter wirkt auf das Geladene, nicht auf die
+  Aufzeichnung.</small></p>
 </dialog>
 
 <dialog id="infoDlg">
@@ -692,6 +791,42 @@ const EN = {
 'Partitionstabelle':'Partition table', 'Typ':'Type', 'Adresse':'Address',
 'Größe':'Size', 'Firmware':'Firmware',
 'frei':'free',
+
+/* --- Busmonitor --- */
+'Busmonitor':'Bus monitor', 'Aufzeichnen':'Recording',
+'Anzeige filtern':'Filter the list', 'Seite':'Side', 'Richtung':'Direction',
+'Adressart':'Address type', 'Gruppe':'Group', 'physikalisch':'individual',
+'Quelle enthält':'Source contains', 'Ziel enthält':'Destination contains',
+'Dienst enthält':'Service contains', 'alle':'all',
+'empfangen':'received', 'gesendet':'sent',
+'TP und IP':'TP and IP', 'nur TP':'TP only', 'nur IP':'IP only',
+'Start':'Start', 'Stopp':'Stop', 'sofort':'right away',
+'bei Gruppenadresse':'on a group address',
+'Trigger-Gruppenadresse':'Trigger group address',
+'Bei vollem Puffer anhalten statt zu überschreiben':
+  'Stop when the buffer is full instead of overwriting',
+'Ältere laden':'Load older', 'Neueste laden':'Load newest',
+'Als CSV speichern':'Save as CSV',
+'Zeit':'Time', 'Quelle':'Source', 'Ziel':'Destination', 'Prio':'Prio',
+'Dienst':'Service', 'Daten':'Data', 'unlesbar':'undecodable',
+'Telegrammen':'telegrams', 'nach dem Anhalten verworfen':'discarded after the stop',
+'bereit':'ready', 'angehalten':'stopped', 'zeichnet auf':'recording',
+'wartet auf den Trigger':'waiting for the trigger',
+'Puffer voll':'buffer full', 'Puffer voll, angehalten':'buffer full, stopped',
+'kein PSRAM':'no PSRAM', 'Stack-Haken fehlt':'stack hook missing',
+'Kein PSRAM, der Busmonitor ist nicht verfügbar.':
+  'No PSRAM, the bus monitor is unavailable.',
+'Der Stack-Haken fehlt - siehe scripts/patch_knx.py.':
+  'The stack hook is missing - see scripts/patch_knx.py.',
+'Bitte eine Trigger-Gruppenadresse angeben.':'Please enter a trigger group address.',
+'Aufzeichnung konnte nicht gestartet werden.':'Could not start the recording.',
+['Der Ring liegt im PSRAM; ohne PSRAM bleibt der Monitor aus und es hilft nur '
++ 'der Gruppenmonitor der ETS. Angezeigt wird immer nur ein Ausschnitt – der '
++ 'Filter wirkt auf das Geladene, nicht auf die Aufzeichnung.']:
+  'The ring lives in PSRAM; without it the monitor stays off and only the ETS '
++ 'group monitor is left. The list always shows a window of the ring - the '
++ 'filter works on what was loaded, not on the recording.',
+
 'LED-Helligkeit':'LED brightness', 'Heartbeat aktiv':'Heartbeat active',
 'Neustart nötig':'Restart required',
 'Alle Gruppentelegramme weiterleiten':'Forward every group telegram',
@@ -1238,6 +1373,10 @@ async function refresh(){
   $('ipRx').textContent = s.ip_stats.rx_frames;
   $('ipTx').textContent = s.ip_stats.tx_frames;
 
+  const MST = {off:'bereit', armed:'wartet auf den Trigger', running:'zeichnet auf',
+               full:'Puffer voll', no_psram:'kein PSRAM', no_hook:'Stack-Haken fehlt'};
+  $('monSt').textContent = t(MST[s.monitor] || s.monitor);
+
   $('ssid').textContent = s.ssid;
   $('ip').textContent   = s.ip;
   $('ipSrc').textContent = t(s.ip_from_ets ? 'fest, aus der ETS' : 'automatisch (DHCP)');
@@ -1577,6 +1716,204 @@ function downloadLog(){
   a.href = '/api/log?download=1&bytes=' + ((last && last.hardware.log_size) || LOG_WIN);
   a.download = 'sbip-log-' + stamp + '.txt';
   a.click();
+}
+
+/* --- Busmonitor ---------------------------------------------------------- *
+ * Der Ring im Geraet fasst Tausende Telegramme; im Browser stehen davon immer
+ * nur die zuletzt geholten. Geladen wird ueber absolute Folgenummern, so wie
+ * beim Protokollfenster, damit Blaettern und Nachladen dieselbe Rechnung
+ * benutzen. Der Filter wirkt nur auf das Geholte - die Aufzeichnung selbst
+ * entscheidet allein die Seitenauswahl im Geraet.
+ * ------------------------------------------------------------------------- */
+
+const MON_WIN = 400; //!< Telegramme je Abruf
+let monRows = [], monState = null, monFollow = false, monTimer = null;
+
+function openMon(){
+  monDlg.showModal();
+  monModeChanged();
+  monSetFollow(false);
+  monRefresh().then(() => monLoad(1));
+}
+
+function monClose(){
+  monSetFollow(false);
+  monDlg.close();
+}
+
+function monModeChanged(){
+  $('monTrig').disabled = $('monMode').value !== 'trigger';
+}
+
+async function monRefresh(){
+  try { monState = await (await fetch('/api/monitor')).json(); }
+  catch(e){ return null; }
+
+  const s = monState;
+  const ST = {off:'angehalten', armed:'wartet auf den Trigger',
+              running:'zeichnet auf', full:'Puffer voll, angehalten'};
+
+  const busy = s.state === 'armed' || s.state === 'running';
+  $('monRun').textContent = t(busy ? 'Stopp' : 'Start');
+
+  let info;
+  if(!s.hook)           info = t('Der Stack-Haken fehlt - siehe scripts/patch_knx.py.');
+  else if(!s.available) info = t('Kein PSRAM, der Busmonitor ist nicht verfügbar.');
+  else info = t(ST[s.state] || s.state) + ' \u00b7 '
+            + s.count + ' ' + t('von') + ' ' + s.capacity + ' '
+            + t('Telegrammen') + (s.missed ? ' \u00b7 ' + s.missed + ' '
+            + t('nach dem Anhalten verworfen') : '');
+
+  $('monInfo').textContent = info;
+
+  const off = !s.available || !s.hook;
+  $('monRun').disabled = off;
+  return s;
+}
+
+/** @param newest 1 = ans Ende springen, 0 = einen Ausschnitt weiter zurueck. */
+async function monLoad(newest){
+  const s = await monRefresh();
+  if(!s || !s.available) return;
+
+  let from = null;
+  if(!newest){
+    const first = monRows.length ? monRows[0].s : s.written;
+    from = Math.max(s.oldest, first - MON_WIN);
+  }
+
+  const url = '/api/monitor/frames?max=' + MON_WIN + (from === null ? '' : '&from=' + from);
+  try { monRows = await (await fetch(url)).json(); }
+  catch(e){ return; }
+
+  monRender(newest);
+}
+
+function monRender(toEnd){
+  const fSide = $('fSide').value, fDir = $('fDir').value, fKind = $('fKind').value;
+  const fSrc = $('fSrc').value.trim(), fDst = $('fDst').value.trim();
+  const fSvc = $('fSvc').value.trim().toLowerCase();
+
+  const rows = monRows.filter(r =>
+       (fSide === '' || String(r.t) === fSide)
+    && (fDir  === '' || String(r.o) === fDir)
+    && (fKind === '' || String(r.g === undefined ? '' : r.g) === fKind)
+    && (!fSrc || (r.src || '').indexOf(fSrc) >= 0)
+    && (!fDst || (r.dst || '').indexOf(fDst) >= 0)
+    && (!fSvc || (r.a  || '').toLowerCase().indexOf(fSvc) >= 0));
+
+  const head = '<tr><th>' + t('Zeit') + '</th><th>&Delta;</th><th>' + t('Seite')
+    + '</th><th></th><th>' + t('Quelle') + '</th><th>' + t('Ziel') + '</th><th>'
+    + t('Prio') + '</th><th>' + t('Dienst') + '</th><th>' + t('Daten') + '</th></tr>';
+
+  let previous = null;
+  const body = rows.map(r => {
+    const gap = previous === null ? '' : (r.ms - previous) + ' ms';
+    previous = r.ms;
+    return '<tr class="' + (r.o ? 'tx' : 'rx') + '">'
+      + '<td>' + monTime(r.ms) + '</td>'
+      + '<td>' + gap + '</td>'
+      + '<td>' + (r.t ? 'TP' : 'IP') + '</td>'
+      + '<td>' + (r.o ? '&rarr;' : '&larr;') + '</td>'
+      + '<td>' + esc(r.src || '') + '</td>'
+      + '<td>' + esc(r.dst || '') + '</td>'
+      + '<td>' + esc(r.p || '') + '</td>'
+      + '<td>' + esc(r.a || (r.raw ? t('unlesbar') : '')) + '</td>'
+      + '<td class="w">' + esc(r.d || r.raw || '') + '</td></tr>';
+  }).join('');
+
+  $('monTbl').innerHTML = head + body;
+  if(toEnd) $('monBox').scrollTop = $('monBox').scrollHeight;
+}
+
+/*
+ * Das Geraet stempelt mit seiner Betriebszeit, weil eine Uhrzeit im
+ * Aufzeichnungspfad nichts zu suchen hat. Steht die Uhr, rechnet der Browser
+ * daraus die Tageszeit; sonst bleibt die Betriebszeit stehen.
+ */
+function monTime(ms){
+  if(monState && monState.epoch_ms){
+    const d = new Date(monState.epoch_ms - (monState.now_ms - ms));
+    return d.toTimeString().slice(0,8) + '.'
+         + String(d.getMilliseconds()).padStart(3,'0');
+  }
+  const s = Math.floor(ms/1000);
+  return '+' + String(Math.floor(s/3600)).padStart(2,'0') + ':'
+       + String(Math.floor(s/60)%60).padStart(2,'0') + ':'
+       + String(s%60).padStart(2,'0') + '.'
+       + String(ms%1000).padStart(3,'0');
+}
+
+async function monToggle(){
+  const s = monState;
+  if(s && (s.state === 'armed' || s.state === 'running')){
+    await fetch('/api/monitor/stop', {method:'POST'});
+    monSetFollow(false);
+    await monRefresh();
+    return;
+  }
+
+  const trigger = $('monMode').value === 'trigger' ? $('monTrig').value.trim() : '';
+  if($('monMode').value === 'trigger' && !trigger){
+    alert(t('Bitte eine Trigger-Gruppenadresse angeben.'));
+    return;
+  }
+
+  const body = new URLSearchParams({
+    sides:     $('monSides').value,
+    trigger:   trigger,
+    stop_full: $('monStopFull').checked ? '1' : '0'
+  });
+  const r = await fetch('/api/monitor/start', {method:'POST', body});
+  if(!r.ok){ alert(t('Aufzeichnung konnte nicht gestartet werden.')); return; }
+
+  monRows = [];
+  monRender();
+  monSetFollow(true);
+}
+
+async function monClear(){
+  await fetch('/api/monitor/clear', {method:'POST'});
+  monRows = [];
+  monRender();
+  monRefresh();
+}
+
+function monSetFollow(on){
+  monFollow = on;
+  $('monFollow').innerHTML = on ? ICO_STOP : ICO_PLAY;
+  $('monFollow').classList.toggle('on', on);
+
+  if(monTimer){ clearTimeout(monTimer); monTimer = null; }
+  if(on) monTick();
+}
+
+function monToggleFollow(){ monSetFollow(!monFollow); }
+
+async function monTick(){
+  if(!monDlg.open || !monFollow){ monTimer = null; return; }
+  await monLoad(1);
+  monTimer = setTimeout(monTick, 1500);
+}
+
+/* Ausgangspunkt ist das Geholte, nicht der Ring: was der Browser zeigt, ist
+ * auch das, was in der Datei steht - sonst passen Filter und Datei nicht
+ * zusammen. */
+function monDownload(){
+  const sep = ';';
+  const head = ['ms','Seite','Richtung','Quelle','Ziel','Prio','Wdh','Hop',
+                'Dienst','Daten'].join(sep);
+  const body = monRows.map(r => [r.ms, r.t ? 'TP' : 'IP', r.o ? 'TX' : 'RX',
+      r.src || '', r.dst || '', r.p || '', r.r || 0, r.h === undefined ? '' : r.h,
+      r.a || '', r.d || r.raw || ''].join(sep)).join('\n');
+
+  const blob = new Blob([head + '\n' + body], {type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'sbip-monitor-'
+    + new Date().toISOString().slice(0,19).replace(/[-:]/g,'').replace('T','-') + '.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 async function showParts(){
