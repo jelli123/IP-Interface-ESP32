@@ -39,6 +39,16 @@ public:
         char     tz[48]        = "CET-1CEST,M3.5.0,M10.5.0/3"; //!< POSIX TZ
     };
 
+    /**
+     * Put the stored timezone into place, nothing else.
+     *
+     * Split out of begin() because every log line is stamped with
+     * localtime_r(): until this has run the stamps are UTC, and the moment
+     * begin() catches up the whole log jumps by the offset. Needs NVS, so it
+     * belongs directly after hwConfig.begin() - but before anything logs.
+     */
+    void applyTimezone();
+
     /** Load the configuration, start I2C/RTC and apply the timezone. */
     void begin();
 

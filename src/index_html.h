@@ -494,8 +494,28 @@ small{color:var(--dim)}
     <label>NTP-Server (Fallback, wenn DHCP keinen liefert)</label>
     <input id="tsNtpSrv" placeholder="pool.ntp.org">
   </div>
-  <label>Zeitzone (POSIX TZ)</label>
-  <input id="tsTz" placeholder="CET-1CEST,M3.5.0,M10.5.0/3">
+  <label>Zeitzone</label>
+  <select id="tsTzSel" onchange="tzPick()">
+    <option value="CET-1CEST,M3.5.0,M10.5.0/3">Mitteleuropa mit Sommerzeit &ndash; Berlin, Wien, Zürich, Paris, Rom, Madrid</option>
+    <option value="GMT0BST,M3.5.0/1,M10.5.0">Westeuropa mit Sommerzeit &ndash; London, Dublin, Lissabon</option>
+    <option value="EET-2EEST,M3.5.0/3,M10.5.0/4">Osteuropa mit Sommerzeit &ndash; Athen, Helsinki, Bukarest, Riga</option>
+    <option value="&lt;+03&gt;-3">Istanbul, Moskau &ndash; UTC+3, keine Sommerzeit</option>
+    <option value="CET-1">Mitteleuropa ohne Sommerzeit &ndash; feste UTC+1</option>
+    <option value="UTC0">UTC &ndash; ohne Versatz, ohne Sommerzeit</option>
+    <option value="EST5EDT,M3.2.0,M11.1.0">USA Ostküste &ndash; New York</option>
+    <option value="CST6CDT,M3.2.0,M11.1.0">USA Mitte &ndash; Chicago</option>
+    <option value="MST7MDT,M3.2.0,M11.1.0">USA Gebirgszone &ndash; Denver</option>
+    <option value="PST8PDT,M3.2.0,M11.1.0">USA Westküste &ndash; Los Angeles</option>
+    <option value="">eigene Angabe in POSIX-Schreibweise</option>
+  </select>
+  <input id="tsTz" placeholder="CET-1CEST,M3.5.0,M10.5.0/3" style="display:none">
+  <p><small>Die Auswahl schreibt eine POSIX-Zeitzonenregel aus vier Teilen:
+  Kürzel und Versatz der Normalzeit, Kürzel der Sommerzeit, Beginn und Ende
+  der Sommerzeit. Das Vorzeichen des Versatzes ist umgekehrt &ndash; er nennt,
+  was zur Ortszeit addiert UTC ergibt. In "CET-1CEST,M3.5.0,M10.5.0/3" steht
+  "CET-1" deshalb für UTC+1, "M3.5.0" für den letzten Sonntag im März
+  (Monat 3, Woche 5 = letzte, Tag 0 = Sonntag) und "M10.5.0/3" für den letzten
+  Sonntag im Oktober um 3 Uhr.</small></p>
   <label>Zeit manuell setzen</label>
   <input id="tsManual" type="datetime-local" step="1">
   <div class="actions">
@@ -765,7 +785,37 @@ const EN = {
 'NTP-Server vom DHCP beziehen':'Obtain NTP server from DHCP',
 'NTP-Server (Fallback, wenn DHCP keinen liefert)':
   'NTP server (fallback when DHCP supplies none)',
-'Zeitzone (POSIX TZ)':'Time zone (POSIX TZ)',
+'Zeitzone':'Time zone',
+'Mitteleuropa mit Sommerzeit – Berlin, Wien, Zürich, Paris, Rom, Madrid':
+  'Central Europe with DST - Berlin, Vienna, Zurich, Paris, Rome, Madrid',
+'Westeuropa mit Sommerzeit – London, Dublin, Lissabon':
+  'Western Europe with DST - London, Dublin, Lisbon',
+'Osteuropa mit Sommerzeit – Athen, Helsinki, Bukarest, Riga':
+  'Eastern Europe with DST - Athens, Helsinki, Bucharest, Riga',
+'Istanbul, Moskau – UTC+3, keine Sommerzeit':
+  'Istanbul, Moscow - UTC+3, no DST',
+'Mitteleuropa ohne Sommerzeit – feste UTC+1':
+  'Central Europe without DST - fixed UTC+1',
+'UTC – ohne Versatz, ohne Sommerzeit':'UTC - no offset, no DST',
+'USA Ostküste – New York':'US Eastern - New York',
+'USA Mitte – Chicago':'US Central - Chicago',
+'USA Gebirgszone – Denver':'US Mountain - Denver',
+'USA Westküste – Los Angeles':'US Pacific - Los Angeles',
+'eigene Angabe in POSIX-Schreibweise':'own rule in POSIX notation',
+['Die Auswahl schreibt eine POSIX-Zeitzonenregel aus vier Teilen: Kürzel und '
++ 'Versatz der Normalzeit, Kürzel der Sommerzeit, Beginn und Ende der '
++ 'Sommerzeit. Das Vorzeichen des Versatzes ist umgekehrt – er nennt, was zur '
++ 'Ortszeit addiert UTC ergibt. In "CET-1CEST,M3.5.0,M10.5.0/3" steht "CET-1" '
++ 'deshalb für UTC+1, "M3.5.0" für den letzten Sonntag im März (Monat 3, '
++ 'Woche 5 = letzte, Tag 0 = Sonntag) und "M10.5.0/3" für den letzten Sonntag '
++ 'im Oktober um 3 Uhr.']:
+  'The list writes a POSIX time zone rule, which has four parts: abbreviation '
++ 'and offset of standard time, abbreviation of daylight saving time, and the '
++ 'start and end of it. The sign of the offset is inverted - it states what '
++ 'has to be added to local time to arrive at UTC. In '
++ '"CET-1CEST,M3.5.0,M10.5.0/3" that makes "CET-1" mean UTC+1, "M3.5.0" the '
++ 'last Sunday in March (month 3, week 5 = last, day 0 = Sunday) and '
++ '"M10.5.0/3" the last Sunday in October at 3 a.m.',
 'Zeit manuell setzen':'Set time manually',
 'KNX \u2013 UART-Nummer / RX / TX':'KNX \u2013 UART number / RX / TX',
 'Programmier-LED / Taster (\u22121 = nicht bestückt)':
@@ -1750,10 +1800,32 @@ async function openTime(){
   $('tsNtpEn').checked  = ts.ntp_enabled;
   $('tsNtpDhcp').checked= ts.ntp_from_dhcp;
   $('tsNtpSrv').value   = ts.ntp_server;
+
+  /*
+   * Eine POSIX-Regel errät niemand, also fuehrt die Liste. Steht im Geraet
+   * etwas, das nicht darin vorkommt, springt die Auswahl auf "eigene Angabe"
+   * und gibt das Textfeld frei - eine von Hand gepflegte Regel darf nicht
+   * stillschweigend durch die naechstbeste ersetzt werden.
+   */
   $('tsTz').value       = ts.tz;
+  const known = [...$('tsTzSel').options].some(o => o.value === ts.tz && o.value !== '');
+  $('tsTzSel').value    = known ? ts.tz : '';
+  tzShow();
+
   const d = new Date(Date.now() - new Date().getTimezoneOffset()*60000);
   $('tsManual').value   = d.toISOString().slice(0,19);
   timeDlg.showModal();
+}
+
+function tzShow(){
+  $('tsTz').style.display = ($('tsTzSel').value === '') ? '' : 'none';
+}
+
+function tzPick(){
+  const picked = $('tsTzSel').value;
+  if(picked) $('tsTz').value = picked;
+  tzShow();
+  if(!picked) $('tsTz').focus();
 }
 
 async function saveTime(){
