@@ -28,7 +28,7 @@ NCN5130-Transceiver; hier sitzt stattdessen ein Selfbus-Interface am UART.
 | Anti-Brick | zwei App-Partitionen + Bootloader-Rollback |
 | WLAN-Watchdog | erkennt stille Abbrüche und verlorene DHCP-Leases |
 | TP-Link-Watchdog | erneuert den Reset-Handshake, wenn das SB-Interface stumm wird |
-| Auslastung | TP1-Buslast und CPU-Last je Kern, mit Spitzenwertmarker |
+| Auslastung | TP1-Buslast, Kern-0-Last und Hauptschleifen-Last, mit Spitzenwertmarker |
 | mDNS | `http://sbip.local` |
 | CSRF-Schutz | Origin-Prüfung auf allen schreibenden Endpunkten |
 
@@ -956,7 +956,7 @@ das Passwort und ein zweiter Ort für Fehler.
 | GET | `/api/hwconfig` | aktives, gespeichertes und Image-Profil |
 | POST | `/api/hwconfig` | JSON-Profil speichern (Teilfelder erlaubt) |
 | POST | `/api/hwconfig/reset` | gespeichertes Profil verwerfen |
-| POST | `/api/peaks/reset` | Spitzenwertmarker aller Auslastungen löschen |
+| POST | `/api/peaks/reset` | `scope=bus\|cpu\|all` → Spitzenwertmarker löschen |
 | POST | `/api/led/heartbeat` | `enabled=1\|0` → Herzschlag schalten |
 | POST | `/api/led/brightness` | `percent=1..100` → Helligkeit aller LEDs |
 | GET | `/api/partitions` | Partitionstabelle des Flash |
@@ -1506,9 +1506,45 @@ Der Zähler ist auf 32 Bit gekürzt und läuft alle ~71 Minuten über. Alle Wert
 hier sind Differenzen zweier Messungen im Sekundenabstand, und vorzeichenlose
 Arithmetik trägt das von allein über den Überlauf.
 
-Einkern-Varianten (C3, C6) zeigen nur einen Balken; die Kernanzahl kommt aus
+**Für Kern 1 gibt es diesen Wert nicht.** Die Arduino-Hauptschleife ist dorthin
+gebunden und pollt, ohne je zu blockieren; der Idle-Task von Kern 1 kommt damit
+nie an die Reihe, und die Rechnung oben liefert dauerhaft 100 %. Das ist keine
+Messfehlfunktion – der Kern *ist* zu 100 % belegt –, sagt aber nichts darüber
+aus, wie viel davon Arbeit war. Ein Bremsen der Schleife verbietet sich: der
+TP-UART erwartet die Quittung eines adressierten Telegramms innerhalb weniger
+Millisekunden, ein `delay(1)` je Durchlauf gefährdet dieses Fenster.
+
+### Hauptschleifen-Last
+
+Deshalb misst `CpuLoad::pass()` die Schleife selbst. Jeder Durchlauf von
+`loop()` stempelt einen Zeitpunkt; über ein Sekundenfenster ergeben sich
+Anzahl, Gesamtdauer und der kürzeste Durchlauf.
+
+Der **kürzeste Durchlauf ist der Preis des Pollens** – das, was ein Durchlauf
+kostet, der nichts zu tun findet. Nur was die übrigen Durchläufe darüber hinaus
+brauchen, zählt als Arbeit:
+
+```
+Last = (Gesamtdauer − Durchläufe × kürzester Durchlauf) / Gesamtdauer
+```
+
+Ohne Telegramme und ohne Zugriffe geht der Wert damit gegen null, und er steigt,
+je mehr echte Arbeit die Schleife bekommt. Preemption durch andere Tasks auf
+demselben Kern fällt mit hinein – zu Recht, sie kostet die Schleife dieselbe
+Zeit.
+
+Daneben steht der **längste Durchlauf** seit dem letzten Zurücksetzen. Für ein
+pollendes Gerät ist das die eigentliche Gesundheitszahl: er begrenzt, wie
+schnell ein Telegramm bedient werden kann.
+
+Grenze des Verfahrens: unter Volllast gibt es keinen leerlaufenden Durchlauf
+mehr, der Bezugspunkt wandert nach oben und der Wert bleibt unter dem wahren.
+Nach oben ist die Anzeige also konservativ, nie zu optimistisch.
+
+Einkern-Varianten (C3, C6) zeigen nur einen Kernbalken; die Kernanzahl kommt aus
 `CONFIG_FREERTOS_NUMBER_OF_CORES`, nicht aus dem Chiptyp – ein Dual-Core kann
-per Konfiguration unicore laufen.
+per Konfiguration unicore laufen. Die Hauptschleifen-Last gibt es unabhängig
+davon.
 
 ### Spitzenwertmarker
 
@@ -1516,10 +1552,11 @@ Jeder Auslastungsbalken trägt einen zweiten, schmalen Strich: den höchsten
 Wert seit dem letzten Zurücksetzen. Die Zahl daneben nennt ihn ebenfalls, denn
 ein 2-px-Strich auf einem 6-px-Balken ist zum Ablesen zu grob.
 
-`POST /api/peaks/reset` löscht **alle** Marker zugleich – Buslast wie CPU.
-Getrennt wären sie zwar feiner steuerbar, aber nicht mehr vergleichbar: Ein
-Höchststand sagt nur etwas aus, wenn man weiß, über welchen Zeitraum er gilt,
-und das ist bei einem gemeinsamen Startpunkt eine Angabe statt drei. Der erste
+Buslast und CPU haben je einen eigenen Knopf – die eine Zahl beobachtet man beim
+Suchen nach einem Telegrammsturm, die andere beim Nachladen der Weboberfläche,
+und dafür will man nicht jedes Mal beide verlieren. Damit die Marker trotzdem
+lesbar bleiben, steht hinter jedem Höchstwert die Zeit, für die er gilt.
+`POST /api/peaks/reset` ohne `scope` löscht weiterhin beide. Der erste
 Messzyklus nach dem Start wird verworfen; sonst stünde die Startlast für den
 Rest der Laufzeit im Marker.
 

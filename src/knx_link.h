@@ -190,7 +190,10 @@ public:
     const Stats& stats() const { return _stats; }
 
     /** Drop the bus load high water mark. */
-    void resetPeak() { _stats.busLoadPeak = _stats.busLoadPermille; }
+    void resetPeak();
+
+    /** Seconds since the bus load peak was cleared. */
+    uint32_t busPeakAge() const;
 
     /** Result of the boot time link check, for /api/status. */
     const char* selfTestResult() const { return _selfTest; }
@@ -238,6 +241,7 @@ private:
     uint32_t _lastBusLoadWindow = 0;
     uint32_t _framesInWindow    = 0;
     uint32_t _lastLinkCheck     = 0;
+    uint32_t _busPeakAt         = 0;
 };
 
 extern KnxLink knxLink;

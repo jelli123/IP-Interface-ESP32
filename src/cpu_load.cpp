@@ -5,6 +5,9 @@
  *  so it wraps roughly every 71 minutes. Every figure here is a difference
  *  between two samples a second apart, and unsigned arithmetic carries that
  *  across the wrap on its own.
+ *
+ *  The main loop is measured separately, see pass() - the idle task of the
+ *  core it runs on never gets scheduled, so that core reads 100 % forever.
  */
 
 #include "cpu_load.h"
@@ -40,6 +43,20 @@ void CpuLoad::begin()
 
     _lastSample = millis();
     _peaksAt    = millis();
+    _lastPass   = micros();
+}
+
+void CpuLoad::pass()
+{
+    uint32_t now = micros();
+    uint32_t dt  = now - _lastPass;
+    _lastPass    = now;
+
+    if (_passes == 0 || dt < _passMin) _passMin = dt;
+    if (dt > _loopMaxPeak) _loopMaxPeak = dt;
+
+    _passes++;
+    _passSpan += dt;
 }
 
 void CpuLoad::loop()
@@ -47,6 +64,24 @@ void CpuLoad::loop()
     uint32_t now = millis();
     if ((uint32_t)(now - _lastSample) < SAMPLE_MS) return;
     _lastSample = now;
+
+    /*
+     * What the main loop did with its second.
+     *
+     * Every turn costs the polling itself even when there is nothing to do,
+     * and the shortest turn of the window is exactly that price. Only the
+     * time the other turns needed on top of it is work.
+     */
+    if (_passes > 0 && _passSpan > 0)
+    {
+        uint64_t floorTime = (uint64_t)_passes * _passMin;
+        uint64_t work      = (floorTime >= _passSpan) ? 0 : (_passSpan - floorTime);
+
+        _loopLoad = (uint16_t)((work * 1000u) / _passSpan);
+        if (_loopLoad > _loopPeak) _loopPeak = _loopLoad;
+    }
+    _passes   = 0;
+    _passSpan = 0;
 
     unsigned int needed = uxTaskGetNumberOfTasks() + SPARE;
     if (needed > _capacity)
@@ -121,5 +156,7 @@ uint32_t CpuLoad::peakAge() const
 void CpuLoad::resetPeaks()
 {
     for (uint8_t c = 0; c < MAX_CORES; c++) _peak[c] = _load[c];
-    _peaksAt = millis();
+    _loopPeak    = _loopLoad;
+    _loopMaxPeak = 0;
+    _peaksAt     = millis();
 }
