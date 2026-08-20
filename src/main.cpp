@@ -12,6 +12,7 @@
 #include <Network.h>
 
 #include "eth_interface.h"
+#include "bus_monitor.h"
 #include "button_service.h"
 #include "cpu_load.h"
 #include "hw_config.h"
@@ -146,6 +147,10 @@ void setup()
      * restartIpLayer() below is for.
      */
     netManager.begin();
+
+    // Before the stack can hand out a single frame, so nothing is missed
+    // between the two.
+    busMonitor.begin();
 
     if (!knxLink.begin())
     {

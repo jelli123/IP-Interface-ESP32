@@ -29,6 +29,7 @@ NCN5130-Transceiver; hier sitzt stattdessen ein Selfbus-Interface am UART.
 | WLAN-Watchdog | erkennt stille Abbrüche und verlorene DHCP-Leases |
 | TP-Link-Watchdog | erneuert den Reset-Handshake, wenn das SB-Interface stumm wird |
 | Auslastung | TP1-Buslast, Kern-0-Last und Hauptschleifen-Last, mit Spitzenwertmarker |
+| Busmonitor | Telegramme beider Seiten im PSRAM, mit Filter und Trigger |
 | mDNS | `http://sbip.local` |
 | CSRF-Schutz | Origin-Prüfung auf allen schreibenden Endpunkten |
 
@@ -633,10 +634,106 @@ zufällig im Flash stand.
 
 ### Startreihenfolge
 
-`HwConfig::begin()` läuft als **Erstes** in `setup()` – vor Improv, vor
-Ethernet, vor KNX. Es bringt NVS hoch und entscheidet über die Pins. Kostet
-rund 20 ms, das Improv-Fenster bleibt also innerhalb der zwei Sekunden, die
-ESP Web Tools abwartet.
+`HwConfig::begin()` läuft ganz vorn in `setup()` – vor Improv, vor Ethernet,
+vor KNX; nur der Protokollpuffer und die Zeitzone stehen davor. Es entscheidet
+über die Pins, kostet rund 20 ms, und das Improv-Fenster bleibt damit
+innerhalb der zwei Sekunden, die ESP Web Tools abwartet.
+
+---
+
+## Busmonitor
+
+Zeichnet die Telegramme beider Seiten auf – TP1, IP oder beide – und zeigt sie
+in einem eigenen Fenster mit Filtern. Gedacht für die Frage, die kein Zähler
+beantwortet: *Was genau läuft da über den Bus, und wer fängt an?*
+
+### Warum der Stack dafür gepatcht werden muss
+
+Der Stack hat keinen Weg, ein Telegramm nach außen zu geben. Am nächsten kommt
+`KNX_ACTIVITYCALLBACK`, aber dessen Rückruf trägt nur **Richtung und
+Netz-Index** – genug, um die Buslast zu zählen, nicht, um sie zu zeigen.
+
+[scripts/patch_knx.py](scripts/patch_knx.py) setzt deshalb einen sechsten
+Patch in `data_link_layer.cpp`, an drei Stellen:
+
+| Stelle | Was dort vorbeikommt |
+|---|---|
+| `frameReceived()` | jedes empfangene Telegramm, auf der Schicht, die es empfing |
+| `sendTelegram()` | jedes gesendete, unmittelbar vor dem Medium |
+| `dataRequestFromTunnel()` | was über einen Tunnel hereinkommt |
+
+Die dritte Stelle braucht eine Unterdrückungsflagge: Sie ruft ihrerseits
+`frameReceived()` für die lokale Zustellung auf. Ohne die Flagge stünde ein
+Telegramm, das die ETS durch einen Tunnel schickt, als **TP-Empfang** in der
+Liste – obwohl es über IP kam.
+
+Beide Symbole sind in [src/bus_monitor.cpp](src/bus_monitor.cpp) definiert,
+nicht im Stack. Findet der Patch seine Anker nicht mehr, kostet das den
+Monitor seine Eingabe, nicht den Build. Welcher der beiden Fälle vorliegt,
+sagt das Define `SBIP_MONITOR_HOOK`, das derselbe Patch setzt – das Dashboard
+schreibt dann „Stack-Haken fehlt“ statt eine leere Liste zu zeigen.
+
+### Der Aufzeichnungspfad darf nichts tun
+
+`capture()` läuft im Haupttask, mitten in `knx.loop()`, direkt neben der
+TP-UART-Zeitbedingung. Dort passiert deshalb nur: Zustand prüfen, Seite
+prüfen, `memcpy` der rohen cEMI-Bytes, Zähler hochzählen. **Kein**
+Formatieren, keine Speicheranforderung, kein `String`.
+
+Das Zerlegen in Adressen, Priorität, Dienst und Nutzdaten macht der
+Web-Handler, wenn jemand hinsieht. Ein Telegramm kostet im Ring 48 Byte: vier
+Byte Zeitstempel, vier Byte Kopf und 40 Byte rohes cEMI. Ein Standard-Telegramm
+mit voller APDU ist 25 Byte lang, wird also nie abgeschnitten; nur erweiterte
+Rahmen sind es, und die tragen ihre wahre Länge mit.
+
+### PSRAM oder gar nicht
+
+Der Ring fasst 8000 Telegramme und belegt **384 KiB** – ausschließlich im
+PSRAM. Der interne Heap hat an dieser Stelle etwa 200 KiB frei, und den gegen
+ein Diagnosewerkzeug einzutauschen wäre die falsche Reihenfolge: Er hält die
+Tunnelverbindungen und den Webserver am Leben.
+
+Ohne PSRAM bleibt der Monitor also aus. Das ist kein Verlust an Diagnose,
+sondern ein Verweis: Der **Gruppenmonitor der ETS** kann dasselbe, und dieses
+Gerät ist als Schnittstelle dafür ohnehin eingetragen.
+
+Bei 30 Telegrammen pro Sekunde – eine gut ausgelastete TP1-Linie – reicht der
+Ring für rund vier Minuten Dauerverkehr.
+
+### Sofort oder auf Trigger
+
+| Start | Verhalten |
+|---|---|
+| **sofort** | zeichnet ab dem Klick auf |
+| **bei Gruppenadresse** | wartet, bis ein Telegramm an diese Adresse läuft, und beginnt mit genau diesem |
+
+Dazu der Schalter *Bei vollem Puffer anhalten*. Ohne ihn überschreibt der Ring
+laufend das Älteste – richtig, solange man live zusieht. Mit einem Trigger ist
+meist das Gegenteil gemeint: Man will festhalten, was **nach** dem Ereignis
+passierte, und nicht, dass es zwei Minuten später überschrieben ist.
+
+Jeder Start leert den Ring. Zwei Läufe in einer Liste würden die Folgenummern
+etwas behaupten lassen, was sie nicht bedeuten.
+
+### Anzeige
+
+Wie beim Protokollfenster hält der Browser nur einen **Ausschnitt**, hier 400
+Telegramme, adressiert über absolute Folgenummern. `GET /api/monitor/frames`
+nimmt `from=` und `max=` und gibt die Lage in `X-Mon-Oldest` und
+`X-Mon-Written` zurück. Die Antwort ist gestückelt und wird Eintrag für
+Eintrag formatiert – 200 Telegramme als ein `String` wären 20 KiB auf einem
+Heap, der etwas Besseres zu tun hat.
+
+Der Filter über Seite, Richtung, Adressart, Quelle, Ziel und Dienst wirkt
+**auf das Geladene**, nicht auf die Aufzeichnung. Was aufgezeichnet wird,
+entscheidet allein die Seitenauswahl im Gerät. Der CSV-Export gibt genau das
+aus, was der Browser hält – sonst passten Anzeige und Datei nicht zusammen.
+
+Gestempelt wird mit der Betriebszeit, nicht mit der Uhrzeit: Eine Zeitzone hat
+im Aufzeichnungspfad nichts zu suchen. Steht die Uhr, rechnet der Browser aus
+`now_ms` und `epoch_ms` die Tageszeit; sonst bleibt `+hh:mm:ss.mmm` stehen.
+Die Spalte daneben zeigt den Abstand zum vorigen Telegramm – für die Frage
+nach Wiederholungen und Stürmen die eigentlich interessante Zahl.
 
 Direkt danach kommen `statusLed.begin()` und `buttonService.begin()`: Beide
 brauchen das Profil für ihre Pins, und die Anzeige soll stehen, solange der
@@ -1008,6 +1105,11 @@ das Passwort und ein zweiter Ort für Fehler.
 | POST | `/api/log/clear` | Protokollpuffer leeren |
 | GET | `/api/log/reset` | was den letzten Neustart überdauert hat |
 | POST | `/api/log/keep` | `enabled=1\|0` → RTC-Mitschrift |
+| GET | `/api/monitor` | Zustand des Busmonitors |
+| POST | `/api/monitor/start` | `sides=tp,ip`, `trigger=`, `stop_full=1\|0` |
+| POST | `/api/monitor/stop` | Aufzeichnung anhalten |
+| POST | `/api/monitor/clear` | Ring leeren |
+| GET | `/api/monitor/frames` | Ausschnitt, `?from=` und `?max=` |
 | POST | `/api/auth` | `user=`, `password=` → Zugangsschutz |
 | POST | `/api/reboot` | Neustart auslösen |
 | GET | `/api/time` | Zustand und Konfiguration des Zeitservers |

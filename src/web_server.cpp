@@ -11,6 +11,7 @@
 
 #include "build_info.h"
 #include "auth.h"
+#include "bus_monitor.h"
 #include "cpu_load.h"
 #include "eth_interface.h"
 #include "fw_hash.h"
@@ -151,6 +152,19 @@ static String logSafe(const String& value)
         out += (c < 0x20 || c > 0x7E) ? '?' : c;
     }
     return out;
+}
+
+/** Recording state, or why there is none. */
+static String monitorStateName()
+{
+#ifndef SBIP_MONITOR_HOOK
+    return String("no_hook");
+#else
+    if (!busMonitor.available()) return String("no_psram");
+
+    static const char* NAMES[] = {"off", "armed", "running", "full"};
+    return String(NAMES[busMonitor.state()]);
+#endif
 }
 
 /* ------------------------------------------------------------------------- *
@@ -301,6 +315,8 @@ static String statusJson()
     json += "\"rx_frames\":" + String(stats.ipRxFrames) + ",";
     json += "\"tx_frames\":" + String(stats.ipTxFrames);
     json += "},";
+
+    json += "\"monitor\":\"" + monitorStateName() + "\",";
 
     json += "\"build\":{";
     json += "\"version\":\"" FIRMWARE_VERSION "\",";
@@ -1183,6 +1199,324 @@ static void registerOtaRoutes()
 }
 
 /* ------------------------------------------------------------------------- *
+ * Bus monitor
+ *
+ * The ring holds raw cEMI; everything readable is worked out here, in the web
+ * task, because the capture path runs inside knx.loop() next to the TP-UART's
+ * timing. Frames go out as a chunked response formatted entry by entry - a
+ * batch of two hundred as one String would be 20 KiB on a heap that has to
+ * keep the tunnels alive.
+ * ------------------------------------------------------------------------- */
+
+namespace
+{
+struct MonitorCursor
+{
+    uint32_t seq;
+    uint32_t remaining;
+    uint8_t  phase; //!< 0 = open, 1 = entries, 2 = close, 3 = done
+    bool     first;
+};
+
+/** Longest JSON an entry can produce, so a chunk never has to split one. */
+const size_t MON_LINE_MAX = 320;
+
+const char* apciName(uint16_t apci)
+{
+    switch (apci)
+    {
+    case 0x000: return "GroupValueRead";
+    case 0x040: return "GroupValueResponse";
+    case 0x080: return "GroupValueWrite";
+    case 0x0C0: return "IndividualAddressWrite";
+    case 0x100: return "IndividualAddressRead";
+    case 0x140: return "IndividualAddressResponse";
+    case 0x180: return "ADCRead";
+    case 0x1C0: return "ADCResponse";
+    case 0x1C8: return "SystemNetworkParameterRead";
+    case 0x1C9: return "SystemNetworkParameterResponse";
+    case 0x200: return "MemoryRead";
+    case 0x240: return "MemoryResponse";
+    case 0x280: return "MemoryWrite";
+    case 0x300: return "DeviceDescriptorRead";
+    case 0x340: return "DeviceDescriptorResponse";
+    case 0x380: return "Restart";
+    case 0x3D5: return "PropertyValueRead";
+    case 0x3D6: return "PropertyValueResponse";
+    case 0x3D7: return "PropertyValueWrite";
+    case 0x3D8: return "PropertyDescriptionRead";
+    case 0x3D9: return "PropertyDescriptionResponse";
+    case 0x3DC: return "IndividualAddressSerialNumberRead";
+    case 0x3DD: return "IndividualAddressSerialNumberResponse";
+    case 0x3DE: return "IndividualAddressSerialNumberWrite";
+    default:    return "";
+    }
+}
+
+const char* priorityName(uint8_t ctrl1)
+{
+    switch (ctrl1 & 0x0C)
+    {
+    case 0x00: return "system";
+    case 0x04: return "normal";
+    case 0x08: return "urgent";
+    default:   return "low";
+    }
+}
+
+/** One captured frame as JSON, or 0 when it does not decode as L_Data. */
+int monitorEntryJson(char* out, size_t max, uint32_t seq,
+                     const BusMonitor::Entry& entry, bool first)
+{
+    const uint8_t* cemi = entry.raw;
+    uint16_t       ctrl = (uint16_t)(2 + cemi[1]);
+
+    char head[64];
+    snprintf(head, sizeof(head), "%s{\"s\":%lu,\"ms\":%lu,\"t\":%u,\"o\":%u",
+             first ? "" : ",", (unsigned long)seq, (unsigned long)entry.ms,
+             (unsigned)entry.side, (unsigned)entry.outgoing);
+
+    // Anything that is not a full L_Data header still belongs in the list -
+    // silently dropping a frame is worse than showing it raw.
+    if (entry.stored < ctrl + 7)
+    {
+        char raw[2 * BusMonitor::RAW_MAX + 1] = {0};
+        for (uint8_t i = 0; i < entry.stored; i++)
+        {
+            snprintf(raw + 2 * i, 3, "%02X", cemi[i]);
+        }
+        return snprintf(out, max, "%s,\"raw\":\"%s\"}", head, raw);
+    }
+
+    uint8_t  ctrl1 = cemi[ctrl];
+    uint8_t  ctrl2 = cemi[ctrl + 1];
+    uint16_t src   = (uint16_t)((cemi[ctrl + 2] << 8) | cemi[ctrl + 3]);
+    uint16_t dst   = (uint16_t)((cemi[ctrl + 4] << 8) | cemi[ctrl + 5]);
+    uint8_t  count = cemi[ctrl + 6];
+    bool     group = (ctrl2 & 0x80) != 0;
+
+    char source[16];
+    snprintf(source, sizeof(source), "%u.%u.%u",
+             (src >> 12) & 0x0F, (src >> 8) & 0x0F, src & 0xFF);
+
+    char target[16];
+    if (group)
+    {
+        snprintf(target, sizeof(target), "%u/%u/%u",
+                 (dst >> 11) & 0x1F, (dst >> 8) & 0x07, dst & 0xFF);
+    }
+    else
+    {
+        snprintf(target, sizeof(target), "%u.%u.%u",
+                 (dst >> 12) & 0x0F, (dst >> 8) & 0x0F, dst & 0xFF);
+    }
+
+    const uint8_t* tpdu    = cemi + ctrl + 7;
+    uint8_t        tpduLen = (uint8_t)(entry.stored - (ctrl + 7));
+
+    uint16_t apci = 0;
+    char     data[2 * BusMonitor::RAW_MAX + 1] = {0};
+
+    if (tpduLen >= 2)
+    {
+        apci = (uint16_t)(((tpdu[0] & 0x03) << 8) | tpdu[1]);
+
+        if (count <= 1)
+        {
+            // A value of six bits or less rides in the APCI byte itself.
+            snprintf(data, sizeof(data), "%02X", tpdu[1] & 0x3F);
+        }
+        else
+        {
+            for (uint8_t i = 2; i < tpduLen; i++)
+            {
+                snprintf(data + 2 * (i - 2), 3, "%02X", tpdu[i]);
+            }
+        }
+    }
+
+    return snprintf(out, max,
+                    "%s,\"src\":\"%s\",\"dst\":\"%s\",\"g\":%u,\"p\":\"%s\","
+                    "\"r\":%u,\"h\":%u,\"x\":%u,\"n\":%u,\"a\":\"%s\",\"d\":\"%s\"}",
+                    head, source, target, group ? 1u : 0u, priorityName(ctrl1),
+                    (ctrl1 & 0x20) ? 0u : 1u,          // bit clear means repeated
+                    (ctrl2 >> 4) & 0x07,
+                    (ctrl1 & 0x80) ? 0u : 1u,          // bit clear means extended
+                    (unsigned)count, apciName(apci), data);
+}
+
+String monitorStateJson()
+{
+    String json = "{";
+    json += "\"available\":" + String(busMonitor.available() ? "true" : "false") + ",";
+#ifdef SBIP_MONITOR_HOOK
+    json += "\"hook\":true,";
+#else
+    json += "\"hook\":false,";
+#endif
+    json += "\"state\":\"" + monitorStateName() + "\",";
+    json += "\"capacity\":" + String(busMonitor.capacity()) + ",";
+    json += "\"count\":" + String(busMonitor.count()) + ",";
+    json += "\"written\":" + String(busMonitor.written()) + ",";
+    json += "\"oldest\":" + String(busMonitor.oldest()) + ",";
+    json += "\"missed\":" + String(busMonitor.missed()) + ",";
+    json += "\"sides\":" + String(busMonitor.sides()) + ",";
+    json += "\"stop_full\":" + String(busMonitor.stopWhenFull() ? "true" : "false") + ",";
+    json += "\"trigger\":\"" + formatGroupAddress(busMonitor.trigger()) + "\",";
+    json += "\"now_ms\":" + String(millis()) + ",";
+
+    // Lets the browser turn the uptime stamp of a frame into a time of day,
+    // and costs nothing when the clock was never set.
+    json += "\"epoch_ms\":" +
+            String(TimeService::clockValid() ? (uint64_t)time(nullptr) * 1000ULL : 0ULL);
+    json += "}";
+    return json;
+}
+} // namespace
+
+static void registerMonitorRoutes()
+{
+    server.on("/api/monitor", HTTP_GET, [](AsyncWebServerRequest* request) {
+        request->send(200, "application/json", monitorStateJson());
+    });
+
+    server.on("/api/monitor/start", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        if (!busMonitor.available())
+        {
+            request->send(409, "application/json",
+                          "{\"error\":\"no PSRAM, the bus monitor is unavailable\"}");
+            return;
+        }
+
+        auto param = [request](const char* name, String& out) -> bool {
+            if (request->hasParam(name, true))
+            {
+                out = request->getParam(name, true)->value();
+                return true;
+            }
+            return false;
+        };
+
+        uint8_t  sides   = BusMonitor::WATCH_IP | BusMonitor::WATCH_TP;
+        uint16_t trigger = 0;
+        bool     full    = false;
+        String   value;
+
+        if (param("sides", value))
+        {
+            sides = 0;
+            if (value.indexOf("tp") >= 0) sides |= BusMonitor::WATCH_TP;
+            if (value.indexOf("ip") >= 0) sides |= BusMonitor::WATCH_IP;
+
+            if (sides == 0)
+            {
+                request->send(400, "application/json",
+                              "{\"error\":\"sides must name tp, ip or both\"}");
+                return;
+            }
+        }
+
+        if (param("trigger", value)) trigger = parseGroupAddress(value);
+        if (param("stop_full", value)) full = (value == "1" || value == "true");
+
+        busMonitor.start(sides, trigger, full);
+        request->send(200, "application/json", monitorStateJson());
+    });
+
+    server.on("/api/monitor/stop", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+        busMonitor.stop();
+        request->send(200, "application/json", monitorStateJson());
+    });
+
+    server.on("/api/monitor/clear", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+        busMonitor.clear();
+        request->send(200, "application/json", monitorStateJson());
+    });
+
+    /*
+     * A slice of the ring. Without "from" it answers with the newest "max"
+     * frames, which is what the dashboard wants while it follows the traffic.
+     */
+    server.on("/api/monitor/frames", HTTP_GET, [](AsyncWebServerRequest* request) {
+        uint32_t max = 200;
+
+        if (request->hasParam("max"))
+        {
+            long value = request->getParam("max")->value().toInt();
+            if (value > 0) max = (uint32_t)value;
+        }
+        if (max > 500) max = 500;
+
+        uint32_t written = busMonitor.written();
+        uint32_t from    = (written > max) ? written - max : 0;
+
+        if (request->hasParam("from"))
+        {
+            from = (uint32_t)strtoul(request->getParam("from")->value().c_str(),
+                                     nullptr, 10);
+        }
+        if (from < busMonitor.oldest()) from = busMonitor.oldest();
+
+        auto cursor = std::make_shared<MonitorCursor>(MonitorCursor{from, max, 0, true});
+
+        AsyncWebServerResponse* response = request->beginChunkedResponse(
+            "application/json", [cursor](uint8_t* buffer, size_t maxLen, size_t) -> size_t {
+                size_t used = 0;
+
+                if (cursor->phase == 0)
+                {
+                    buffer[used++] = '[';
+                    cursor->phase  = 1;
+                }
+
+                while (cursor->phase == 1 && used + MON_LINE_MAX <= maxLen)
+                {
+                    BusMonitor::Entry entry;
+
+                    if (cursor->remaining == 0 || !busMonitor.at(cursor->seq, entry))
+                    {
+                        cursor->phase = 2;
+                        break;
+                    }
+
+                    int n = monitorEntryJson((char*)buffer + used, MON_LINE_MAX,
+                                             cursor->seq, entry, cursor->first);
+
+                    // snprintf reports what it wanted, not what it wrote, so a
+                    // value at the limit means the entry was cut off.
+                    if (n <= 0 || (size_t)n >= MON_LINE_MAX)
+                    {
+                        cursor->phase = 2;
+                        break;
+                    }
+
+                    used += (size_t)n;
+                    cursor->first = false;
+                    cursor->seq++;
+                    cursor->remaining--;
+                }
+
+                if (cursor->phase == 2 && used < maxLen)
+                {
+                    buffer[used++] = ']';
+                    cursor->phase  = 3;
+                }
+
+                return used;
+            });
+
+        response->addHeader("Cache-Control", "no-store");
+        response->addHeader("X-Mon-Oldest", String(busMonitor.oldest()));
+        response->addHeader("X-Mon-Written", String(written));
+        request->send(response);
+    });
+}
+
+/* ------------------------------------------------------------------------- *
  * Programming the SB-Interface
  *
  * Every job takes the KNX UART away from the stack for a few seconds, so all
@@ -1416,6 +1750,7 @@ void webServerBegin()
     registerHardwareRoutes();
     registerOtaRoutes();
     registerLpcRoutes();
+    registerMonitorRoutes();
 
     // After the routes: the middleware wraps whatever is registered.
     Auth::attach(server);
