@@ -190,6 +190,9 @@ void setup()
 
 void loop()
 {
+    // First, so the turn it measures is the whole turn.
+    cpuLoad.pass();
+
     knxLink.loop();
     netManager.loop();
     timeService.loop();

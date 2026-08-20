@@ -461,6 +461,17 @@ void KnxLink::updateBusLoad()
     _framesInWindow = 0;
 }
 
+void KnxLink::resetPeak()
+{
+    _stats.busLoadPeak = _stats.busLoadPermille;
+    _busPeakAt         = millis();
+}
+
+uint32_t KnxLink::busPeakAge() const
+{
+    return (millis() - _busPeakAt) / 1000;
+}
+
 void KnxLink::activityTrampoline(uint8_t info)
 {
     if (s_instance != nullptr)

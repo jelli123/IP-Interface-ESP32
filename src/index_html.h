@@ -160,8 +160,10 @@ small{color:var(--dim)}
     <div class="row"><span>Selbsttest</span><span id="tpTest">-</span></div>
     <div class="row"><span>Buslast</span><span id="tpLoad">-</span></div>
     <div class="bar"><i id="tpLoadBar"></i><b id="tpLoadPeak"></b></div>
-    <div class="actions" id="ispRow" style="display:none">
-      <button class="sec" onclick="openLpc()">SB-Interface programmieren</button>
+    <div class="actions">
+      <button class="sec" onclick="resetPeaks('bus')">Spitzenwert zur&uuml;cksetzen</button>
+      <button class="sec" id="ispBtn" style="display:none"
+              onclick="openLpc()">SB-Interface programmieren</button>
     </div>
   </section>
 
@@ -215,10 +217,9 @@ small{color:var(--dim)}
     <div class="row"><span>Takt</span><span id="cpu">-</span></div>
     <div class="row"><span>Last Kern 0</span><span id="cpu0">-</span></div>
     <div class="bar"><i id="cpu0Bar"></i><b id="cpu0Peak"></b></div>
-    <div id="cpu1Box" style="display:none">
-      <div class="row"><span>Last Kern 1</span><span id="cpu1">-</span></div>
-      <div class="bar"><i id="cpu1Bar"></i><b id="cpu1Peak"></b></div>
-    </div>
+    <div class="row"><span>Last Hauptschleife</span><span id="loopLoad">-</span></div>
+    <div class="bar"><i id="loopLoadBar"></i><b id="loopLoadPeak"></b></div>
+    <div class="row"><span>L&auml;ngster Durchlauf</span><span id="loopMax">-</span></div>
     <div class="row"><span>Freier Speicher</span><span id="heap">-</span></div>
     <div class="row"><span>Flash</span><span id="flash">-</span></div>
     <div class="row"><span>PSRAM</span><span id="psram">-</span></div>
@@ -228,7 +229,7 @@ small{color:var(--dim)}
       <button class="sec" onclick="showParts()">Partitionstabelle</button>
       <button class="sec" onclick="showLog()">Protokoll</button>
       <button class="sec" onclick="openAuth()">Zugang</button>
-      <button class="sec" onclick="resetPeaks()">Spitzenwerte zur&uuml;cksetzen</button>
+      <button class="sec" onclick="resetPeaks('cpu')">Spitzenwerte zur&uuml;cksetzen</button>
     </div>
   </section>
 
@@ -909,8 +910,10 @@ const EN = {
 + '"Get-FileHash firmware.bin" or "sha256sum firmware.bin", or leave empty.',
 
 /* --- SB-Interface programmieren --- */
-'Last Kern 0':'Core 0 load', 'Last Kern 1':'Core 1 load', 'max.':'peak',
+'Last Kern 0':'Core 0 load', 'Last Hauptschleife':'Main loop load',
+'Längster Durchlauf':'Longest pass', 'max.':'peak',
 'Spitzenwerte zurücksetzen':'Clear the peaks',
+'Spitzenwert zurücksetzen':'Clear the peak',
 'SB-Interface programmieren':'Program the SB-Interface',
 'SB-Interface ISP':'SB-Interface ISP', 'Seriennummer':'Serial number',
 'Bootloader':'Boot loader', 'Flash-Inhalt':'Flash contents',
@@ -1025,16 +1028,26 @@ function prefixLen(mask){
              .reduce((n, o) => n + ((+o).toString(2).match(/1/g) || []).length, 0);
 }
 
-// Auslastung in Promille: Zahl, Balken und der Hoechststand als Strich.
-function loadBar(id, permille, peak){
+// Auslastung in Promille: Zahl, Balken und der Hoechststand als Strich. Das
+// Alter gehoert dazu - ein Hoechststand sagt nur etwas ueber den Zeitraum aus,
+// fuer den er gilt, und die Bereiche werden getrennt zurueckgesetzt.
+function loadBar(id, permille, peak, age){
   $(id).textContent = (permille/10).toFixed(1) + ' % \u00b7 '
-                    + t('max.') + ' ' + (peak/10).toFixed(1) + ' %';
+                    + t('max.') + ' ' + (peak/10).toFixed(1) + ' %'
+                    + (age === undefined ? '' : ' (' + span(age) + ')');
   $(id + 'Bar').style.width = (permille/10) + '%';
   $(id + 'Peak').style.left = (peak/10) + '%';
 }
 
-async function resetPeaks(){
-  await fetch('/api/peaks/reset', {method:'POST'});
+/** Sekunden als grobe Dauer: 45 s, 12 min, 3 h. */
+function span(s){
+  if(s < 90)   return s + ' s';
+  if(s < 5400) return Math.round(s/60) + ' min';
+  return Math.round(s/3600) + ' h';
+}
+
+async function resetPeaks(scope){
+  await fetch('/api/peaks/reset?scope=' + (scope || 'all'), {method:'POST'});
   refresh();
 }
 
@@ -1107,8 +1120,8 @@ async function refresh(){
   $('tpType').textContent = s.tp.type;
   $('tpBaud').textContent = s.tp.baud + ' Bd, 8E1';
   $('tpTest').textContent = s.tp.self_test;
-  loadBar('tpLoad', s.tp.bus_load, s.tp.bus_load_peak);
-  $('ispRow').style.display = s.tp.isp ? 'flex' : 'none';
+  loadBar('tpLoad', s.tp.bus_load, s.tp.bus_load_peak, s.tp.bus_load_peak_age);
+  $('ispBtn').style.display = s.tp.isp ? '' : 'none';
 
   $('tpRx').textContent = s.tp.rx_frames;
   $('tpIgn').textContent= s.tp.rx_ignored;
@@ -1145,8 +1158,17 @@ async function refresh(){
 
   const load = s.hardware.cpu_load || [];
   const cpk  = s.hardware.cpu_peak || [];
-  for(let c = 0; c < load.length && c < 2; c++) loadBar('cpu' + c, load[c], cpk[c]);
-  $('cpu1Box').style.display = (load.length > 1) ? '' : 'none';
+  const age  = s.hardware.peak_age;
+  if(load.length) loadBar('cpu0', load[0], cpk[0], age);
+
+  /*
+   * Kern 1 bekommt keinen Balken. Die Arduino-Hauptschleife ist dorthin
+   * gebunden und pollt, ohne je zu blockieren - der Idle-Task kommt nie dran,
+   * und der Kern steht dauerhaft auf 100 %. Was zaehlt, ist stattdessen, wie
+   * viel von der Zeit der Schleife Arbeit war statt Warten.
+   */
+  loadBar('loopLoad', s.hardware.loop_load, s.hardware.loop_peak, age);
+  $('loopMax').textContent = (s.hardware.loop_max_us/1000).toFixed(1) + ' ms';
   $('heap').textContent = Math.round(s.hardware.heap_free/1024) + ' / '
                         + Math.round(s.hardware.heap_total/1024) + ' KiB';
 

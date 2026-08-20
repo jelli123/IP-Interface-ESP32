@@ -255,6 +255,7 @@ static String statusJson()
     json += "\"tx_processed\":" + String(stats.tpTxProcessed) + ",";
     json += "\"bus_load\":" + String(stats.busLoadPermille) + ",";
     json += "\"bus_load_peak\":" + String(stats.busLoadPeak) + ",";
+    json += "\"bus_load_peak_age\":" + String(knxLink.busPeakAge()) + ",";
     json += "\"isp\":" + String(lpcIsp.available() ? "true" : "false") + ",";
     json += "\"self_test\":\"" + jsonEscape(String(knxLink.selfTestResult())) + "\"";
     json += "},";
@@ -292,6 +293,9 @@ static String statusJson()
         json += String(cpuLoad.peak(c));
     }
     json += "],";
+    json += "\"loop_load\":" + String(cpuLoad.loopPermille()) + ",";
+    json += "\"loop_peak\":" + String(cpuLoad.loopPeak()) + ",";
+    json += "\"loop_max_us\":" + String(cpuLoad.loopMaxUs()) + ",";
     json += "\"peak_age\":" + String(cpuLoad.peakAge()) + ",";
     json += "\"heap_total\":" + String(ESP.getHeapSize()) + ",";
     json += "\"heap_free\":" + String(ESP.getFreeHeap()) + ",";
@@ -826,13 +830,26 @@ static void registerHardwareRoutes()
     });
 
     /*
-     * Every high water mark at once, on purpose: peaks only compare with each
-     * other when they share a starting point.
+     * Accepts ?scope=bus|cpu|all, default all. A peak only says something
+     * next to the period it covers, so every bar carries its own age on the
+     * dashboard - which is what lets the two be cleared apart.
      */
     server.on("/api/peaks/reset", HTTP_POST, [](AsyncWebServerRequest* request) {
         if (!mutationAllowed(request)) return;
-        knxLink.resetPeak();
-        cpuLoad.resetPeaks();
+
+        String scope = "all";
+        if (request->hasParam("scope", true))
+        {
+            scope = request->getParam("scope", true)->value();
+        }
+        else if (request->hasParam("scope"))
+        {
+            scope = request->getParam("scope")->value();
+        }
+
+        if (scope != "cpu") knxLink.resetPeak();
+        if (scope != "bus") cpuLoad.resetPeaks();
+
         request->send(200, "application/json", "{\"status\":\"ok\"}");
     });
 
