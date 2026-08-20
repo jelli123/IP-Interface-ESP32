@@ -1056,6 +1056,43 @@ Information zu vernichten, die im Zweifel auf Sekunden stimmt. Nach einem
 **Kaltstart** oder nach dem Flashen über esptool ist der Versatz weg und die
 Uhr steht wieder auf „nicht gesetzt“.
 
+### Die Zeitzone muss vor der ersten Logzeile stehen
+
+`LogBuffer::makeStamp()` stempelt mit `localtime_r()`, also mit **Ortszeit**.
+Solange `setenv("TZ", …)` und `tzset()` nicht gelaufen sind, gilt UTC – und in
+dem Moment, in dem sie laufen, springt das Protokoll um den vollen Versatz
+nach vorn. In Mitteleuropa sind das zwei Stunden mitten in der Startsequenz.
+
+Deshalb ist `applyTimezone()` von `begin()` getrennt und steht in `setup()`
+direkt hinter `hwConfig.begin()`: NVS ist dann oben, aber noch nichts hat eine
+gestempelte Zeile geschrieben. `begin()` ruft dieselbe Funktion später noch
+einmal auf, wenn die übrige Konfiguration an der Reihe ist.
+
+### Zeitzone einstellen
+
+Die Firmware speichert eine **POSIX-TZ-Regel**, weil die C-Bibliothek des
+ESP32 nur diese versteht – eine Zonendatenbank wie `Europe/Berlin` gibt es
+dort nicht. Das Dashboard bietet dazu eine Auswahlliste; wer eine Zone
+braucht, die nicht darin steht, wählt *eigene Angabe* und trägt die Regel
+selbst ein.
+
+Die Regel hat vier Teile:
+
+```
+CET-1CEST,M3.5.0,M10.5.0/3
+│   ││   │ │     │
+│   ││   │ │     └─ Ende:    letzter Sonntag im Oktober, 3 Uhr
+│   ││   │ └─────── Beginn:  letzter Sonntag im März
+│   │└───┴───────── Kürzel der Sommerzeit
+│   └────────────── Versatz der Normalzeit
+└────────────────── Kürzel der Normalzeit
+```
+
+**Das Vorzeichen ist umgekehrt.** `CET-1` bedeutet UTC+1, nicht UTC−1: der
+Wert nennt, was zur Ortszeit addiert UTC ergibt. `M3.5.0` liest sich als
+Monat 3, Woche 5, Tag 0 – Woche 5 heißt „die letzte“, Tag 0 heißt Sonntag.
+Ohne `/3` gilt 2 Uhr Ortszeit.
+
 ### Warum die RTC auch im laufenden Betrieb gebraucht wird
 
 Die ESP32-Systemuhr hängt im Normalbetrieb am APB-Takt, spezifiziert mit

@@ -64,6 +64,13 @@ void setup()
      */
     hwConfig.begin();
 
+    /*
+     * Straight after NVS and before anything else logs: the timestamp of a
+     * log line is local time, so a timezone applied later makes the whole log
+     * jump by its offset mid-file.
+     */
+    timeService.applyTimezone();
+
     // Straight after the profile and before anything else touches a pin: the
     // two ISP lines have to reach their idle state early, or a board with
     // inverters holds the LPC in reset for the whole of our own startup.

@@ -118,12 +118,17 @@ void TimeService::applyConfig(const Config& config)
  * Startup
  * ------------------------------------------------------------------------- */
 
-void TimeService::begin()
+void TimeService::applyTimezone()
 {
     loadConfig();
 
     setenv("TZ", _config.tz, 1);
     tzset();
+}
+
+void TimeService::begin()
+{
+    applyTimezone();
 
     /*
      * The system clock is not zeroed by a software reset. esp_timer keeps its
