@@ -89,7 +89,10 @@ dialog label{display:block;margin-top:10px;font-size:12px;color:var(--dim)}
  * reads as just another field caption floating above unrelated inputs. */
 .grp{border:1px solid var(--line);border-radius:8px;padding:12px;margin:14px 0}
 dialog .grp>label:not(.chk):first-child{margin-top:0}
-.grp.off>*:not(:first-child){opacity:.45}
+/* Ueberschrift der Gruppe. Bleibt sichtbar, wenn der Schalter darunter den
+ * Rest abblendet - sonst waere nicht mehr zu lesen, was da abgeblendet ist. */
+.grp>label.hd{color:var(--fg);font-weight:600}
+.grp.off>*:not(.hd):not(.chk){opacity:.45}
 dialog label.chk{display:flex;align-items:center;gap:9px;margin:0;
 font-size:13px;color:var(--fg)}
 input[type=checkbox]{width:auto;margin:0;flex:0 0 auto;accent-color:var(--acc)}
@@ -419,7 +422,7 @@ small{color:var(--dim)}
   <h2>Busmonitor</h2>
 
   <div class="grp">
-    <label>Aufzeichnen</label>
+    <label class="hd">Aufzeichnen</label>
     <div class="monf">
       <div><label>Seite</label>
         <select id="monSides">
@@ -430,13 +433,24 @@ small{color:var(--dim)}
       <div><label>Start</label>
         <select id="monMode" onchange="monModeChanged()">
           <option value="now">sofort</option>
-          <option value="trigger">bei Gruppenadresse</option>
+          <option value="ga">bei Gruppenadresse</option>
+          <option value="repeat">bei Wiederholung</option>
+          <option value="secure">bei KNX Data Secure</option>
         </select></div>
       <div><label>Trigger-Gruppenadresse</label>
         <input id="monTrig" placeholder="z.B. 1/2/3"></div>
+      <div><label>Telegramme davor</label>
+        <input id="monPre" type="number" min="0" value="0"></div>
+      <div><label>Telegramme danach (0 = alle)</label>
+        <input id="monPost" type="number" min="0" value="0"></div>
     </div>
     <label class="chk"><input type="checkbox" id="monStopFull">
       Bei vollem Puffer anhalten statt zu überschreiben</label>
+    <p><small>Anhalten und wieder starten führt die Aufzeichnung fort &ndash;
+    geleert wird nur auf Knopfdruck. Nicht anbieten kann das Gerät die
+    ETS-Auslöser über Quittungen und ungültige Telegramme: Das SB-Interface
+    quittiert selbst und verwirft Fehlerhaftes, bevor der Stack es
+    sieht.</small></p>
     <div class="rowbtns" style="margin-top:12px">
       <button id="monRun" onclick="monToggle()">Start</button>
       <button class="sec" onclick="monClear()">Leeren</button>
@@ -446,7 +460,7 @@ small{color:var(--dim)}
   </div>
 
   <div class="grp">
-    <label>Anzeige filtern</label>
+    <label class="hd">Anzeige filtern</label>
     <div class="monf">
       <div><label>Seite</label>
         <select id="fSide" onchange="monRender()">
@@ -663,7 +677,8 @@ small{color:var(--dim)}
   <p><small id="hwChip" data-dyn></small></p>
 
   <div class="grp">
-    <label>KNX &ndash; UART-Nummer / RX / TX</label>
+    <label class="hd">KNX-UART</label>
+    <label>UART-Nummer / RX / TX</label>
     <div class="trio">
       <input id="hwUart" type="number" min="0">
       <input id="hwRx"   type="number" min="-1">
@@ -672,7 +687,8 @@ small{color:var(--dim)}
   </div>
 
   <div class="grp">
-    <label>SB-Interface programmieren &ndash; Reset / ISP (&minus;1 = nicht verdrahtet)</label>
+    <label class="hd">SB-Interface programmieren</label>
+    <label>Reset / ISP (&minus;1 = nicht verdrahtet)</label>
     <div class="trio">
       <input id="hwLpcRst" type="number" min="-1">
       <input id="hwLpcIsp" type="number" min="-1">
@@ -741,6 +757,7 @@ small{color:var(--dim)}
   </div>
 
   <div class="grp">
+    <label class="hd">Echtzeituhr</label>
     <label class="chk"><input type="checkbox" id="hwI2cEn"> RTC über I2C aktivieren</label>
     <label>SDA / SCL</label>
     <div class="trio">
@@ -751,6 +768,7 @@ small{color:var(--dim)}
   </div>
 
   <div class="grp">
+    <label class="hd">Ethernet</label>
     <label class="chk"><input type="checkbox" id="hwEthEn"> Ethernet W5500 aktivieren</label>
     <label>SCK / MISO / MOSI</label>
     <div class="trio">
@@ -767,7 +785,8 @@ small{color:var(--dim)}
   </div>
 
   <div class="grp">
-    <label>Online-Update &ndash; Manifest-URL (leer = kein Online-Update)</label>
+    <label class="hd">Online-Update</label>
+    <label>Firmware dieses Ger&auml;ts &ndash; Manifest-URL (leer = kein Update)</label>
     <input id="hwUpdUrl" maxlength="160"
            placeholder="https://example.org/sbip/manifest.json">
     <label>SB-Interface-Firmware &ndash; Manifest-URL (leer = kein Download)</label>
@@ -853,8 +872,21 @@ const EN = {
 'Ältere laden':'Load older', 'Neueste laden':'Load newest',
 'Als CSV speichern':'Save as CSV',
 'Zeit':'Time', 'Quelle':'Source', 'Ziel':'Destination', 'Prio':'Prio',
-'Dienst':'Service', 'Daten':'Data', 'Wert':'Value', 'unlesbar':'undecodable',
-'Aus':'off', 'Ein':'on', '4 Bit':'4 bit',
+'Dienst':'Service', 'Daten':'Data', 'Wert':'Value', 'Bits':'Bits',
+'unlesbar':'undecodable',
+'Aus':'off', 'Ein':'on',
+'bei Wiederholung':'on a repetition', 'bei KNX Data Secure':'on KNX Data Secure',
+'Telegramme davor':'Telegrams before',
+'Telegramme danach (0 = alle)':'Telegrams after (0 = all)',
+'ausgelöst bei':'triggered at',
+['Anhalten und wieder starten führt die Aufzeichnung fort – geleert wird nur '
++ 'auf Knopfdruck. Nicht anbieten kann das Gerät die ETS-Auslöser über '
++ 'Quittungen und ungültige Telegramme: Das SB-Interface quittiert selbst und '
++ 'verwirft Fehlerhaftes, bevor der Stack es sieht.']:
+  'Stopping and starting again continues the recording - it is only emptied on '
++ 'request. What the device cannot offer are the ETS triggers based on '
++ 'acknowledgements and invalid telegrams: the SB-Interface acknowledges by '
++ 'itself and discards faulty frames before the stack sees them.',
 'Mo':'Mon', 'Di':'Tue', 'Mi':'Wed', 'Do':'Thu', 'Fr':'Fri', 'Sa':'Sat', 'So':'Sun',
 'Telegrammen':'telegrams', 'nach dem Anhalten verworfen':'discarded after the stop',
 'bereit':'ready', 'angehalten':'stopped', 'zeichnet auf':'recording',
@@ -894,9 +926,10 @@ const EN = {
 'Neustart nötig':'Restart required',
 'Alle Gruppentelegramme weiterleiten':'Forward every group telegram',
 'Online-Update':'Online update',
+'KNX-UART':'KNX UART', 'Echtzeituhr':'Real time clock',
 'SB-Interface-Download':'SB-Interface download',
-'Online-Update – Manifest-URL (leer = kein Online-Update)':
-  'Online update - manifest URL (empty disables it)',
+'Firmware dieses Geräts – Manifest-URL (leer = kein Update)':
+  'Firmware of this device - manifest URL (empty disables the update)',
 'SB-Interface-Firmware – Manifest-URL (leer = kein Download)':
   'SB-Interface firmware - manifest URL (empty disables the download)',
 ['Muss mit https:// beginnen. Die Firmware-Dateien werden relativ dazu '
@@ -1406,8 +1439,10 @@ async function resetPeaks(scope){
 // contain checkboxes of their own, and those govern a single LED, not a box.
 function syncGroups(){
   document.querySelectorAll('.grp').forEach(g => {
-    const head = g.firstElementChild;
-    const cb = (head && head.matches('label.chk')) ? head.querySelector('input') : null;
+    // Der Schalter darf hinter einer Ueberschrift stehen, aber nicht weiter
+    // unten: die Zeileneditoren enthalten eigene Checkboxen je Zeile.
+    const head = [...g.children].slice(0, 2).find(e => e.matches('label.chk'));
+    const cb = head ? head.querySelector('input') : null;
     if(cb) g.classList.toggle('off', !cb.checked);
   });
 }
@@ -1853,7 +1888,10 @@ function monClose(){
 }
 
 function monModeChanged(){
-  $('monTrig').disabled = $('monMode').value !== 'trigger';
+  $('monTrig').disabled = $('monMode').value !== 'ga';
+  const trig = $('monMode').value !== 'now';
+  $('monPre').disabled = !trig;
+  $('monPost').disabled = !trig;
 }
 
 async function monRefresh(){
@@ -1870,10 +1908,14 @@ async function monRefresh(){
   let info;
   if(!s.hook)           info = t('Der Stack-Hook fehlt - siehe scripts/patch_knx.py.');
   else if(!s.available) info = t('Kein PSRAM, der Busmonitor ist nicht verfügbar.');
-  else info = t(ST[s.state] || s.state) + ' \u00b7 '
-            + s.count + ' ' + t('von') + ' ' + s.capacity + ' '
-            + t('Telegrammen') + (s.missed ? ' \u00b7 ' + s.missed + ' '
-            + t('nach dem Anhalten verworfen') : '');
+  else {
+    info = t(ST[s.state] || s.state) + ' \u00b7 '
+         + s.count + ' ' + t('von') + ' ' + s.capacity + ' ' + t('Telegrammen');
+    if(s.triggered && s.trigger_mode !== 'now')
+      info += ' \u00b7 ' + t('ausgelöst bei') + ' #' + s.trigger_seq;
+    if(s.missed)
+      info += ' \u00b7 ' + s.missed + ' ' + t('nach dem Anhalten verworfen');
+  }
 
   $('monInfo').textContent = info;
 
@@ -1890,6 +1932,7 @@ async function monLoad(newest){
   let from = null;
   if(!newest){
     const first = monRows.length ? monRows[0].s : s.written;
+    if(first <= s.oldest) return;             // schon am Anfang
     from = Math.max(s.oldest, first - MON_WIN);
   }
 
@@ -1897,10 +1940,11 @@ async function monLoad(newest){
   try { monRows = await (await fetch(url)).json(); }
   catch(e){ return; }
 
-  monRender(newest);
+  // Wer zurueckblaettert, will den Anfang des Geholten sehen, nicht das Ende.
+  monRender(newest ? 'end' : 'start');
 }
 
-function monRender(toEnd){
+function monRender(scroll){
   const fSide = $('fSide').value, fDir = $('fDir').value, fKind = $('fKind').value;
   const fSrc = $('fSrc').value.trim(), fDst = $('fDst').value.trim();
   const fSvc = $('fSvc').value.trim().toLowerCase();
@@ -1915,8 +1959,8 @@ function monRender(toEnd){
 
   const head = '<tr><th>' + t('Zeit') + '</th><th>&Delta;</th><th>' + t('Seite')
     + '</th><th></th><th>' + t('Quelle') + '</th><th>' + t('Ziel') + '</th><th>'
-    + t('Prio') + '</th><th>' + t('Dienst') + '</th><th>' + t('Daten')
-    + '</th><th>' + t('Wert') + '</th></tr>';
+    + t('Prio') + '</th><th>' + t('Dienst') + '</th><th>' + t('Bits')
+    + '</th><th>' + t('Daten') + '</th><th>' + t('Wert') + '</th></tr>';
 
   let previous = null;
   const body = rows.map(r => {
@@ -1933,12 +1977,27 @@ function monRender(toEnd){
       + '<td>' + esc(r.dst || '') + '</td>'
       + '<td class="dim">' + esc(r.p || '') + '</td>'
       + '<td>' + esc(r.a || (r.raw ? t('unlesbar') : '')) + '</td>'
+      + '<td class="dim">' + monBits(r) + '</td>'
       + '<td class="w dim">' + esc(r.d || r.raw || '') + '</td>'
-      + '<td class="val">' + esc(monValue(r)) + '</td></tr>';
+      + '<td class="val w">' + esc(monValue(r)) + '</td></tr>';
   }).join('');
 
   $('monTbl').innerHTML = head + body;
-  if(toEnd) $('monBox').scrollTop = $('monBox').scrollHeight;
+  if(scroll === 'end')   $('monBox').scrollTop = $('monBox').scrollHeight;
+  if(scroll === 'start') $('monBox').scrollTop = 0;
+}
+
+/*
+ * Breite der Nutzdaten.
+ *
+ * Bis zu sechs Bit reisen im APCI-Byte selbst; wie viele davon der
+ * Datenpunkttyp wirklich belegt - eines bei DPT 1, vier bei DPT 3 - steht
+ * nirgends im Telegramm. Deshalb dort eine obere Schranke.
+ */
+function monBits(r){
+  if(!r.d || r.n === undefined) return '';
+  if(r.n <= 1) return '\u2264 6';
+  return String((r.d.length / 2) * 8);
 }
 
 /** Alles zur selben Gruppenadresse hervorheben, erneuter Klick hebt es auf. */
@@ -1965,17 +2024,18 @@ function monValue(r){
   for(let i = 0; i + 1 < r.d.length; i += 2) b.push(parseInt(r.d.substr(i, 2), 16));
   if(!b.length) return '';
 
-  // Bis zu sechs Bit reisen im APCI-Byte selbst, r.n zaehlt sie als ein Oktett.
+  const dpt = s => ' (' + s + ')';
+
   if(r.n <= 1){
     const v = b[0] & 0x3F;
-    if(v === 0) return '0 \u00b7 ' + t('Aus');
-    if(v === 1) return '1 \u00b7 ' + t('Ein');
-    return v + ' \u00b7 ' + t('4 Bit');
+    if(v === 0) return t('Aus') + dpt('1.x');
+    if(v === 1) return t('Ein') + dpt('1.x');
+    return v + dpt('3.x');
   }
 
   if(b.length === 1){
-    const s = (b[0] > 127) ? b[0] - 256 : b[0];
-    return b[0] + ' \u00b7 ' + Math.round(b[0] * 100 / 255) + ' % \u00b7 ' + s;
+    return b[0] + dpt('5.010') + ' \u00b7 '
+         + Math.round(b[0] * 100 / 255) + ' %' + dpt('5.001');
   }
 
   if(b.length === 2){
@@ -1983,7 +2043,7 @@ function monValue(r){
     let m = raw & 0x07FF;
     if(raw & 0x8000) m -= 2048;
     const f = 0.01 * m * Math.pow(2, (raw >> 11) & 0x0F);
-    return (Math.round(f * 100) / 100) + ' \u00b7 ' + raw;
+    return (Math.round(f * 100) / 100) + dpt('9.x') + ' \u00b7 ' + raw + dpt('7.001');
   }
 
   if(b.length === 3){
@@ -1998,12 +2058,13 @@ function monValue(r){
     const out = [];
 
     if(h < 24 && b[1] < 60 && b[2] < 60){
-      out.push((day ? t(D[day]) + ' ' : '') + [h, b[1], b[2]].map(pad).join(':'));
+      out.push((day ? t(D[day]) + ' ' : '')
+             + [h, b[1], b[2]].map(pad).join(':') + dpt('10.001'));
     }
     if(b[0] >= 1 && b[0] <= 31 && b[1] >= 1 && b[1] <= 12 && b[2] < 100){
       // 0..89 meint 2000..2089, 90..99 meint 1990..1999 (DPT 11.001).
       const year = (b[2] < 90 ? 2000 : 1900) + b[2];
-      out.push(pad(b[0]) + '.' + pad(b[1]) + '.' + year);
+      out.push(pad(b[0]) + '.' + pad(b[1]) + '.' + year + dpt('11.001'));
     }
     return out.join(' \u00b7 ');
   }
@@ -2011,7 +2072,15 @@ function monValue(r){
   if(b.length === 4){
     const dv = new DataView(new Uint8Array(b).buffer);
     const u = dv.getUint32(0), f = dv.getFloat32(0);
-    return (isFinite(f) ? (Math.round(f * 1000) / 1000) + ' \u00b7 ' : '') + u;
+    return (isFinite(f) ? (Math.round(f * 1000) / 1000) + dpt('14.x') + ' \u00b7 ' : '')
+         + u + dpt('12.001');
+  }
+
+  if(b.length === 14){
+    // DPT 16.000, ASCII mit Nullen aufgefuellt.
+    const s = b.map(c => (c >= 0x20 && c < 0x7F) ? String.fromCharCode(c) : '')
+               .join('').trim();
+    return s ? '"' + s + '"' + dpt('16.000') : '';
   }
 
   return '';
@@ -2044,28 +2113,37 @@ async function monToggle(){
     return;
   }
 
-  const trigger = $('monMode').value === 'trigger' ? $('monTrig').value.trim() : '';
-  if($('monMode').value === 'trigger' && !trigger){
+  const mode = $('monMode').value;
+  const trigger = mode === 'ga' ? $('monTrig').value.trim() : '';
+  if(mode === 'ga' && !trigger){
     alert(t('Bitte eine Trigger-Gruppenadresse angeben.'));
     return;
   }
 
   const body = new URLSearchParams({
-    sides:     $('monSides').value,
-    trigger:   trigger,
-    stop_full: $('monStopFull').checked ? '1' : '0'
+    sides:        $('monSides').value,
+    trigger_mode: mode,
+    trigger:      trigger,
+    pre:          mode === 'now' ? '0' : ($('monPre').value || '0'),
+    post:         mode === 'now' ? '0' : ($('monPost').value || '0'),
+    stop_full:    $('monStopFull').checked ? '1' : '0'
   });
   const r = await fetch('/api/monitor/start', {method:'POST', body});
-  if(!r.ok){ alert(t('Aufzeichnung konnte nicht gestartet werden.')); return; }
 
-  monRows = [];
-  monRender();
+  if(!r.ok){
+    let msg = t('Aufzeichnung konnte nicht gestartet werden.');
+    try { const j = await r.json(); if(j.error) msg = j.error; } catch(e){}
+    alert(msg);
+    return;
+  }
+
   monSetFollow(true);
 }
 
 async function monClear(){
   await fetch('/api/monitor/clear', {method:'POST'});
   monRows = [];
+  monSel  = null;
   monRender();
   monRefresh();
 }

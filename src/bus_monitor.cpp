@@ -68,14 +68,32 @@ void BusMonitor::hook(uint8_t side, bool outgoing, const uint8_t* cemi, uint16_t
     busMonitor.capture(side, outgoing, cemi, length);
 }
 
-uint16_t BusMonitor::destinationOf(const uint8_t* cemi, uint16_t length)
+bool BusMonitor::fires(const uint8_t* cemi, uint16_t length) const
 {
     uint16_t ctrl = ctrlOffset(cemi);
 
-    // CTRL1, CTRL2, source, destination
-    if (length < (uint16_t)(ctrl + 6)) return 0;
+    switch (_trigger)
+    {
+    case TRG_GA:
+        if (length < (uint16_t)(ctrl + 6)) return false;
+        // Group addressing only, or a physical address would match by number.
+        if ((cemi[ctrl + 1] & 0x80) == 0) return false;
+        return (uint16_t)((cemi[ctrl + 4] << 8) | cemi[ctrl + 5]) == _triggerAddress;
 
-    return (uint16_t)((cemi[ctrl + 4] << 8) | cemi[ctrl + 5]);
+    case TRG_REPEAT:
+        // The bit is inverted: cleared means this is a repetition.
+        return length > ctrl && (cemi[ctrl] & 0x20) == 0;
+
+    case TRG_SECURE:
+    {
+        if (length < (uint16_t)(ctrl + 9)) return false;
+        uint16_t apci = (uint16_t)(((cemi[ctrl + 7] & 0x03) << 8) | cemi[ctrl + 8]);
+        return apci == 0x3F1; // SecureService
+    }
+
+    default:
+        return true;
+    }
 }
 
 void BusMonitor::capture(uint8_t side, bool outgoing, const uint8_t* cemi, uint16_t length)
@@ -87,17 +105,19 @@ void BusMonitor::capture(uint8_t side, bool outgoing, const uint8_t* cemi, uint1
 
     if ((_sides & (1 << (side & 1))) == 0) return;
 
-    if (state == ST_ARMED)
-    {
-        if (destinationOf(cemi, length) != _trigger) return;
-        _state = ST_RUNNING;
-    }
+    /*
+     * While armed the ring keeps running, capped at the pre-trigger count.
+     * That is what makes a trigger worth having: the frames that led to the
+     * event are the ones nobody can capture afterwards.
+     */
+    bool armed = (state == ST_ARMED);
+    if (armed && _pre == 0 && !fires(cemi, length)) return;
 
     uint8_t stored = (length > RAW_MAX) ? RAW_MAX : (uint8_t)length;
 
     portENTER_CRITICAL(&_lock);
 
-    if (_stopWhenFull && _count >= _capacity)
+    if (_stopWhenFull && _count >= _capacity && !armed)
     {
         _missed++;
         _state = ST_FULL;
@@ -113,31 +133,63 @@ void BusMonitor::capture(uint8_t side, bool outgoing, const uint8_t* cemi, uint1
     slot.length   = (length > 255) ? 255 : (uint8_t)length;
     memcpy(slot.raw, cemi, stored);
 
+    uint32_t limit = (armed && _pre > 0 && _pre < _capacity) ? _pre : _capacity;
+
     _head = (_head + 1) % _capacity;
-    if (_count < _capacity) _count++;
+    if (_count < limit) _count++;
     _written++;
 
     portEXIT_CRITICAL(&_lock);
+
+    if (armed)
+    {
+        if (!fires(cemi, length)) return;
+
+        _triggerSeq = _written - 1;
+        _triggered  = true;
+        _state      = ST_RUNNING;
+        return;
+    }
+
+    // The post-trigger limit counts the frames after the trigger itself.
+    if (_post > 0 && _triggered && (_written - _triggerSeq) > _post)
+    {
+        _state = ST_FULL;
+    }
 }
 
-void BusMonitor::start(uint8_t sides, uint16_t trigger, bool stopWhenFull)
+bool BusMonitor::start(uint8_t sides, Trigger trigger, uint16_t address,
+                       uint32_t pre, uint32_t post, bool stopWhenFull)
 {
-    if (_ring == nullptr) return;
+    if (_ring == nullptr) return false;
+
+    if (stopWhenFull && _count >= _capacity)
+    {
+        // Starting would end on the next frame. Say so instead of pretending.
+        return false;
+    }
 
     // Off first: a run that is still going would otherwise write into the ring
-    // while it is being cleared, and into the old side mask while it changes.
+    // while the side mask and the trigger change underneath it.
     _state = ST_OFF;
 
-    _sides        = (sides & (WATCH_IP | WATCH_TP)) ? sides : (WATCH_IP | WATCH_TP);
-    _trigger      = trigger;
-    _stopWhenFull = stopWhenFull;
-    _missed       = 0;
+    _sides          = (sides & (WATCH_IP | WATCH_TP)) ? sides : (WATCH_IP | WATCH_TP);
+    _trigger        = trigger;
+    _triggerAddress = address;
+    _pre            = (pre > _capacity) ? _capacity : pre;
+    _post           = post;
+    _stopWhenFull   = stopWhenFull;
+    _missed         = 0;
+    _triggerSeq     = 0;
+    _triggered      = (trigger == TRG_NOW);
 
-    // A fresh run starts on an empty ring: mixing the frames of two runs in
-    // one list makes the sequence numbers say something they do not mean.
-    clear();
-
-    _state = trigger ? ST_ARMED : ST_RUNNING;
+    /*
+     * Deliberately no clear(): stopping and resuming must not throw away what
+     * was captured before, and the sequence numbers stay monotonic across the
+     * pause anyway.
+     */
+    _state = (trigger == TRG_NOW) ? ST_RUNNING : ST_ARMED;
+    return true;
 }
 
 void BusMonitor::stop()
@@ -152,6 +204,9 @@ void BusMonitor::clear()
     _count   = 0;
     _written = 0;
     portEXIT_CRITICAL(&_lock);
+
+    _triggerSeq = 0;
+    _triggered  = false;
 }
 
 bool BusMonitor::at(uint32_t seq, Entry& out) const
