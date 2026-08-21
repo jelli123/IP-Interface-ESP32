@@ -178,6 +178,7 @@ small{color:var(--dim)}
   <section class="card">
     <h2>Status</h2>
     <div class="row"><span>Laufzeit</span><span id="uptime">-</span></div>
+    <div class="row"><span>Betriebsstunden</span><span id="hours">-</span></div>
     <div class="row"><span>Physikalische Adresse</span><span id="pa">-</span></div>
     <div class="row"><span>Name in der ETS</span><span id="knxName">-</span></div>
     <div class="row"><span>ETS-Konfiguration</span><span id="cfg">-</span></div>
@@ -285,6 +286,7 @@ small{color:var(--dim)}
       <button class="sec" onclick="showLog()">Protokoll</button>
       <button class="sec" onclick="openAuth()">Zugang</button>
       <button class="sec" onclick="resetPeaks('cpu')">Spitzenwerte zur&uuml;cksetzen</button>
+      <button class="sec" onclick="resetHours()">Betriebsstunden zur&uuml;cksetzen</button>
     </div>
   </section>
 
@@ -829,7 +831,12 @@ let LANG = localStorage.getItem('sbip-lang') === 'en' ? 'en' : 'de';
 const EN = {
 'Telegramme':'Telegrams', 'Zeitserver':'Time server', 'Netzwerk':'Network',
 'Hardware-Profil':'Hardware profile', 'WLAN einrichten':'Set up Wi-Fi',
-'Laufzeit':'Uptime', 'Physikalische Adresse':'Individual address',
+'Laufzeit':'Uptime', 'Betriebsstunden':'Operating hours',
+'Start':'start', 'Starts':'starts',
+'Betriebsstunden zurücksetzen':'Reset the operating hours',
+'Betriebsstunden und Startzähler auf null setzen?':
+  'Set the operating hours and the start counter to zero?',
+'Physikalische Adresse':'Individual address',
 'ETS-Konfiguration':'ETS configuration', 'Tunnel (max.)':'Tunnels (max.)', 'Tunnel-Adressen':'Tunnel addresses',
 'Programmiermodus':'Programming mode', 'Verbindung':'Connection',
 'Schnittstelle':'Interface', 'Baudrate':'Baud rate', 'Selbsttest':'Self test',
@@ -1433,6 +1440,12 @@ async function resetPeaks(scope){
   refresh();
 }
 
+async function resetHours(){
+  if(!confirm(t('Betriebsstunden und Startz\u00e4hler auf null setzen?'))) return;
+  await fetch('/api/hours/reset', {method:'POST'});
+  refresh();
+}
+
 // Dim a group while its leading checkbox is off, so the fields read as
 // belonging to the switch above them rather than standing on their own.
 // Only a checkbox that IS the group's first element counts - the row editors
@@ -1472,6 +1485,16 @@ async function refresh(){
   last = s;
 
   $('uptime').textContent = s.uptime;
+
+  /*
+   * Laufzeit ist die Zeit seit dem letzten Start, Betriebsstunden zaehlen
+   * ueber Neustarts und Stromausfaelle hinweg weiter. Unter einer Stunde sagt
+   * die Stundenzahl nichts, dann stehen dort Minuten.
+   */
+  const secs = s.hours_seconds || 0;
+  $('hours').textContent =
+      (secs < 3600 ? Math.floor(secs / 60) + ' min' : Math.floor(secs / 3600) + ' h')
+      + ' \u00b7 ' + s.starts + ' ' + t(s.starts === 1 ? 'Start' : 'Starts');
   $('pa').textContent     = s.knx_pa;
   $('knxName').textContent = s.knx_name || t('nicht gesetzt');
   $('knxBadge').textContent = s.knx_name || s.device_name;
@@ -1932,8 +1955,10 @@ async function monLoad(newest){
   let from = null;
   if(!newest){
     const first = monRows.length ? monRows[0].s : s.written;
-    if(first <= s.oldest) return;             // schon am Anfang
     from = Math.max(s.oldest, first - MON_WIN);
+
+    // Nichts mehr nachzuladen - der Blick soll trotzdem an den Anfang.
+    if(first <= s.oldest){ monRender('start'); return; }
   }
 
   const url = '/api/monitor/frames?max=' + MON_WIN + (from === null ? '' : '&from=' + from);
