@@ -16,6 +16,7 @@
 #include "cpu_load.h"
 #include "eth_interface.h"
 #include "fw_hash.h"
+#include "hour_meter.h"
 #include "hw_config.h"
 #include "interface_config.h"
 #include "index_html.h"
@@ -245,6 +246,8 @@ static String statusJson()
 
     String json = "{";
     json += "\"uptime\":\"" + uptimeString() + "\",";
+    json += "\"hours_seconds\":" + String(hourMeter.seconds()) + ",";
+    json += "\"starts\":" + String(hourMeter.starts()) + ",";
     json += "\"device_name\":\"" + jsonEscape(netManager.deviceName()) + "\",";
     json += "\"knx_name\":\"" + jsonEscape(knxLink.friendlyName()) + "\",";
     json += "\"auth_user\":\"" + jsonEscape(Auth::user()) + "\",";
@@ -938,6 +941,12 @@ static void registerHardwareRoutes()
         if (!mutationAllowed(request)) return;
         request->send(200, "application/json", "{\"status\":\"ok\"}");
         netManager.scheduleReboot();
+    });
+
+    server.on("/api/hours/reset", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+        hourMeter.reset();
+        request->send(200, "application/json", "{\"status\":\"ok\"}");
     });
 }
 

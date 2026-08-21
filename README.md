@@ -29,6 +29,7 @@ NCN5130-Transceiver; hier sitzt stattdessen ein Selfbus-Interface am UART.
 | WLAN-Watchdog | erkennt stille Abbrüche und verlorene DHCP-Leases |
 | TP-Link-Watchdog | erneuert den Reset-Handshake, wenn das SB-Interface stumm wird |
 | Auslastung | TP1-Buslast, Kern-0-Last und Hauptschleifen-Last, mit Spitzenwertmarker |
+| Betriebsstunden | zählen über Neustarts und Stromausfälle hinweg weiter |
 | Busmonitor | Telegramme beider Seiten im PSRAM, mit Filter und Trigger |
 | mDNS | `http://sbip.local` |
 | CSRF-Schutz | Origin-Prüfung auf allen schreibenden Endpunkten |
@@ -1159,6 +1160,7 @@ das Passwort und ein zweiter Ort für Fehler.
 | POST | `/api/hwconfig` | JSON-Profil speichern (Teilfelder erlaubt) |
 | POST | `/api/hwconfig/reset` | gespeichertes Profil verwerfen |
 | POST | `/api/peaks/reset` | `scope=bus\|cpu\|all` → Spitzenwertmarker löschen |
+| POST | `/api/hours/reset` | Betriebsstunden und Startzähler auf null |
 | POST | `/api/led/heartbeat` | `enabled=1\|0` → Herzschlag schalten |
 | POST | `/api/led/brightness` | `percent=1..100` → Helligkeit aller LEDs |
 | GET | `/api/partitions` | Partitionstabelle des Flash |
@@ -1858,6 +1860,22 @@ lesbar bleiben, steht hinter jedem Höchstwert die Zeit, für die er gilt.
 `POST /api/peaks/reset` ohne `scope` löscht weiterhin beide. Der erste
 Messzyklus nach dem Start wird verworfen; sonst stünde die Startlast für den
 Rest der Laufzeit im Marker.
+
+### Betriebsstunden
+
+Die **Laufzeit** auf der Startseite ist die Zeit seit dem letzten Start und
+sagt nichts darüber, wie lange das Gerät schon in Betrieb ist. Dafür zählt
+[src/hour_meter.cpp](src/hour_meter.cpp) getrennt weiter – über Neustarts und
+Stromausfälle hinweg –, zusammen mit der Anzahl der Starts. Beides setzt nur
+`POST /api/hours/reset` zurück.
+
+Geschrieben wird **alle 15 Minuten**, nicht sekündlich. Der Zähler teilt sich
+den Flash mit den WLAN-Zugangsdaten und dem Hardware-Profil, und NVS legt bei
+jedem `put` einen neuen Eintrag an. Eine Viertelstunde kostet rund 35 000
+Schreibvorgänge im Jahr – nichts gegen die Ausdauer des Bausteins –, während
+ein Stromausfall höchstens fünfzehn Minuten eines Betriebsstundenzählers
+verliert. Der Nachkommaanteil bleibt dabei stehen: Ohne das würde jeder Flush
+bis zu eine Sekunde verschlucken.
 
 ---
 

@@ -15,6 +15,7 @@
 #include "bus_monitor.h"
 #include "button_service.h"
 #include "cpu_load.h"
+#include "hour_meter.h"
 #include "hw_config.h"
 #include "interface_config.h"
 #include "improv_service.h"
@@ -60,6 +61,9 @@ void setup()
      * repeats that call as a safety net, it does not enable NVS.
      */
     timeService.applyTimezone();
+
+    // Counts this start, so it belongs before anything can fail and reboot.
+    hourMeter.begin();
 
     /*
      * Hardware profile before anything else.
@@ -216,4 +220,5 @@ void loop()
     buttonService.loop();
     statusLed.loop();
     cpuLoad.loop();
+    hourMeter.loop();
 }
