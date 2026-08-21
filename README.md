@@ -729,11 +729,43 @@ Der Filter über Seite, Richtung, Adressart, Quelle, Ziel und Dienst wirkt
 entscheidet allein die Seitenauswahl im Gerät. Der CSV-Export gibt genau das
 aus, was der Browser hält – sonst passten Anzeige und Datei nicht zusammen.
 
+Farbe trägt zwei Aussagen, ohne zu wiederholen, was danebensteht: Die **linke
+Kante** nennt die Seite – grün TP, blau IP – und eine **getönte Zeile** heißt
+gesendet. Ein Klick auf eine Zeile hebt alles zur selben Gruppenadresse hervor,
+ein zweiter hebt es wieder auf.
+
+### Die Spalte „Wert" ist ein Vorschlag
+
+Ein Koppler kennt den **Datenpunkttyp** einer Gruppenadresse nicht. Der steht
+im ETS-Projekt; die Filtertabelle, die das Gerät bei einem Download bekommt,
+enthält ausschließlich Adressen. Gedeutet wird deshalb nach der Länge der
+Nutzdaten:
+
+| Länge | Deutung |
+|---|---|
+| ≤ 6 Bit | 0 = Aus, 1 = Ein, sonst der 4-Bit-Wert (DPT 1/2/3) |
+| 1 Byte | Rohwert, Prozent aus 0…255, vorzeichenbehaftet (DPT 5/6) |
+| 2 Byte | KNX-Gleitkomma (DPT 9) und der Rohwert (DPT 7) |
+| 3 Byte | Uhrzeit (DPT 10.001) **und** Datum (DPT 11.001), wenn beides passt |
+| 4 Byte | IEEE-Gleitkomma (DPT 14) und vorzeichenlos (DPT 12) |
+
+Bei 1 Bit und 2 Byte trifft das fast immer, bei 1 Byte ist es mehrdeutig, und
+bei 3 Byte lassen sich Uhrzeit und Datum grundsätzlich nicht unterscheiden –
+dann stehen beide da. Die Rohbytes bleiben deshalb in der Spalte daneben
+stehen. `GroupValueRead` wird nicht gedeutet: Die Null darin ist Füllung, kein
+Wert.
+
 Gestempelt wird mit der Betriebszeit, nicht mit der Uhrzeit: Eine Zeitzone hat
 im Aufzeichnungspfad nichts zu suchen. Steht die Uhr, rechnet der Browser aus
 `now_ms` und `epoch_ms` die Tageszeit; sonst bleibt `+hh:mm:ss.mmm` stehen.
-Die Spalte daneben zeigt den Abstand zum vorigen Telegramm – für die Frage
-nach Wiederholungen und Stürmen die eigentlich interessante Zahl.
+Beide Werte kommen **in Millisekunden und direkt nacheinander gelesen** aus
+demselben Statusabruf – mit einer Epoche in ganzen Sekunden schwankte die
+Differenz zwischen zwei Abrufen um bis zu eine Sekunde, was sich als
+springende Sekundenbruchteile beim Neuladen zeigte.
+
+Die Spalte daneben zeigt den Abstand zum vorigen **angezeigten** Telegramm –
+für die Frage nach Wiederholungen und Stürmen die eigentlich interessante
+Zahl.
 
 Direkt danach kommen `statusLed.begin()` und `buttonService.begin()`: Beide
 brauchen das Profil für ihre Pins, und die Anzeige soll stehen, solange der

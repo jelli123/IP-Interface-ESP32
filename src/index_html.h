@@ -117,7 +117,18 @@ color:var(--dim);border-bottom:1px solid var(--line);font-family:inherit}
 table.mon td{padding:3px 7px;border-bottom:1px solid rgba(43,52,68,.5);
 white-space:nowrap}
 table.mon td.w{white-space:normal;word-break:break-all}
-table.mon tr.tx td:first-child{box-shadow:inset 3px 0 0 var(--acc)}
+/* Zwei Kanaele, damit die Farbe nicht bloss wiederholt, was daneben steht:
+ * die linke Kante nennt die Seite, die Tuenung der Zeile die Richtung. */
+table.mon tbody tr{cursor:pointer}
+table.mon tr.tx td{background:rgba(210,153,34,.10)}
+table.mon tr.tp td:first-child{box-shadow:inset 3px 0 0 var(--ok)}
+table.mon tr.ip td:first-child{box-shadow:inset 3px 0 0 var(--acc)}
+table.mon tbody tr:hover td{background:rgba(255,255,255,.06)}
+/* Alles zur angeklickten Gruppenadresse. Nach dem Hover notiert, damit die
+ * Auswahl beim Ueberfahren nicht verschwindet. */
+table.mon tr.mark td{background:rgba(94,168,255,.20)}
+table.mon td.val{color:var(--fg)}
+table.mon td.dim{color:var(--dim)}
 .monf{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:6px 0}
 .monf label{margin:0 0 3px;display:block}
 .monf>div{flex:1 1 130px}
@@ -477,6 +488,14 @@ small{color:var(--dim)}
   es hilft nur der Gruppenmonitor der ETS. Angezeigt wird immer nur ein
   Ausschnitt &ndash; der Filter wirkt auf das Geladene, nicht auf die
   Aufzeichnung.</small></p>
+  <p><small>Farben: die linke Kante nennt die Seite (gr&uuml;n TP, blau IP),
+  die get&ouml;nte Zeile das Senden. Ein Klick auf eine Zeile hebt alles zur
+  selben Gruppenadresse hervor, ein zweiter hebt es wieder auf.</small></p>
+  <p><small>Die Spalte Wert ist ein Vorschlag nach L&auml;nge, keine Messung:
+  Den Datenpunkttyp einer Gruppenadresse kennt nur das ETS-Projekt, die
+  Filtertabelle im Ger&auml;t enth&auml;lt allein Adressen. Bei 1 Bit und 2 Byte
+  trifft die Deutung fast immer, bei 1 Byte ist sie mehrdeutig &ndash; deshalb
+  stehen die Rohbytes daneben.</small></p>
 </dialog>
 
 <dialog id="infoDlg">
@@ -834,7 +853,9 @@ const EN = {
 'Ältere laden':'Load older', 'Neueste laden':'Load newest',
 'Als CSV speichern':'Save as CSV',
 'Zeit':'Time', 'Quelle':'Source', 'Ziel':'Destination', 'Prio':'Prio',
-'Dienst':'Service', 'Daten':'Data', 'unlesbar':'undecodable',
+'Dienst':'Service', 'Daten':'Data', 'Wert':'Value', 'unlesbar':'undecodable',
+'Aus':'off', 'Ein':'on', '4 Bit':'4 bit',
+'Mo':'Mon', 'Di':'Tue', 'Mi':'Wed', 'Do':'Thu', 'Fr':'Fri', 'Sa':'Sat', 'So':'Sun',
 'Telegrammen':'telegrams', 'nach dem Anhalten verworfen':'discarded after the stop',
 'bereit':'ready', 'angehalten':'stopped', 'zeichnet auf':'recording',
 'wartet auf den Trigger':'waiting for the trigger',
@@ -852,6 +873,22 @@ const EN = {
   'The ring lives in PSRAM; without it the monitor stays off and only the ETS '
 + 'group monitor is left. The list always shows a window of the ring - the '
 + 'filter works on what was loaded, not on the recording.',
+['Farben: die linke Kante nennt die Seite (grün TP, blau IP), die getönte '
++ 'Zeile das Senden. Ein Klick auf eine Zeile hebt alles zur selben '
++ 'Gruppenadresse hervor, ein zweiter hebt es wieder auf.']:
+  'Colours: the left edge names the side (green TP, blue IP), a tinted row '
++ 'means sent. Clicking a row highlights everything for the same group '
++ 'address, clicking again clears it.',
+['Die Spalte Wert ist ein Vorschlag nach Länge, keine Messung: Den '
++ 'Datenpunkttyp einer Gruppenadresse kennt nur das ETS-Projekt, die '
++ 'Filtertabelle im Gerät enthält allein Adressen. Bei 1 Bit und 2 Byte '
++ 'trifft die Deutung fast immer, bei 1 Byte ist sie mehrdeutig – deshalb '
++ 'stehen die Rohbytes daneben.']:
+  'The value column is a guess from the length, not a measurement: the '
++ 'datapoint type of a group address is known only to the ETS project, and '
++ 'the filter table in the device holds addresses alone. For 1 bit and 2 '
++ 'bytes the reading is almost always right, for 1 byte it is ambiguous - '
++ 'which is why the raw bytes sit next to it.',
 
 'LED-Helligkeit':'LED brightness', 'Heartbeat aktiv':'Heartbeat active',
 'Neustart nötig':'Restart required',
@@ -1801,6 +1838,7 @@ function downloadLog(){
 
 const MON_WIN = 400; //!< Telegramme je Abruf
 let monRows = [], monState = null, monFollow = false, monTimer = null;
+let monSel = null;   //!< hervorgehobene Gruppenadresse
 
 function openMon(){
   monDlg.showModal();
@@ -1877,26 +1915,106 @@ function monRender(toEnd){
 
   const head = '<tr><th>' + t('Zeit') + '</th><th>&Delta;</th><th>' + t('Seite')
     + '</th><th></th><th>' + t('Quelle') + '</th><th>' + t('Ziel') + '</th><th>'
-    + t('Prio') + '</th><th>' + t('Dienst') + '</th><th>' + t('Daten') + '</th></tr>';
+    + t('Prio') + '</th><th>' + t('Dienst') + '</th><th>' + t('Daten')
+    + '</th><th>' + t('Wert') + '</th></tr>';
 
   let previous = null;
   const body = rows.map(r => {
     const gap = previous === null ? '' : (r.ms - previous) + ' ms';
     previous = r.ms;
-    return '<tr class="' + (r.o ? 'tx' : 'rx') + '">'
+    const cls = (r.o ? 'tx' : 'rx') + ' ' + (r.t ? 'tp' : 'ip')
+              + (monSel && r.dst === monSel ? ' mark' : '');
+    return '<tr class="' + cls + '" onclick="monPick(\'' + esc(r.dst || '') + '\')">'
       + '<td>' + monTime(r.ms) + '</td>'
-      + '<td>' + gap + '</td>'
+      + '<td class="dim">' + gap + '</td>'
       + '<td>' + (r.t ? 'TP' : 'IP') + '</td>'
       + '<td>' + (r.o ? '&rarr;' : '&larr;') + '</td>'
       + '<td>' + esc(r.src || '') + '</td>'
       + '<td>' + esc(r.dst || '') + '</td>'
-      + '<td>' + esc(r.p || '') + '</td>'
+      + '<td class="dim">' + esc(r.p || '') + '</td>'
       + '<td>' + esc(r.a || (r.raw ? t('unlesbar') : '')) + '</td>'
-      + '<td class="w">' + esc(r.d || r.raw || '') + '</td></tr>';
+      + '<td class="w dim">' + esc(r.d || r.raw || '') + '</td>'
+      + '<td class="val">' + esc(monValue(r)) + '</td></tr>';
   }).join('');
 
   $('monTbl').innerHTML = head + body;
   if(toEnd) $('monBox').scrollTop = $('monBox').scrollHeight;
+}
+
+/** Alles zur selben Gruppenadresse hervorheben, erneuter Klick hebt es auf. */
+function monPick(dst){
+  monSel = (monSel === dst || !dst) ? null : dst;
+  const top = $('monBox').scrollTop;
+  monRender();
+  $('monBox').scrollTop = top;
+}
+
+/*
+ * Deutung der Nutzdaten nach ihrer Laenge.
+ *
+ * Ein Koppler kennt den Datenpunkttyp einer Gruppenadresse nicht: der steht im
+ * ETS-Projekt, und die Filtertabelle, die das Geraet bekommt, enthaelt nur
+ * Adressen. Was hier steht, ist deshalb ein Vorschlag anhand der Laenge - bei
+ * 1 Bit und 2 Byte fast immer richtig, bei 1 Byte mehrdeutig.
+ */
+function monValue(r){
+  // Ein Lesebefehl traegt keine Nutzdaten - die Null darin ist Fuellung.
+  if(!r.d || !/GroupValue(Write|Response)/.test(r.a || '')) return '';
+
+  const b = [];
+  for(let i = 0; i + 1 < r.d.length; i += 2) b.push(parseInt(r.d.substr(i, 2), 16));
+  if(!b.length) return '';
+
+  // Bis zu sechs Bit reisen im APCI-Byte selbst, r.n zaehlt sie als ein Oktett.
+  if(r.n <= 1){
+    const v = b[0] & 0x3F;
+    if(v === 0) return '0 \u00b7 ' + t('Aus');
+    if(v === 1) return '1 \u00b7 ' + t('Ein');
+    return v + ' \u00b7 ' + t('4 Bit');
+  }
+
+  if(b.length === 1){
+    const s = (b[0] > 127) ? b[0] - 256 : b[0];
+    return b[0] + ' \u00b7 ' + Math.round(b[0] * 100 / 255) + ' % \u00b7 ' + s;
+  }
+
+  if(b.length === 2){
+    const raw = (b[0] << 8) | b[1];
+    let m = raw & 0x07FF;
+    if(raw & 0x8000) m -= 2048;
+    const f = 0.01 * m * Math.pow(2, (raw >> 11) & 0x0F);
+    return (Math.round(f * 100) / 100) + ' \u00b7 ' + raw;
+  }
+
+  if(b.length === 3){
+    /*
+     * Hier stossen zwei Datenpunkttypen zusammen, die sich nicht
+     * unterscheiden lassen: 10.001 traegt Wochentag und Uhrzeit, 11.001 Tag,
+     * Monat und Jahr. Passt beides, steht auch beides da.
+     */
+    const pad = n => String(n).padStart(2, '0');
+    const D = ['', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+    const day = b[0] >> 5, h = b[0] & 0x1F;
+    const out = [];
+
+    if(h < 24 && b[1] < 60 && b[2] < 60){
+      out.push((day ? t(D[day]) + ' ' : '') + [h, b[1], b[2]].map(pad).join(':'));
+    }
+    if(b[0] >= 1 && b[0] <= 31 && b[1] >= 1 && b[1] <= 12 && b[2] < 100){
+      // 0..89 meint 2000..2089, 90..99 meint 1990..1999 (DPT 11.001).
+      const year = (b[2] < 90 ? 2000 : 1900) + b[2];
+      out.push(pad(b[0]) + '.' + pad(b[1]) + '.' + year);
+    }
+    return out.join(' \u00b7 ');
+  }
+
+  if(b.length === 4){
+    const dv = new DataView(new Uint8Array(b).buffer);
+    const u = dv.getUint32(0), f = dv.getFloat32(0);
+    return (isFinite(f) ? (Math.round(f * 1000) / 1000) + ' \u00b7 ' : '') + u;
+  }
+
+  return '';
 }
 
 /*
@@ -1975,10 +2093,10 @@ async function monTick(){
 function monDownload(){
   const sep = ';';
   const head = ['ms','Seite','Richtung','Quelle','Ziel','Prio','Wdh','Hop',
-                'Dienst','Daten'].join(sep);
+                'Dienst','Daten','Wert'].join(sep);
   const body = monRows.map(r => [r.ms, r.t ? 'TP' : 'IP', r.o ? 'TX' : 'RX',
       r.src || '', r.dst || '', r.p || '', r.r || 0, r.h === undefined ? '' : r.h,
-      r.a || '', r.d || r.raw || ''].join(sep)).join('\n');
+      r.a || '', r.d || r.raw || '', monValue(r)].join(sep)).join('\n');
 
   const blob = new Blob([head + '\n' + body], {type:'text/csv;charset=utf-8'});
   const a = document.createElement('a');
