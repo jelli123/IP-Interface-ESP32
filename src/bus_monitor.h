@@ -41,9 +41,25 @@ public:
     enum State : uint8_t
     {
         ST_OFF = 0,  //!< not recording
-        ST_ARMED,    //!< waiting for the trigger address
+        ST_ARMED,    //!< waiting for the trigger
         ST_RUNNING,
-        ST_FULL      //!< stopped itself, the ring had filled up
+        ST_FULL      //!< stopped itself, the ring or the post count ran out
+    };
+
+    /**
+     * What starts the recording.
+     *
+     * The ETS bus monitor offers more, and most of it cannot be had here: the
+     * SB-Interface acknowledges autonomously and drops invalid frames before
+     * the stack sees them, so acknowledged, not acknowledged, negatively
+     * acknowledged and invalid never reach us. See the README.
+     */
+    enum Trigger : uint8_t
+    {
+        TRG_NOW = 0,  //!< start straight away
+        TRG_GA,       //!< a telegram to a group address
+        TRG_REPEAT,   //!< a repeated frame
+        TRG_SECURE    //!< a KNX Data Secure frame
     };
 
     /**
@@ -80,20 +96,33 @@ public:
     uint32_t oldest() const { return _written - _count; }
 
     uint8_t  sides() const { return _sides; }
-    uint16_t trigger() const { return _trigger; }
+    Trigger  trigger() const { return _trigger; }
+    uint16_t triggerAddress() const { return _triggerAddress; }
+    uint32_t preTrigger() const { return _pre; }
+    uint32_t postTrigger() const { return _post; }
     bool     stopWhenFull() const { return _stopWhenFull; }
+
+    /** Sequence number of the frame that fired the trigger, 0 when none did. */
+    uint32_t triggerSeq() const { return _triggerSeq; }
+
+    /** Has the trigger fired in this run? */
+    bool triggered() const { return _triggered; }
 
     /** Frames seen while the ring was already full and set to stop. */
     uint32_t missed() const { return _missed; }
 
     /**
-     * Begin recording, or wait for a telegram to @p trigger before doing so.
+     * Begin recording, or wait for the trigger before counting from it.
      *
-     * @param sides         bitmask of WATCH_IP and WATCH_TP
-     * @param trigger       group address, 0 to start straight away
-     * @param stopWhenFull  keep the first full ring instead of overwriting
+     * Keeps what is already in the ring: stopping and resuming has to be
+     * possible without losing the reason you stopped for.
+     *
+     * @param pre   frames kept from before the trigger, 0 for none
+     * @param post  frames after the trigger before it stops, 0 for no limit
+     * @return false when the ring is full and set to stop - clear it first
      */
-    void start(uint8_t sides, uint16_t trigger, bool stopWhenFull);
+    bool start(uint8_t sides, Trigger trigger, uint16_t address,
+               uint32_t pre, uint32_t post, bool stopWhenFull);
     void stop();
 
     /** Drop everything captured so far. Recording state is untouched. */
@@ -110,8 +139,8 @@ private:
     static void hook(uint8_t side, bool outgoing, const uint8_t* cemi, uint16_t length);
     void capture(uint8_t side, bool outgoing, const uint8_t* cemi, uint16_t length);
 
-    /** Destination address out of a raw cEMI frame, 0 when it has none. */
-    static uint16_t destinationOf(const uint8_t* cemi, uint16_t length);
+    /** Does this raw cEMI frame fire the configured trigger? */
+    bool fires(const uint8_t* cemi, uint16_t length) const;
 
     Entry*   _ring     = nullptr;
     uint32_t _capacity = 0;
@@ -121,9 +150,14 @@ private:
     uint32_t _missed   = 0;
 
     volatile State _state = ST_OFF;
-    uint8_t  _sides       = WATCH_IP | WATCH_TP;
-    uint16_t _trigger     = 0;
-    bool     _stopWhenFull = false;
+    uint8_t  _sides         = WATCH_IP | WATCH_TP;
+    Trigger  _trigger       = TRG_NOW;
+    uint16_t _triggerAddress = 0;
+    uint32_t _pre           = 0;
+    uint32_t _post          = 0;
+    uint32_t _triggerSeq    = 0;
+    bool     _triggered     = false;
+    bool     _stopWhenFull  = false;
 
     mutable portMUX_TYPE _lock = portMUX_INITIALIZER_UNLOCKED;
 };

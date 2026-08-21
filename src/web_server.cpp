@@ -1365,7 +1365,14 @@ String monitorStateJson()
     json += "\"missed\":" + String(busMonitor.missed()) + ",";
     json += "\"sides\":" + String(busMonitor.sides()) + ",";
     json += "\"stop_full\":" + String(busMonitor.stopWhenFull() ? "true" : "false") + ",";
-    json += "\"trigger\":\"" + formatGroupAddress(busMonitor.trigger()) + "\",";
+
+    static const char* const TRIGGERS[] = {"now", "ga", "repeat", "secure"};
+    json += "\"trigger_mode\":\"" + String(TRIGGERS[busMonitor.trigger()]) + "\",";
+    json += "\"trigger\":\"" + formatGroupAddress(busMonitor.triggerAddress()) + "\",";
+    json += "\"pre\":" + String(busMonitor.preTrigger()) + ",";
+    json += "\"post\":" + String(busMonitor.postTrigger()) + ",";
+    json += "\"triggered\":" + String(busMonitor.triggered() ? "true" : "false") + ",";
+    json += "\"trigger_seq\":" + String(busMonitor.triggerSeq()) + ",";
 
     /*
      * Both read next to each other, both in milliseconds.
@@ -1423,10 +1430,13 @@ static void registerMonitorRoutes()
             return false;
         };
 
-        uint8_t  sides   = BusMonitor::WATCH_IP | BusMonitor::WATCH_TP;
-        uint16_t trigger = 0;
-        bool     full    = false;
-        String   value;
+        uint8_t             sides   = BusMonitor::WATCH_IP | BusMonitor::WATCH_TP;
+        BusMonitor::Trigger mode    = BusMonitor::TRG_NOW;
+        uint16_t            address = 0;
+        uint32_t            pre     = 0;
+        uint32_t            post    = 0;
+        bool                full    = false;
+        String              value;
 
         if (param("sides", value))
         {
@@ -1442,10 +1452,38 @@ static void registerMonitorRoutes()
             }
         }
 
-        if (param("trigger", value)) trigger = parseGroupAddress(value);
+        if (param("trigger_mode", value))
+        {
+            if (value == "ga")          mode = BusMonitor::TRG_GA;
+            else if (value == "repeat") mode = BusMonitor::TRG_REPEAT;
+            else if (value == "secure") mode = BusMonitor::TRG_SECURE;
+            else if (value != "now")
+            {
+                request->send(400, "application/json",
+                              "{\"error\":\"trigger_mode must be now, ga, repeat or secure\"}");
+                return;
+            }
+        }
+
+        if (param("trigger", value)) address = parseGroupAddress(value);
+
+        if (mode == BusMonitor::TRG_GA && address == 0)
+        {
+            request->send(400, "application/json",
+                          "{\"error\":\"trigger_mode=ga needs a group address\"}");
+            return;
+        }
+
+        if (param("pre", value))  pre  = (uint32_t)max(0L, value.toInt());
+        if (param("post", value)) post = (uint32_t)max(0L, value.toInt());
         if (param("stop_full", value)) full = (value == "1" || value == "true");
 
-        busMonitor.start(sides, trigger, full);
+        if (!busMonitor.start(sides, mode, address, pre, post, full))
+        {
+            request->send(409, "application/json",
+                          "{\"error\":\"the ring is full and set to stop - clear it first\"}");
+            return;
+        }
         request->send(200, "application/json", monitorStateJson());
     });
 

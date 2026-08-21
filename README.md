@@ -705,15 +705,38 @@ Ring für rund vier Minuten Dauerverkehr.
 | Start | Verhalten |
 |---|---|
 | **sofort** | zeichnet ab dem Klick auf |
-| **bei Gruppenadresse** | wartet, bis ein Telegramm an diese Adresse läuft, und beginnt mit genau diesem |
+| **bei Gruppenadresse** | wartet auf ein Telegramm an diese Adresse |
+| **bei Wiederholung** | wartet auf einen wiederholten Rahmen (CTRL1 Bit 5 gelöscht) |
+| **bei KNX Data Secure** | wartet auf einen gesicherten Rahmen (APCI 0x3F1) |
 
-Dazu der Schalter *Bei vollem Puffer anhalten*. Ohne ihn überschreibt der Ring
-laufend das Älteste – richtig, solange man live zusieht. Mit einem Trigger ist
-meist das Gegenteil gemeint: Man will festhalten, was **nach** dem Ereignis
-passierte, und nicht, dass es zwei Minuten später überschrieben ist.
+Dazu **Telegramme davor** und **Telegramme danach**. Der Vorlauf ist der
+eigentliche Wert eines Triggers: Was zu einem Ereignis geführt hat, kann
+niemand mehr aufzeichnen, wenn es passiert ist. Der Ring läuft deshalb schon
+im Zustand *wartet*, begrenzt auf die eingestellte Anzahl; erst der Auslöser
+hebt die Begrenzung auf. Der Nachlauf begrenzt, wie viele Telegramme nach dem
+Auslöser noch aufgenommen werden – 0 heißt „bis zum Anhalten".
 
-Jeder Start leert den Ring. Zwei Läufe in einer Liste würden die Folgenummern
-etwas behaupten lassen, was sie nicht bedeuten.
+**Anhalten und wieder starten setzt fort.** Geleert wird nur auf Knopfdruck.
+Die Folgenummern bleiben über die Pause hinweg monoton, es geht also nichts
+durcheinander. Nur wenn *Bei vollem Puffer anhalten* gesetzt und der Ring voll
+ist, wird ein Start abgewiesen – er würde beim nächsten Telegramm sofort wieder
+enden.
+
+### Was die ETS mehr kann
+
+Der ETS-Busmonitor bietet als Auslöser zusätzlich *Acknowledged*, *Not
+acknowledged*, *Negatively acknowledged*, *Invalid*, *Unknown source address*,
+*Unknown destination address*. Davon ist hier nichts nachrüstbar, und der Grund
+liegt eine Ebene tiefer:
+
+* **Quittungen** erzeugt das SB-Interface **autonom**. Das ACK-Zeitfenster von
+  rund 1,4 ms lässt keinen UART-Roundtrip zum ESP32 zu – der Host erfährt nie,
+  wie quittiert wurde. Siehe *Grenzen gegenüber einem NCN5130-Gateway*.
+* **Ungültige Telegramme** verwirft der Stack, bevor `frameReceived()` läuft.
+  Am Haken kommt nur an, was die Prüfsumme bestanden hat; die Zahl der
+  verworfenen steht als Zähler auf der Startseite.
+* **Unbekannte Adressen** setzen ein Projekt voraus. Das Gerät kennt nur seine
+  Filtertabelle, und die enthält Adressen ohne Namen.
 
 ### Anzeige
 
@@ -743,17 +766,23 @@ Nutzdaten:
 
 | Länge | Deutung |
 |---|---|
-| ≤ 6 Bit | 0 = Aus, 1 = Ein, sonst der 4-Bit-Wert (DPT 1/2/3) |
-| 1 Byte | Rohwert, Prozent aus 0…255, vorzeichenbehaftet (DPT 5/6) |
-| 2 Byte | KNX-Gleitkomma (DPT 9) und der Rohwert (DPT 7) |
+| ≤ 6 Bit | Aus / Ein (DPT 1.x), sonst der 4-Bit-Wert (DPT 3.x) |
+| 1 Byte | Rohwert (DPT 5.010) und Prozent aus 0…255 (DPT 5.001) |
+| 2 Byte | KNX-Gleitkomma (DPT 9.x) und Rohwert (DPT 7.001) |
 | 3 Byte | Uhrzeit (DPT 10.001) **und** Datum (DPT 11.001), wenn beides passt |
-| 4 Byte | IEEE-Gleitkomma (DPT 14) und vorzeichenlos (DPT 12) |
+| 4 Byte | IEEE-Gleitkomma (DPT 14.x) und vorzeichenlos (DPT 12.001) |
+| 14 Byte | Zeichenkette (DPT 16.000) |
 
-Bei 1 Bit und 2 Byte trifft das fast immer, bei 1 Byte ist es mehrdeutig, und
-bei 3 Byte lassen sich Uhrzeit und Datum grundsätzlich nicht unterscheiden –
-dann stehen beide da. Die Rohbytes bleiben deshalb in der Spalte daneben
-stehen. `GroupValueRead` wird nicht gedeutet: Die Null darin ist Füllung, kein
-Wert.
+Jede Angabe nennt den Typ, aus dem sie stammt, damit sichtbar bleibt, dass es
+eine Annahme ist. Die Spalte **Bits** daneben sagt, wie breit die Nutzdaten
+sind; bei bis zu sechs Bit steht `≤ 6`, weil die tatsächliche Breite – ein Bit
+bei DPT 1, vier bei DPT 3 – nirgends im Telegramm steht.
+
+Bei 1 Bit und 2 Byte trifft die Deutung fast immer, bei 1 Byte ist sie
+mehrdeutig, und bei 3 Byte lassen sich Uhrzeit und Datum grundsätzlich nicht
+unterscheiden – dann stehen beide da. Die Rohbytes bleiben deshalb in der
+Spalte daneben stehen. `GroupValueRead` wird nicht gedeutet: Die Null darin ist
+Füllung, kein Wert.
 
 Gestempelt wird mit der Betriebszeit, nicht mit der Uhrzeit: Eine Zeitzone hat
 im Aufzeichnungspfad nichts zu suchen. Steht die Uhr, rechnet der Browser aus
@@ -1138,7 +1167,7 @@ das Passwort und ein zweiter Ort für Fehler.
 | GET | `/api/log/reset` | was den letzten Neustart überdauert hat |
 | POST | `/api/log/keep` | `enabled=1\|0` → RTC-Mitschrift |
 | GET | `/api/monitor` | Zustand des Busmonitors |
-| POST | `/api/monitor/start` | `sides=tp,ip`, `trigger=`, `stop_full=1\|0` |
+| POST | `/api/monitor/start` | `sides=tp,ip`, `trigger_mode=now\|ga\|repeat\|secure`, `trigger=`, `pre=`, `post=`, `stop_full=1\|0` |
 | POST | `/api/monitor/stop` | Aufzeichnung anhalten |
 | POST | `/api/monitor/clear` | Ring leeren |
 | GET | `/api/monitor/frames` | Ausschnitt, `?from=` und `?max=` |
