@@ -912,6 +912,54 @@ pio run -e esp32dev     # nur eines
 Der Pre-Script [scripts/version_bump.py](scripts/version_bump.py) erzeugt
 `src/build_info.h` mit Buildnummer und Git-Hash.
 
+### Alle Varianten bauen und ablegen
+
+[scripts/release.py](scripts/release.py) baut die Umgebungen, benennt die
+Images nach Umgebung und Version und schreibt das passende Manifest daneben:
+
+```powershell
+python scripts\release.py                        # alle Umgebungen
+python scripts\release.py -e esp32dev -e esp32s3 # nur diese
+python scripts\release.py --no-build             # nur einsammeln
+```
+
+```bash
+python scripts/release.py
+python scripts/release.py -e esp32dev -e esp32s3
+python scripts/release.py --no-build
+```
+
+Ergebnis in `release/`:
+
+```
+firmware_esp32dev_0.1.0.bin
+firmware_esp32s3_0.1.0.bin
+…
+manifest.json
+```
+
+Die Version kommt aus `FIRMWARE_VERSION` in
+[include/interface_config.h](include/interface_config.h) und wird **nicht**
+automatisch erhöht – ein Release ist eine Entscheidung, kein Nebenprodukt.
+Liegt eine Datei desselben Namens bereits im Git, sagt das Skript das: Dann
+gehört die Versionsnummer erhöht, bevor gebaut wird.
+
+Das Manifest ist nach **Chipfamilie** geschlüsselt, genau wie
+`UPDATE_CHIP_KEY` in [src/ota_service.cpp](src/ota_service.cpp) – ein Gerät
+sucht immer nur seinen eigenen Eintrag. Die 8-MB-Umgebungen bekommen deshalb
+eine Datei, aber **keinen** Manifest-Eintrag: Sie unterscheiden sich von ihren
+4-MB-Gegenstücken allein in der Partitionstabelle, und die kann ein Update
+ohnehin nicht ändern.
+
+Die Buildnummer steht als `build` im Manifest. Das Gerät liest sie nicht, aber
+sie beantwortet später die Frage, welcher Stand das eigentlich war. Sie steigt
+pro Umgebung, ein Lauf über fünf Ziele verbraucht also fünf Nummern.
+
+> Binärdateien im Repository lassen es wachsen. Wer das vermeiden will, hängt
+> dieselben Dateien an ein **GitHub-Release** und trägt dessen Download-URL als
+> `update_url` ein – das Manifest bleibt unverändert, nur die Adresse ändert
+> sich.
+
 ### Flash-Größe und Partitionslayout
 
 Vorgabe ist [partitions_4mb_ota.csv](partitions_4mb_ota.csv): zwei App-Slots zu
