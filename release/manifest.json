@@ -1,0 +1,10 @@
+{
+  "version": "0.1.0",
+  "ota": {
+    "ESP32": {
+      "path": "firmware_esp32dev_0.1.0.bin",
+      "sha256": "042e08782703862e6d006b367ecded053e9227ca0556824e8ecf6553e92d48dd",
+      "build": 270
+    }
+  }
+}
