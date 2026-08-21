@@ -276,6 +276,8 @@ static String statusJson()
 
     json += "\"knx_configured\":" + String(knxLink.configured() ? "true" : "false") + ",";
     json += "\"knx_route_all\":" + String(knxLink.routeUnfiltered() ? "true" : "false") + ",";
+    json += "\"knx_route_all_active\":" +
+            String(knxLink.routeUnfilteredActive() ? "true" : "false") + ",";
     json += "\"led_present\":" + String(statusLed.present() ? "true" : "false") + ",";
     json += "\"led_beat_available\":" + String(statusLed.hasHeartbeat() ? "true" : "false") + ",";
     json += "\"led_heartbeat\":" + String(statusLed.heartbeat() ? "true" : "false") + ",";
@@ -1376,7 +1378,16 @@ String monitorStateJson()
 
 static void registerMonitorRoutes()
 {
-    server.on("/api/monitor", HTTP_GET, [](AsyncWebServerRequest* request) {
+    /*
+     * Exact, not the default match.
+     *
+     * AsyncURIMatcher's backward compatible mode lets "/api/monitor" answer
+     * "/api/monitor/frames" as well, and the first registered handler wins -
+     * so the state document came back where the frame list was expected and
+     * the dashboard silently showed nothing.
+     */
+    server.on(AsyncURIMatcher::exact("/api/monitor"), HTTP_GET,
+              [](AsyncWebServerRequest* request) {
         request->send(200, "application/json", monitorStateJson());
     });
 
@@ -1526,7 +1537,8 @@ static void registerMonitorRoutes()
 
 static void registerLpcRoutes()
 {
-    server.on("/api/lpc", HTTP_GET, [](AsyncWebServerRequest* request) {
+    server.on(AsyncURIMatcher::exact("/api/lpc"), HTTP_GET,
+              [](AsyncWebServerRequest* request) {
         request->send(200, "application/json", lpcIsp.statusJson());
     });
 
@@ -1557,6 +1569,21 @@ static void registerLpcRoutes()
 
     server.on("/api/lpc/write", HTTP_POST, [startJob](AsyncWebServerRequest* request) {
         startJob(request, true, false);
+    });
+
+    // Fetches the file into the same staging buffer an upload fills. Writing
+    // it stays the separate /api/lpc/write step.
+    server.on("/api/lpc/fetch", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        String error;
+        if (!lpcIsp.startFetch(error))
+        {
+            request->send(409, "application/json",
+                          String("{\"error\":\"") + jsonEscape(error) + "\"}");
+            return;
+        }
+        request->send(202, "application/json", lpcIsp.statusJson());
     });
 
     /*
@@ -1645,7 +1672,8 @@ void webServerBegin()
      * starts at that absolute position, which is what lets the dashboard
      * scroll through half a megabyte without holding all of it.
      */
-    server.on("/api/log", HTTP_GET, [](AsyncWebServerRequest* request) {
+    server.on(AsyncURIMatcher::exact("/api/log"), HTTP_GET,
+              [](AsyncWebServerRequest* request) {
         size_t want = 8192;
 
         if (request->hasParam("bytes"))

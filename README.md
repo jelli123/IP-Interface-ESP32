@@ -671,7 +671,7 @@ Beide Symbole sind in [src/bus_monitor.cpp](src/bus_monitor.cpp) definiert,
 nicht im Stack. Findet der Patch seine Anker nicht mehr, kostet das den
 Monitor seine Eingabe, nicht den Build. Welcher der beiden Fälle vorliegt,
 sagt das Define `SBIP_MONITOR_HOOK`, das derselbe Patch setzt – das Dashboard
-schreibt dann „Stack-Haken fehlt“ statt eine leere Liste zu zeigen.
+schreibt dann „Stack-Hook fehlt“ statt eine leere Liste zu zeigen.
 
 ### Der Aufzeichnungspfad darf nichts tun
 
@@ -1123,6 +1123,7 @@ das Passwort und ein zweiter Ort für Fehler.
 | GET | `/api/lpc` | Zustand des SB-Interface und des laufenden Auftrags |
 | POST | `/api/lpc/probe` | LPC erkennen (asynchron) |
 | POST | `/api/lpc/upload` | Multipart `firmware`, Intel-Hex oder Binär |
+| POST | `/api/lpc/fetch` | Datei aus dem Manifest holen und prüfen |
 | POST | `/api/lpc/write` | die hochgeladene Datei schreiben (asynchron) |
 | POST | `/api/lpc/run` | LPC ins Anwendungsprogramm zurücksetzen |
 
@@ -1469,21 +1470,35 @@ Tunneling ist davon nicht betroffen und funktioniert unprogrammiert.
 
 ### Alle Gruppentelegramme weiterleiten
 
-Der Schalter auf der Startseite (`POST /api/knx/routing`, `unfiltered=1`) setzt
-`sbipRouteUnfiltered` und lässt `isGroupAddressInFilterTable()` **vor** der
-Prüfung des Ladezustands `true` zurückgeben. Der Patch dazu steht in
+Ein Koppler ohne Filtertabelle sperrt jedes Gruppentelegramm – laut Norm
+richtig, und für jemanden, der schlicht eine IP-Schnittstelle will, unbrauchbar.
+Deshalb entscheidet `KnxLink::applyRouting()` das automatisch:
+
+| Zustand | Was gilt |
+|---|---|
+| noch kein ETS-Download | alles wird weitergeleitet |
+| ETS hat programmiert | die geladene Filtertabelle entscheidet |
+| Schalter eingeschaltet | alles wird weitergeleitet, auch mit Tabelle |
+
+Der Übergang passiert von selbst: `superviseRouting()` sieht sekundenweise nach,
+ob sich `knx.configured()` geändert hat, und zieht nach. Das gilt in beide
+Richtungen – wer die ETS-Programmierung löscht, bekommt die Weiterleitung
+zurück. Der Schalter auf der Startseite (`POST /api/knx/routing`,
+`unfiltered=1`) bleibt als **Übersteuerung** darüber erhalten und wird
+gespeichert.
+
+Technisch setzt das `sbipRouteUnfiltered` und lässt
+`isGroupAddressInFilterTable()` **vor** der Prüfung des Ladezustands `true`
+zurückgeben. Der Patch dazu steht in
 [scripts/patch_knx.py](scripts/patch_knx.py).
 
-Das wirkt in beiden Fällen:
+Das Statusdokument nennt beides: `knx_route_all` ist der Schalter,
+`knx_route_all_active` das, was der Stack tatsächlich tut.
 
-* **ohne ETS-Download** – es gibt keine Tabelle, sonst würde alles gesperrt
-* **mit ETS-Download** – die geladene Tabelle wird **übersteuert**, das Gerät
-  leitet auch weiter, was die ETS ausfiltern wollte
-
-Der zweite Fall ist Absicht und im Dashboard mit einer Rückfrage versehen.
-Wer die Filterung projektiert hat, will sie normalerweise auch. Nur einschalten,
-wenn dieses Gerät die einzige Verbindung zwischen Linie und IP ist – zwei
-Koppler ohne Filter erzeugen Telegrammschleifen.
+Der Schalter ist im Dashboard mit einer Rückfrage versehen: Wer die Filterung
+projektiert hat, will sie normalerweise auch. Nur einschalten, wenn dieses Gerät
+die einzige Verbindung zwischen Linie und IP ist – zwei Koppler ohne Filter
+erzeugen Telegrammschleifen.
 
 ### Fremde Produktdatenbank verwenden
 
@@ -1807,11 +1822,21 @@ Details siehe [../TPUART2-Emu/README.md](../TPUART2-Emu/README.md).
 
 ## Online-Update aktivieren
 
-`UPDATE_MANIFEST_URL` in [include/interface_config.h](include/interface_config.h)
-ist leer, das Online-Update also deaktiviert. Der Datei-Upload funktioniert
+Die Manifest-URL steht im **Hardware-Profil** (`update_url`) und ist im
+Bearbeiten-Dialog änderbar – ohne Neubau und ohne Neustart. `UPDATE_MANIFEST_URL`
+in [include/interface_config.h](include/interface_config.h) ist nur noch die
+Vorgabe für ein Gerät, das nie konfiguriert wurde; sie ist leer, das
+Online-Update also ab Werk deaktiviert. Der Datei-Upload funktioniert
 unabhängig davon.
 
-Zum Aktivieren eine HTTPS-URL auf ein Manifest dieser Form setzen:
+Dass die URL im Profil liegt und nicht in einem eigenen Namensraum, hat einen
+praktischen Grund: Das Profil ist das eine Dokument, das sich exportieren und
+auf das nächste Gerät übertragen lässt. Geprüft wird sie wie jedes andere
+Feld – leer oder mit `https://` beginnend, druckbares ASCII ohne Leerzeichen.
+HTTPS ist keine Vorliebe, sondern Bedingung: der Update-Client ist ein
+`WiFiClientSecure`.
+
+Zum Aktivieren eine HTTPS-URL auf ein Manifest dieser Form eintragen:
 
 ```json
 {
@@ -1837,6 +1862,110 @@ Die Binärdateien werden relativ zum Manifest aufgelöst. Das Zertifikat wird
 **nicht** geprüft (`setInsecure()`) – die Integrität sichert die SHA-256-Summe
 aus dem Manifest. Zur Reichweite dieser Zusicherung siehe *Firmware-Update und
 Integrität*.
+
+### Firmware für das SB-Interface
+
+Daneben steht `lpc_url` (Define `LPC_MANIFEST_URL`) mit einem eigenen Block im
+selben Format:
+
+```json
+{
+  "version": "1.0.3",
+  "lpc": {
+    "LPC1115": { "path": "tpuart2emu.hex", "sha256": "…" }
+  }
+}
+```
+
+Der Schlüssel kommt aus `LPC_MANIFEST_KEY`. Beide URLs dürfen auf **dieselbe
+Datei** zeigen – `ota` und `lpc` sind verschiedene Blöcke. Eigene URLs sind
+trotzdem die Vorgabe: Der Emulator liegt in einem anderen Repository und
+veröffentlicht in eigenem Takt.
+
+**Es ist bewusst kein Update-*Check*.** `POST /api/lpc/fetch` holt die Datei,
+prüft ihre SHA-256-Summe und legt sie in denselben Zwischenpuffer, den ein
+Upload füllt; geschrieben wird sie erst mit `POST /api/lpc/write`. Ein
+Versionsvergleich wäre gelogen: Der TP-UART-2-Emulator kennt **keinen
+Versionsbefehl**, der Bootlader kann nur sagen, ob überhaupt ein startfähiges
+Programm im Flash steht. Das Dashboard nennt deshalb nur, was das Manifest
+anbietet, und überlässt die Entscheidung dem Menschen.
+
+Der Download läuft auf einer eigenen Task mit 10 KiB Stack, nicht auf der
+ISP-Task: TLS braucht den Platz, und diese hier blockiert an Sockets statt an
+UART-Timing. Der Strom geht Byte für Byte durch `uploadData()`, also durch
+denselben Parser wie eine hochgeladene Datei – Intel-Hex und Binär
+funktionieren hier wie dort.
+
+### Firmware für das SB-Interface
+
+Daneben steht `lpc_url` (Define `LPC_MANIFEST_URL`) mit einem eigenen Block im
+selben Format:
+
+```json
+{
+  "version": "1.0.3",
+  "lpc": {
+    "LPC1115": { "path": "tpuart2emu.hex", "sha256": "…" }
+  }
+}
+```
+
+Der Schlüssel kommt aus `LPC_MANIFEST_KEY`. Beide URLs dürfen auf **dieselbe
+Datei** zeigen – `ota` und `lpc` sind verschiedene Blöcke. Eigene URLs sind
+trotzdem die Vorgabe: Der Emulator liegt in einem anderen Repository und
+veröffentlicht in eigenem Takt.
+
+**Es ist bewusst kein Update-*Check*.** `POST /api/lpc/fetch` holt die Datei,
+prüft ihre SHA-256-Summe und legt sie in denselben Zwischenpuffer, den ein
+Upload füllt; geschrieben wird sie erst mit `POST /api/lpc/write`. Ein
+Versionsvergleich wäre gelogen: Der TP-UART-2-Emulator kennt **keinen
+Versionsbefehl**, der Bootlader kann nur sagen, ob überhaupt ein startfähiges
+Programm im Flash steht. Das Dashboard nennt deshalb nur, was das Manifest
+anbietet, und überlässt die Entscheidung dem Menschen.
+
+Der Download läuft auf einer eigenen Task mit 10 KiB Stack, nicht auf der
+ISP-Task: TLS braucht den Platz, und diese hier blockiert an Sockets statt an
+UART-Timing. Der Strom geht Byte für Byte durch `uploadData()`, also durch
+denselben Parser wie eine hochgeladene Datei – Intel-Hex und Binär
+funktionieren hier wie dort.
+
+### Dieselbe Datei für die LPC-Firmware?
+
+Dasselbe Manifest, ja – aber ein eigener Zweig darin, nicht der `ota`-Block.
+Die beiden Downloads haben nichts gemeinsam außer dem Transport:
+
+| | ESP32 | LPC1115 |
+|---|---|---|
+| Ziel | eigene App-Partition | Flash über ISP-UART |
+| Auswahl | `UPDATE_CHIP_KEY` je ESP32-Variante | eine Datei für alle |
+| Version | `FIRMWARE_VERSION` vergleichbar | **nicht auslesbar** |
+| Größe | ~1,6 MB | ~30 KB |
+| Format | rohes Image | Intel-Hex oder binär |
+
+Der entscheidende Punkt steht in der dritten Zeile: Der TP-UART-2-Emulator hat
+**keinen Versionsbefehl**, und der Bootlader kann nur sagen, ob überhaupt ein
+startfähiges Programm im Flash steht. Ein automatischer Vergleich „ist die
+angebotene Version neuer als die geflashte“ ist damit unmöglich – anders als
+beim ESP32, wo genau dieser Vergleich das ganze Verfahren trägt.
+
+Ein LPC-Zweig wäre also kein Update-Check, sondern ein bequemerer Dateiwahl-
+Dialog: Datei holen, SHA-256 prüfen, schreiben, verifizieren – auf Ansage,
+nicht automatisch. Sinnvoll strukturiert:
+
+```json
+{
+  "version": "0.2.0",
+  "ota": { "ESP32": { "path": "firmware_esp32.bin", "sha256": "…" } },
+  "lpc": { "version": "2.0",
+           "path": "tpuart2_emu.hex",
+           "sha256": "…" }
+}
+```
+
+Getrennte Dateien bräuchte es nur, wenn die LPC-Firmware aus einem anderen
+Repository käme und dort ihren eigenen Veröffentlichungstakt hätte – was beim
+Selfbus-Baukasten durchaus der Fall ist. Dann eine zweite URL neben
+`update_url`, gleiches Format, gleicher Prüfweg.
 
 ---
 

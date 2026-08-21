@@ -178,12 +178,15 @@ small{color:var(--dim)}
     <label class="chk" style="margin-top:14px">
       <input type="checkbox" id="rtAll" onchange="setRouting()">
       Alle Gruppentelegramme weiterleiten</label>
-    <p><small>Achtung: Das übersteuert die ETS. Auch eine geladene
-    Filtertabelle wird ignoriert, das Gerät leitet dann jedes
-    Gruppentelegramm weiter. Ohne ETS-Programmierung gibt es gar keine
-    Tabelle, dann sperrt der Koppler sonst alles. Nur einschalten, wenn
-    dieses Gerät die einzige Verbindung zwischen Linie und IP ist &ndash;
-    sonst drohen Telegrammschleifen.</small></p>
+    <p><small id="rtNote" data-dyn></small></p>
+    <p><small>Solange die ETS das Gerät nicht programmiert hat, leitet es
+    ohnehin alles weiter &ndash; ohne Download gibt es keine Filtertabelle,
+    und ein Koppler ohne Tabelle sperrt sonst jedes Gruppentelegramm. Mit dem
+    ersten Download übernimmt die Tabelle von selbst.</small></p>
+    <p><small>Der Schalter übersteuert auch das: Er lässt eine geladene
+    Filtertabelle ignorieren und jedes Gruppentelegramm passieren. Nur
+    einschalten, wenn dieses Gerät die einzige Verbindung zwischen Linie und
+    IP ist &ndash; sonst drohen Telegrammschleifen.</small></p>
   </section>
 
   <section class="card">
@@ -280,6 +283,8 @@ small{color:var(--dim)}
     <div class="row"><span>LEDs</span><span id="hwLeds">-</span></div>
     <div class="row"><span>I2C (RTC)</span><span id="hwI2c">-</span></div>
     <div class="row"><span>SPI (W5500)</span><span id="hwEth">-</span></div>
+    <div class="row"><span>Online-Update</span><span id="hwUpd">-</span></div>
+    <div class="row"><span>SB-Interface-Download</span><span id="hwLpcDl">-</span></div>
     <div class="actions">
       <button class="sec" onclick="openHw()">Bearbeiten</button>
       <button class="sec" onclick="hwFile.click()">JSON laden</button>
@@ -551,7 +556,9 @@ small{color:var(--dim)}
   <div class="row"><span>Bootloader</span><span id="lpcBoot" data-dyn>-</span></div>
   <div class="row"><span>Flash-Inhalt</span><span id="lpcImg" data-dyn>-</span></div>
   <div class="row"><span>TP-UART-Emulation</span><span id="lpcTp" data-dyn>-</span></div>
-  <div class="row"><span>Gewählte Datei</span><span id="lpcFileSt" data-dyn>-</span></div>
+  <div class="row"><span>Gew&auml;hlte Datei</span><span id="lpcFileSt" data-dyn>-</span></div>
+  <div class="row" id="lpcOffRow" style="display:none">
+    <span>Angeboten</span><span id="lpcOff" data-dyn>-</span></div>
   <div class="row"><span>Zustand</span><span id="lpcState" data-dyn>-</span></div>
   <div class="bar" id="lpcBar" style="display:none"><i id="lpcFill"></i></div>
   <div class="actions">
@@ -559,9 +566,11 @@ small{color:var(--dim)}
     <button class="sec" onclick="lpcFile.click()">Datei w&auml;hlen</button>
     <input type="file" id="lpcFile" accept=".hex,.bin" style="display:none"
            onchange="lpcUpload()">
+    <button class="sec" id="lpcFetchBtn" onclick="lpcFetch()"
+            style="display:none">Online holen</button>
     <button id="lpcWriteBtn" onclick="lpcWrite()" disabled>Programmieren</button>
     <button class="sec" onclick="lpcRun()">SB-Interface neu starten</button>
-    <button class="sec" onclick="closeLpc()">Schließen</button>
+    <button class="sec" onclick="closeLpc()">Schlie&szlig;en</button>
   </div>
   <p><small>Der ESP32 legt den LPC über zwei Steuerleitungen in seinen
   ROM-Bootlader und spricht ihn über dieselbe UART an, die sonst der
@@ -572,6 +581,10 @@ small{color:var(--dim)}
   nötigenfalls gesetzt &ndash; ohne sie startet der Bootlader das Programm
   nicht. Geschrieben wird erst nach einem zweiten Klick, und jeder Block
   wird gegen die Kopie im RAM des LPC verglichen.</small></p>
+  <p><small>„Online holen“ lädt die Datei aus dem Manifest, das im
+  Hardware-Profil steht, und prüft ihre SHA-256-Summe. Das ist keine
+  Aktualitätsprüfung: Der TP-UART-Emulator kennt keinen Versionsbefehl, das
+  Gerät kann also nicht wissen, was im LPC bereits steht.</small></p>
 </dialog>
 
 <dialog id="timeDlg">  <h2>Zeitserver</h2>
@@ -734,6 +747,19 @@ small{color:var(--dim)}
     </div>
   </div>
 
+  <div class="grp">
+    <label>Online-Update &ndash; Manifest-URL (leer = kein Online-Update)</label>
+    <input id="hwUpdUrl" maxlength="160"
+           placeholder="https://example.org/sbip/manifest.json">
+    <label>SB-Interface-Firmware &ndash; Manifest-URL (leer = kein Download)</label>
+    <input id="hwLpcUrl" maxlength="160"
+           placeholder="https://example.org/tpuart2emu/manifest.json">
+    <p><small>Muss mit https:// beginnen. Die Firmware-Dateien werden relativ
+    dazu aufgel&ouml;st, liegen also neben dem Manifest. Beide d&uuml;rfen auf
+    dieselbe Datei zeigen &ndash; sie nutzen verschiedene Bl&ouml;cke
+    darin.</small></p>
+  </div>
+
   <p id="hwErr" style="color:var(--err);font-size:12px"></p>
   <div class="actions">
     <button onclick="hwSave()">Speichern</button>
@@ -813,10 +839,10 @@ const EN = {
 'bereit':'ready', 'angehalten':'stopped', 'zeichnet auf':'recording',
 'wartet auf den Trigger':'waiting for the trigger',
 'Puffer voll':'buffer full', 'Puffer voll, angehalten':'buffer full, stopped',
-'kein PSRAM':'no PSRAM', 'Stack-Haken fehlt':'stack hook missing',
+'kein PSRAM':'no PSRAM', 'Stack-Hook fehlt':'stack hook missing',
 'Kein PSRAM, der Busmonitor ist nicht verfügbar.':
   'No PSRAM, the bus monitor is unavailable.',
-'Der Stack-Haken fehlt - siehe scripts/patch_knx.py.':
+'Der Stack-Hook fehlt - siehe scripts/patch_knx.py.':
   'The stack hook is missing - see scripts/patch_knx.py.',
 'Bitte eine Trigger-Gruppenadresse angeben.':'Please enter a trigger group address.',
 'Aufzeichnung konnte nicht gestartet werden.':'Could not start the recording.',
@@ -830,6 +856,49 @@ const EN = {
 'LED-Helligkeit':'LED brightness', 'Heartbeat aktiv':'Heartbeat active',
 'Neustart nötig':'Restart required',
 'Alle Gruppentelegramme weiterleiten':'Forward every group telegram',
+'Online-Update':'Online update',
+'SB-Interface-Download':'SB-Interface download',
+'Online-Update – Manifest-URL (leer = kein Online-Update)':
+  'Online update - manifest URL (empty disables it)',
+'SB-Interface-Firmware – Manifest-URL (leer = kein Download)':
+  'SB-Interface firmware - manifest URL (empty disables the download)',
+['Muss mit https:// beginnen. Die Firmware-Dateien werden relativ dazu '
++ 'aufgelöst, liegen also neben dem Manifest. Beide dürfen auf dieselbe Datei '
++ 'zeigen – sie nutzen verschiedene Blöcke darin.']:
+  'Must start with https://. The firmware files are resolved relative to it, '
++ 'so they sit next to the manifest. Both may point at the same file - they '
++ 'read different blocks of it.',
+'Angeboten':'Offered', 'Online holen':'Fetch online',
+'Manifest lesen':'reading the manifest',
+'Datei herunterladen':'downloading the file',
+['„Online holen“ lädt die Datei aus dem Manifest, das im Hardware-Profil '
++ 'steht, und prüft ihre SHA-256-Summe. Das ist keine Aktualitätsprüfung: Der '
++ 'TP-UART-Emulator kennt keinen Versionsbefehl, das Gerät kann also nicht '
++ 'wissen, was im LPC bereits steht.']:
+  '"Fetch online" downloads the file named by the manifest from the hardware '
++ 'profile and checks its SHA-256. This is not an update check: the TP-UART '
++ 'emulator has no version command, so the device cannot know what is already '
++ 'in the LPC.',
+'Aktiv über den Schalter.':'Active through the switch.',
+'Aktiv, weil die ETS das Gerät noch nicht programmiert hat.':
+  'Active because the ETS has not programmed the device yet.',
+'Die Filtertabelle der ETS entscheidet.':'The ETS filter table decides.',
+['Solange die ETS das Gerät nicht programmiert hat, leitet es ohnehin alles '
++ 'weiter – ohne Download gibt es keine Filtertabelle, und ein Koppler ohne '
++ 'Tabelle sperrt sonst jedes Gruppentelegramm. Mit dem ersten Download '
++ 'übernimmt die Tabelle von selbst.']:
+  'Until the ETS has programmed the device it forwards everything anyway - '
++ 'without a download there is no filter table, and a coupler without one '
++ 'blocks every group telegram. The first download hands over to the table on '
++ 'its own.',
+['Der Schalter übersteuert auch das: Er lässt eine geladene Filtertabelle '
++ 'ignorieren und jedes Gruppentelegramm passieren. Nur einschalten, wenn '
++ 'dieses Gerät die einzige Verbindung zwischen Linie und IP ist – sonst '
++ 'drohen Telegrammschleifen.']:
+  'The switch overrules that as well: it makes a downloaded filter table be '
++ 'ignored and lets every group telegram through. Only turn it on where this '
++ 'device is the only path between the line and IP - otherwise telegrams can '
++ 'loop.',
 'Name':'Name', 'Auslösung':'Trigger', 'Chip':'Chip',
 'Position':'Position', 'Zustand':'State', 'Farbe':'Colour', 'Muster':'Pattern',
 '1 bis 16 Zeichen aus A-Z a-z 0-9 _ -':'1 to 16 characters from A-Z a-z 0-9 _ -',
@@ -1350,6 +1419,10 @@ async function refresh(){
                                           : 'Programmiermodus starten');
   $('pmBtn').className    = s.prog_mode ? 'on' : '';
   $('rtAll').checked      = s.knx_route_all;
+  $('rtNote').textContent = s.knx_route_all_active
+      ? (s.knx_route_all ? t('Aktiv über den Schalter.')
+                         : t('Aktiv, weil die ETS das Gerät noch nicht programmiert hat.'))
+      : t('Die Filtertabelle der ETS entscheidet.');
 
   $('beatRow').style.display = s.led_beat_available ? '' : 'none';
   $('beat').checked          = s.led_heartbeat;
@@ -1374,7 +1447,7 @@ async function refresh(){
   $('ipTx').textContent = s.ip_stats.tx_frames;
 
   const MST = {off:'bereit', armed:'wartet auf den Trigger', running:'zeichnet auf',
-               full:'Puffer voll', no_psram:'kein PSRAM', no_hook:'Stack-Haken fehlt'};
+               full:'Puffer voll', no_psram:'kein PSRAM', no_hook:'Stack-Hook fehlt'};
   $('monSt').textContent = t(MST[s.monitor] || s.monitor);
 
   $('ssid').textContent = s.ssid;
@@ -1757,7 +1830,7 @@ async function monRefresh(){
   $('monRun').textContent = t(busy ? 'Stopp' : 'Start');
 
   let info;
-  if(!s.hook)           info = t('Der Stack-Haken fehlt - siehe scripts/patch_knx.py.');
+  if(!s.hook)           info = t('Der Stack-Hook fehlt - siehe scripts/patch_knx.py.');
   else if(!s.available) info = t('Kein PSRAM, der Busmonitor ist nicht verfügbar.');
   else info = t(ST[s.state] || s.state) + ' \u00b7 '
             + s.count + ' ' + t('von') + ' ' + s.capacity + ' '
@@ -1964,6 +2037,7 @@ async function showFilter(){
 const LSTAGE = {pause:'KNX-Stack anhalten', detect:'Bootlader suchen',
                 erase:'Flash löschen', write:'schreiben',
                 reset:'SB-Interface neu starten',
+                manifest:'Manifest lesen', download:'Datei herunterladen',
                 done:'fertig', failed:'fehlgeschlagen'};
 
 let lpcLast = null, lpcTimer = null;
@@ -2003,6 +2077,11 @@ async function lpcRefresh(){
       ? kib(s.image_size) + ' ' + t('bereit')
       : t('keine');
 
+  $('lpcFetchBtn').style.display = s.can_fetch ? '' : 'none';
+  $('lpcFetchBtn').disabled = s.busy;
+  $('lpcOffRow').style.display = s.offered ? '' : 'none';
+  $('lpcOff').textContent = s.offered || '-';
+
   let state = t(LSTAGE[s.stage] || s.stage || '-');
   if(!s.busy && s.ran && s.error) state = t('fehlgeschlagen') + ' \u2013 ' + s.error;
   $('lpcState').textContent = state;
@@ -2037,6 +2116,7 @@ async function lpcStart(path){
 
 function lpcProbe(){ return lpcStart('/api/lpc/probe'); }
 function lpcRun(){ return lpcStart('/api/lpc/run'); }
+function lpcFetch(){ return lpcStart('/api/lpc/fetch'); }
 
 function lpcWrite(){
   if(!confirm(t('Den LPC jetzt löschen und neu programmieren? Die '
@@ -2268,6 +2348,8 @@ async function refreshHw(){
   $('hwEth').textContent = a.eth_enabled
       ? ('SCK ' + a.eth_sck + ', MISO ' + a.eth_miso + ', MOSI ' + a.eth_mosi + ', CS ' + a.eth_cs)
       : t('aus');
+  $('hwUpd').textContent = a.update_url || t('aus');
+  $('hwLpcDl').textContent = a.lpc_url || t('aus');
 }
 
 function hwFill(p){
@@ -2275,6 +2357,8 @@ function hwFill(p){
   $('hwLpcInv').checked = p.lpc_invert;
   $('hwI2cEn').checked  = p.i2c_enabled;
   $('hwEthEn').checked  = p.eth_enabled;
+  $('hwUpdUrl').value   = p.update_url || '';
+  $('hwLpcUrl').value   = p.lpc_url || '';
   // Deep copy: editing a row must not change the document we compare against
   // when the user hits "Standard" again.
   for(const kind in RTBL){
@@ -2530,6 +2614,8 @@ function hwCollect(){
   p.lpc_invert     = $('hwLpcInv').checked;
   p.i2c_enabled    = $('hwI2cEn').checked;
   p.eth_enabled    = $('hwEthEn').checked;
+  p.update_url     = $('hwUpdUrl').value.trim();
+  p.lpc_url        = $('hwLpcUrl').value.trim();
   for(const kind in RTBL){
     rowSync(kind);
     p[RKEY[kind]] = ROWS[kind];

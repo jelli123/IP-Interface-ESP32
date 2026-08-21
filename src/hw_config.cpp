@@ -222,6 +222,9 @@ HwProfile HwConfig::defaults()
     p.ethEnabled   = (p.ethCsPin >= 0) && (p.ethSckPin >= 0) &&
                      (p.ethMisoPin >= 0) && (p.ethMosiPin >= 0);
 
+    strlcpy(p.updateUrl, UPDATE_MANIFEST_URL, sizeof(p.updateUrl));
+    strlcpy(p.lpcUrl, LPC_MANIFEST_URL, sizeof(p.lpcUrl));
+
     return p;
 }
 
@@ -624,6 +627,26 @@ bool HwConfig::validate(const HwProfile& p, String& error)
         return false;
     }
 
+    // The update client is HTTPS only, and the string also reaches the log.
+    for (const char* url : {p.updateUrl, p.lpcUrl})
+    {
+        if (url[0] == '\0') continue;
+
+        if (strncmp(url, "https://", 8) != 0)
+        {
+            error = "the update URLs must start with https://";
+            return false;
+        }
+        for (const char* c = url; *c; c++)
+        {
+            if (*c < 0x21 || *c > 0x7E)
+            {
+                error = "the update URLs must be printable ASCII without spaces";
+                return false;
+            }
+        }
+    }
+
     error = "";
     return true;
 }
@@ -663,6 +686,14 @@ void HwConfig::load()
         _stored.ethIrqPin    = prefs.getChar("eirq", d.ethIrqPin);
         _stored.ethRstPin    = prefs.getChar("erst", d.ethRstPin);
         _stored.ethSpiMhz    = (uint8_t)prefs.getUChar("emhz", d.ethSpiMhz);
+        strlcpy(_stored.updateUrl,
+                prefs.isKey("updurl") ? prefs.getString("updurl", d.updateUrl).c_str()
+                                      : d.updateUrl,
+                sizeof(_stored.updateUrl));
+        strlcpy(_stored.lpcUrl,
+                prefs.isKey("lpcurl") ? prefs.getString("lpcurl", d.lpcUrl).c_str()
+                                      : d.lpcUrl,
+                sizeof(_stored.lpcUrl));
         loadLists(d);
     }
     else
@@ -776,6 +807,8 @@ void HwConfig::store(const HwProfile& p)
     store.putChar("eirq", p.ethIrqPin);
     store.putChar("erst", p.ethRstPin);
     store.putUChar("emhz", p.ethSpiMhz);
+    store.putString("updurl", p.updateUrl);
+    store.putString("lpcurl", p.lpcUrl);
 
     /*
      * Blobs only when they differ.
@@ -1095,6 +1128,16 @@ bool HwConfig::applyJson(const String& json, String& error)
     p.ethRstPin    = (int8_t)jsonGetInt(json, "eth_rst",  p.ethRstPin);
     p.ethSpiMhz    = (uint8_t)jsonGetInt(json, "eth_spi_mhz", p.ethSpiMhz);
 
+    if (json.indexOf("\"update_url\"") >= 0)
+    {
+        strlcpy(p.updateUrl, jsonGetString(json, "update_url").c_str(),
+                sizeof(p.updateUrl));
+    }
+    if (json.indexOf("\"lpc_url\"") >= 0)
+    {
+        strlcpy(p.lpcUrl, jsonGetString(json, "lpc_url").c_str(), sizeof(p.lpcUrl));
+    }
+
     bool ok =
         readList(json, "buttons", HW_MAX_BUTTONS, p.buttonCount, p.buttons,
                  [](HwButton& b, const String& e) {
@@ -1232,7 +1275,9 @@ String HwConfig::profileToJson(const HwProfile& p)
     j += "\"eth_cs\":" + String(p.ethCsPin) + ",";
     j += "\"eth_irq\":" + String(p.ethIrqPin) + ",";
     j += "\"eth_rst\":" + String(p.ethRstPin) + ",";
-    j += "\"eth_spi_mhz\":" + String(p.ethSpiMhz);
+    j += "\"eth_spi_mhz\":" + String(p.ethSpiMhz) + ",";
+    j += "\"update_url\":\"" + jsonEscape(String(p.updateUrl)) + "\",";
+    j += "\"lpc_url\":\"" + jsonEscape(String(p.lpcUrl)) + "\"";
     j += "}";
     return j;
 }

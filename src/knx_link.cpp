@@ -306,7 +306,7 @@ bool KnxLink::begin()
 
     if (knxPrefs.begin(KNX_NS, false))
     {
-        sbipRouteUnfiltered = knxPrefs.getBool(KEY_ROUTEALL, false);
+        _routeAllOverride = knxPrefs.getBool(KEY_ROUTEALL, false);
         knxPrefs.end();
     }
 
@@ -336,6 +336,9 @@ bool KnxLink::begin()
 
     knx.readMemory();
     knx.start();
+
+    // Only meaningful once the stack has restored its load states.
+    applyRouting();
 
     // Give the stack a moment to run its reset handshake (U_Reset.req ->
     // U_Reset.ind) and the first U_State.req before judging the link.
@@ -418,6 +421,7 @@ void KnxLink::loop()
 
     updateBusLoad();
     superviseTpLink();
+    superviseRouting();
 }
 
 /*
@@ -444,8 +448,7 @@ void KnxLink::superviseTpLink()
 }
 
 void KnxLink::updateBusLoad()
-{
-    uint32_t now = millis();
+{    uint32_t now = millis();
     if ((uint32_t)(now - _lastBusLoadWindow) < BUS_LOAD_WINDOW_MS)
     {
         return;
@@ -470,6 +473,22 @@ void KnxLink::resetPeak()
 uint32_t KnxLink::busPeakAge() const
 {
     return (millis() - _busPeakAt) / 1000;
+}
+
+void KnxLink::superviseRouting()
+{
+    // knx.configured() walks the load states of the tables, so once a second
+    // rather than on every pass of a loop that also serves the TP-UART.
+    if ((uint32_t)(millis() - _lastRoutingCheck) < 1000)
+    {
+        return;
+    }
+    _lastRoutingCheck = millis();
+
+    if (configured() != _wasConfigured)
+    {
+        applyRouting();
+    }
 }
 
 void KnxLink::activityTrampoline(uint8_t info)
@@ -627,18 +646,51 @@ bool KnxLink::progMode() const
 
 void KnxLink::routeUnfiltered(bool enable)
 {
-    sbipRouteUnfiltered = enable;
+    _routeAllOverride = enable;
 
     if (knxPrefs.begin(KNX_NS, false))
     {
         knxPrefs.putBool(KEY_ROUTEALL, enable);
         knxPrefs.end();
     }
+
+    applyRouting();
 }
 
 bool KnxLink::routeUnfiltered() const
 {
+    return _routeAllOverride;
+}
+
+bool KnxLink::routeUnfilteredActive() const
+{
     return sbipRouteUnfiltered;
+}
+
+/*
+ * An unprogrammed coupler has no filter table, and per spec that means it
+ * blocks every group telegram - correct, and useless for anyone who just
+ * wants an IP interface. So it forwards everything until ETS has said
+ * otherwise, and the moment a download arrives the table takes over.
+ *
+ * The stored switch stays an override on top of that: someone who turned it
+ * on deliberately keeps it after the download.
+ */
+void KnxLink::applyRouting()
+{
+    bool programmed = configured();
+    bool unfiltered = _routeAllOverride || !programmed;
+
+    if (unfiltered != sbipRouteUnfiltered)
+    {
+        sysLog.printf("KNX: group telegrams %s (%s)\n",
+                      unfiltered ? "unfiltered" : "filtered",
+                      _routeAllOverride ? "switch" : (programmed ? "ETS table"
+                                                                 : "not programmed"));
+    }
+
+    sbipRouteUnfiltered = unfiltered;
+    _wasConfigured      = programmed;
 }
 
 /** Read one unsigned long property of the KNXnet/IP parameter object. */
