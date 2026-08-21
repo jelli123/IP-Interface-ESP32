@@ -5,6 +5,7 @@
 #include <ESPAsyncWebServer.h>
 #include <Update.h>
 #include <WiFi.h>
+#include <sys/time.h>
 #include <memory>
 #include <new>
 #include <utility>
@@ -1365,12 +1366,24 @@ String monitorStateJson()
     json += "\"sides\":" + String(busMonitor.sides()) + ",";
     json += "\"stop_full\":" + String(busMonitor.stopWhenFull() ? "true" : "false") + ",";
     json += "\"trigger\":\"" + formatGroupAddress(busMonitor.trigger()) + "\",";
-    json += "\"now_ms\":" + String(millis()) + ",";
 
-    // Lets the browser turn the uptime stamp of a frame into a time of day,
-    // and costs nothing when the clock was never set.
+    /*
+     * Both read next to each other, both in milliseconds.
+     *
+     * The browser turns the uptime stamp of a frame into a time of day with
+     * epoch_ms - (now_ms - ms). A whole second epoch made that difference
+     * jitter by up to a second between polls, which showed up as the fraction
+     * of a second changing every time the list was reloaded.
+     */
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    uint32_t nowMs = millis();
+
+    json += "\"now_ms\":" + String(nowMs) + ",";
     json += "\"epoch_ms\":" +
-            String(TimeService::clockValid() ? (uint64_t)time(nullptr) * 1000ULL : 0ULL);
+            String(TimeService::clockValid()
+                       ? (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)(tv.tv_usec / 1000)
+                       : 0ULL);
     json += "}";
     return json;
 }
