@@ -58,6 +58,16 @@ public:
     /** Release both lines and reset the LPC into its user program. */
     bool startRun(String& error);
 
+    /**
+     * Fetch the staged image from the manifest in the hardware profile.
+     *
+     * Not an update check: the TP-UART emulator has no version command, so
+     * the device cannot tell what is already in the LPC. This only puts the
+     * offered file where an upload would have put it - writing it stays a
+     * second, deliberate click.
+     */
+    bool startFetch(String& error);
+
     /*
      * Staging of the image to be written.
      *
@@ -79,12 +89,15 @@ private:
         NONE = 0,
         PROBE,
         FLASH,
-        RUN
+        RUN,
+        FETCH
     };
 
     static void jobTask(void* arg);
+    static void fetchTask(void* arg);
     bool start(Job job, String& error);
     void run();
+    void fetch();
 
     /* --- control lines --------------------------------------------------- */
     void pinIdle(int8_t pin);
@@ -146,6 +159,9 @@ private:
     bool     _hexEnded  = false;
     uint32_t _hexBase   = 0;   //!< from record type 04
     uint32_t _rawAt     = 0;
+
+    /** Version the manifest names for the staged file, for the dashboard. */
+    char     _offered[24] = {0};
     char     _line[600] = {0};
     uint16_t _lineLen   = 0;
     String   _uploadError;

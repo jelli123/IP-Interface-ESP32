@@ -15,9 +15,13 @@
 #include "lpc_isp.h"
 
 #include <HardwareSerial.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
 
+#include "fw_hash.h"
 #include "hw_config.h"
+#include "interface_config.h"
 #include "json_util.h"
 #include "knx_link.h"
 #include "log_buffer.h"
@@ -763,6 +767,226 @@ bool LpcIsp::startFlash(String& error)
 }
 
 /* ------------------------------------------------------------------------- *
+ * Downloading the image
+ *
+ * Same shape as the firmware manifest, own URL and own block: the emulator
+ * lives in its own repository and releases on its own schedule. Streamed
+ * through the very functions the upload handler uses, so Intel Hex and raw
+ * binary work here exactly as they do from a file.
+ * ------------------------------------------------------------------------- */
+
+void LpcIsp::fetch()
+{
+    _error[0]   = '\0';
+    _offered[0] = '\0';
+    _lastOk     = false;
+    _progress   = 0;
+    _total      = 0;
+
+    String manifest = String(hwConfig.active().lpcUrl);
+
+    WiFiClientSecure client;
+    // Same reasoning as the firmware update: the SHA-256 out of the manifest
+    // is the integrity check, and pinning a CA would need a firmware update
+    // whenever the issuer rotates.
+    client.setInsecure();
+
+    HTTPClient https;
+
+    stage("manifest", "reading the SB-Interface manifest");
+    if (!https.begin(client, manifest))
+    {
+        fail("could not open the manifest URL");
+        return;
+    }
+
+    int code = https.GET();
+    if (code != HTTP_CODE_OK)
+    {
+        fail(String("manifest: HTTP " + String(code)).c_str());
+        https.end();
+        return;
+    }
+
+    String body = https.getString();
+    https.end();
+
+    String path    = jsonGetNestedString(body, "lpc", LPC_MANIFEST_KEY, "path");
+    String sha256  = jsonGetNestedString(body, "lpc", LPC_MANIFEST_KEY, "sha256");
+    String version = jsonGetString(body, "version");
+
+    if (path.length() == 0)
+    {
+        fail("the manifest has no lpc entry for " LPC_MANIFEST_KEY);
+        return;
+    }
+    if (!FwHash::isValidHex(sha256))
+    {
+        // Refuse rather than write an unverified image: a half correct file
+        // in the LPC means a bus device that answers wrongly, and the only
+        // way back is the ISP line.
+        fail("the manifest has no valid sha256");
+        return;
+    }
+    strlcpy(_offered, version.c_str(), sizeof(_offered));
+
+    String url = manifest.substring(0, manifest.lastIndexOf('/') + 1) + path;
+
+    stage("download", "downloading the SB-Interface firmware");
+    if (!https.begin(client, url))
+    {
+        fail("could not open the firmware URL");
+        return;
+    }
+
+    code = https.GET();
+    if (code != HTTP_CODE_OK)
+    {
+        fail(String("firmware: HTTP " + String(code)).c_str());
+        https.end();
+        return;
+    }
+
+    int length = https.getSize();
+    if (length <= 0 || (uint32_t)length > MAX_IMAGE * 3u)
+    {
+        // Times three: an Intel Hex file is a little over twice the size of
+        // the binary it carries.
+        fail("the manifest points at an implausible file size");
+        https.end();
+        return;
+    }
+    _total = (uint32_t)length;
+
+    String error;
+    if (!uploadBegin(error))
+    {
+        fail(error.c_str());
+        https.end();
+        return;
+    }
+
+    NetworkClient* stream = https.getStreamPtr();
+    uint8_t        buffer[512];
+    FwHash         hash;
+    size_t         read   = 0;
+    int            stalls = 0;
+    bool           ok     = true;
+
+    hash.begin();
+
+    while (read < (size_t)length)
+    {
+        size_t chunk = ((size_t)length - read < sizeof(buffer))
+                           ? ((size_t)length - read) : sizeof(buffer);
+        int    got   = stream->readBytes((char*)buffer, chunk);
+
+        if (got <= 0)
+        {
+            if (++stalls >= 300) // 30 s without a single byte
+            {
+                fail("the download stalled");
+                ok = false;
+                break;
+            }
+            delay(100);
+            continue;
+        }
+        stalls = 0;
+
+        hash.update(buffer, (size_t)got);
+
+        if (!uploadData(buffer, (size_t)got))
+        {
+            ok = false;
+            break;
+        }
+
+        read      += (size_t)got;
+        _progress  = read;
+    }
+
+    https.end();
+
+    if (ok && read != (size_t)length)
+    {
+        fail("the download ended early");
+        ok = false;
+    }
+
+    // The digest covers the file as it came over the wire, so it has to be
+    // settled before the parsed image is accepted.
+    hash.finish();
+    if (ok && !hash.matches(sha256))
+    {
+        sysLog.printf("LPC: SHA-256 mismatch\n  expected %s\n  actual   %s\n",
+                      sha256.c_str(), hash.hex().c_str());
+        fail("the downloaded file does not match its sha256");
+        ok = false;
+    }
+
+    if (!ok)
+    {
+        uploadDiscard();
+        stage("failed");
+        _ran = true;
+        return;
+    }
+
+    if (!uploadEnd(error))
+    {
+        fail(error.c_str());
+        stage("failed");
+        _ran = true;
+        return;
+    }
+
+    _lastOk = true;
+    stage("done", "SB-Interface firmware downloaded and verified");
+    _ran = true;
+}
+
+void LpcIsp::fetchTask(void* arg)
+{
+    LpcIsp* self = (LpcIsp*)arg;
+    self->fetch();
+    self->_job = NONE;
+    vTaskDelete(nullptr);
+}
+
+bool LpcIsp::startFetch(String& error)
+{
+    if (!available())
+    {
+        error = "no ISP pins are configured";
+        return false;
+    }
+    if (_job != NONE)
+    {
+        error = "a job is already running";
+        return false;
+    }
+    if (hwConfig.active().lpcUrl[0] == '\0')
+    {
+        error = "no manifest URL for the SB-Interface firmware";
+        return false;
+    }
+
+    _job = FETCH;
+
+    // Not pinned and roomier than the ISP task: TLS needs the stack, and this
+    // one blocks on sockets rather than on UART timing.
+    if (xTaskCreate(fetchTask, "lpc_fetch", 10240, this, 1, nullptr) != pdPASS)
+    {
+        _job  = NONE;
+        error = "no memory for the download task";
+        return false;
+    }
+
+    return true;
+}
+
+/* ------------------------------------------------------------------------- *
  * Staging the image
  *
  * Fed from the upload handler on the web server task, one chunk at a time.
@@ -1070,12 +1294,15 @@ void LpcIsp::uploadDiscard()
 
 String LpcIsp::statusJson() const
 {
-    static const char* const JOBS[] = {"idle", "probe", "flash", "run"};
+    static const char* const JOBS[] = {"idle", "probe", "flash", "run", "fetch"};
 
     String j = "{";
     j += "\"available\":" + String(available() ? "true" : "false") + ",";
     j += "\"busy\":" + String(busy() ? "true" : "false") + ",";
     j += "\"job\":\"" + String(JOBS[_job]) + "\",";
+    j += "\"can_fetch\":" +
+         String(hwConfig.active().lpcUrl[0] ? "true" : "false") + ",";
+    j += "\"offered\":\"" + jsonEscape(String(_offered)) + "\",";
     j += "\"stage\":\"" + jsonEscape(String(_stage)) + "\",";
     j += "\"error\":\"" + jsonEscape(String(_error)) + "\",";
     j += "\"ran\":" + String(_ran ? "true" : "false") + ",";

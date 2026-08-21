@@ -10,6 +10,7 @@
 
 #include "build_info.h"
 #include "fw_hash.h"
+#include "hw_config.h"
 #include "interface_config.h"
 #include "json_util.h"
 #include "ota_service.h"
@@ -86,6 +87,11 @@ int OtaService::compareVersions(const String& a, const String& b)
 
 static uint32_t s_sketchSize = 0;
 
+String OtaService::manifestUrl()
+{
+    return String(hwConfig.active().updateUrl);
+}
+
 uint32_t OtaService::sketchSize()
 {
     return s_sketchSize;
@@ -123,7 +129,7 @@ void OtaService::loop()
 
 bool OtaService::startCheck()
 {
-    if (strlen(UPDATE_MANIFEST_URL) == 0)
+    if (manifestUrl().length() == 0)
     {
         setError("online update not configured");
         g_state = FAILED;
@@ -160,7 +166,9 @@ void OtaService::checkTask(void* arg)
     client.setInsecure();
 
     HTTPClient https;
-    if (!https.begin(client, UPDATE_MANIFEST_URL))
+    String     manifest = manifestUrl();
+
+    if (!https.begin(client, manifest))
     {
         setError("HTTPS begin failed");
         g_state = FAILED;
@@ -211,7 +219,7 @@ void OtaService::checkTask(void* arg)
         return;
     }
 
-    String base = String(UPDATE_MANIFEST_URL);
+    String base = manifest;
     g_url = base.substring(0, base.lastIndexOf('/') + 1) + path;
     g_sha256 = sha256;
     g_state = (compareVersions(latest, FIRMWARE_VERSION) > 0) ? AVAILABLE : IDLE;

@@ -273,6 +273,22 @@
 #define UPDATE_MANIFEST_URL   ""
 
 /**
+ * Manifest for the SB-Interface firmware download. Empty disables it; the
+ * file upload from the dashboard stays available either way.
+ *
+ * Same layout as above, own block. The LPC has no version command, so this is
+ * a download on request rather than an update check - the device cannot know
+ * what is already in the LPC:
+ *   { "version": "1.0.3",
+ *     "lpc": { "LPC1115": { "path": "tpuart2emu.hex",
+ *                           "sha256": "<64 hex>" } } }
+ */
+#define LPC_MANIFEST_URL      ""
+
+/** Which entry of the "lpc" block this firmware asks for. */
+#define LPC_MANIFEST_KEY      "LPC1115"
+
+/**
  * Uptime after which a freshly flashed OTA image is marked valid, cancelling
  * the bootloader rollback. Must be long enough to cover a crash loop.
  */

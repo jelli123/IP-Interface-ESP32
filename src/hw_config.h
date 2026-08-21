@@ -24,6 +24,9 @@
 /** Usable name characters, excluding the terminator. */
 static const uint8_t HW_NAME_MAX = 16;
 
+/** Longest update manifest URL the profile holds. */
+static const uint8_t HW_URL_MAX = 160;
+
 enum : uint8_t
 {
     HW_MAX_BUTTONS    = 8,
@@ -202,6 +205,25 @@ struct HwProfile
     int8_t  ethIrqPin    = -1;
     int8_t  ethRstPin    = -1;
     uint8_t ethSpiMhz    = 20;
+
+    /**
+     * Manifest for the online firmware update, empty disables it.
+     *
+     * Lives in the profile rather than in a define so a device can be pointed
+     * at another repository without a rebuild, and so an exported profile
+     * carries it to the next device. UPDATE_MANIFEST_URL is the fallback for
+     * a device that has never been configured.
+     */
+    char    updateUrl[HW_URL_MAX + 1] = {0};
+
+    /**
+     * Manifest for the SB-Interface firmware, empty disables the download.
+     *
+     * Separate from updateUrl on purpose: the TP-UART emulator lives in its
+     * own repository with its own release rhythm. The format is the same, so
+     * one file can serve both where that is convenient.
+     */
+    char    lpcUrl[HW_URL_MAX + 1] = {0};
 
     /** @return true if any LED reacts to @p condition */
     bool usesCondition(uint8_t condition) const;

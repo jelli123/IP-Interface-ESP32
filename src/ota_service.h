@@ -88,6 +88,9 @@ public:
     /** Size of the app partition the running image sits in, in bytes. */
     static uint32_t partitionSize();
 
+    /** Manifest the online update reads, empty when none is configured. */
+    static String manifestUrl();
+
     /**
      * Boot from the other slot next time.
      *

@@ -85,18 +85,22 @@ public:
      *
      * A coupler without an ETS download blocks every group telegram, which is
      * correct per spec but leaves the device useless as a plain TP-to-IP
-     * gateway. With this on it forwards everything instead.
+     * gateway. It therefore forwards everything **on its own** until ETS has
+     * programmed it, and hands over to the filter table the moment a download
+     * arrives - see applyRouting().
      *
-     * Not KNX conformant: in an installation with a second coupler or another
-     * IP gateway this invites telegram loops. Safe where this device is the
-     * only path between the line and IP.
-     *
-     * Has no effect once ETS has downloaded a filter table - that one wins.
+     * This switch is the override on top of that: with it on, the downloaded
+     * table stays overruled. Not KNX conformant, and in an installation with
+     * a second coupler or another IP gateway it invites telegram loops. Safe
+     * where this device is the only path between the line and IP.
      *
      * Persisted, so it survives a restart.
      */
     void routeUnfiltered(bool enable);
     bool routeUnfiltered() const;
+
+    /** What the stack is actually doing, switch and automatic taken together. */
+    bool routeUnfilteredActive() const;
 
     /**
      * Read a fixed IP configuration programmed by ETS.
@@ -229,6 +233,12 @@ private:
     void updateBusLoad();
     void superviseTpLink();
 
+    /** Put the effective filter setting in place. */
+    void applyRouting();
+
+    /** Notice an ETS download arriving, or its configuration being cleared. */
+    void superviseRouting();
+
     Stats _stats = {};
     char  _selfTest[48] = "pending";
 
@@ -242,6 +252,10 @@ private:
     uint32_t _framesInWindow    = 0;
     uint32_t _lastLinkCheck     = 0;
     uint32_t _busPeakAt         = 0;
+
+    uint32_t _lastRoutingCheck  = 0;
+    bool     _routeAllOverride  = false;
+    bool     _wasConfigured     = false;
 };
 
 extern KnxLink knxLink;
