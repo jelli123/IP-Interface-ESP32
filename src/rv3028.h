@@ -81,6 +81,22 @@ public:
      */
     bool writeUtc(uint32_t utc);
 
+    /**
+     * The two bytes of user RAM.
+     *
+     * Real RAM, not EEPROM: writing costs nothing and never wears out, and
+     * the backup supply keeps it exactly as long as it keeps the clock. Two
+     * bytes is all there is - the 43 bytes next to it are EEPROM with an
+     * endurance of about 100000 cycles.
+     *
+     * Addressed one byte at a time so a user of the second byte is not
+     * overwritten by a user of the first.
+     *
+     * @param index 0 or 1
+     */
+    bool readRam(uint8_t index, uint8_t& value);
+    bool writeRam(uint8_t index, uint8_t value);
+
 private:
     bool readRegs(uint8_t reg, uint8_t* buffer, uint8_t length);
     bool writeRegs(uint8_t reg, const uint8_t* buffer, uint8_t length);

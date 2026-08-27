@@ -18,6 +18,7 @@
 #define REG_STATUS    0x0E
 #define REG_CTRL1     0x0F
 #define REG_CTRL2     0x10
+#define REG_USER_RAM  0x1F
 #define REG_EE_BACKUP 0x37
 
 #define STATUS_PORF   0x01 //!< power on reset flag: supply was lost
@@ -218,4 +219,16 @@ bool Rv3028::writeUtc(uint32_t utc)
         return false;
     }
     return writeReg(REG_STATUS, (uint8_t)(status & ~STATUS_PORF));
+}
+
+bool Rv3028::readRam(uint8_t index, uint8_t& value)
+{
+    if (!_present || index > 1) return false;
+    return readReg((uint8_t)(REG_USER_RAM + index), value);
+}
+
+bool Rv3028::writeRam(uint8_t index, uint8_t value)
+{
+    if (!_present || index > 1) return false;
+    return writeReg((uint8_t)(REG_USER_RAM + index), value);
 }

@@ -85,6 +85,17 @@ public:
     const char* sourceName() const;
     bool        rtcPresent() const { return _rtc.present(); }
 
+    /**
+     * The RTC itself, for the operating hour meter.
+     *
+     * Handed out rather than duplicated: two drivers on one chip would each
+     * rerun the backup configuration, and the bus has one owner per task
+     * either way.
+     *
+     * @return nullptr until a chip has answered
+     */
+    Rv3028* rtc() { return _rtc.present() ? &_rtc : nullptr; }
+
     /** Name of the NTP server actually in use, empty if none. */
     String activeNtpServer() const;
 

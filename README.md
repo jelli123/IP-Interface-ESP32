@@ -1913,17 +1913,62 @@ Rest der Laufzeit im Marker.
 
 Die **Laufzeit** auf der Startseite ist die Zeit seit dem letzten Start und
 sagt nichts darüber, wie lange das Gerät schon in Betrieb ist. Dafür zählt
-[src/hour_meter.cpp](src/hour_meter.cpp) getrennt weiter – über Neustarts und
-Stromausfälle hinweg –, zusammen mit der Anzahl der Starts. Beides setzt nur
-`POST /api/hours/reset` zurück.
+[src/hour_meter.cpp](src/hour_meter.cpp) getrennt weiter, zusammen mit der
+Anzahl der Starts. Beides setzt nur `POST /api/hours/reset` zurück.
 
-Geschrieben wird **alle 15 Minuten**, nicht sekündlich. Der Zähler teilt sich
-den Flash mit den WLAN-Zugangsdaten und dem Hardware-Profil, und NVS legt bei
-jedem `put` einen neuen Eintrag an. Eine Viertelstunde kostet rund 35 000
-Schreibvorgänge im Jahr – nichts gegen die Ausdauer des Bausteins –, während
-ein Stromausfall höchstens fünfzehn Minuten eines Betriebsstundenzählers
-verliert. Der Nachkommaanteil bleibt dabei stehen: Ohne das würde jeder Flush
-bis zu eine Sekunde verschlucken.
+Zwei Ablagen, und erst die Aufteilung macht beide billig:
+
+| Ablage | Inhalt | Wie oft geschrieben |
+|---|---|---|
+| RV-3028 User-RAM, Byte 0 | Stunden seit dem letzten Abgleich | stündlich |
+| NVS im Flash | die Gesamtsumme | alle 10 Tage und bei jedem Start |
+
+Das User-RAM an Register 0x1F ist **echtes RAM** – von derselben Pufferquelle
+gehalten wie die Uhr, ohne Schreibgrenze und ohne messbare Schreibdauer. Ein
+Byte reicht, weil dort nur die Stunden seit dem letzten Abgleich stehen; **Byte
+1 bleibt frei** für spätere Zwecke.
+
+Der Abgleich alle 240 Stunden ergibt über dreißig Jahre rund **1100
+Schreibvorgänge** im Flash. Das ist der Punkt: Nicht das Medium war das
+Problem, sondern der Takt. Ein Viertelstundentakt kostete 35 000 Zugriffe im
+Jahr, ein Zehntagestakt kostet 36.
+
+Fällt die Pufferquelle aus, gehen höchstens die zehn Tage seit dem letzten
+Abgleich verloren – nicht der ganze Zählerstand. Beim Start wird zusätzlich
+sofort abgeglichen: Was das RAM über den Neustart getragen hat, steht damit
+dauerhaft, und ab da kann eine leere Stützzelle nur noch die Stunden danach
+kosten.
+
+#### Neue RTC, leere Stützzelle
+
+Der Inhalt des User-RAM ist nach einem vollständigen Spannungsverlust **nicht
+definiert**. Läse das Gerät dort 0xFF und rechnete es dazu, käme bei jedem
+Neustart ein Zuschlag von 255 Stunden heraus. Zwei Prüfungen schließen das aus:
+
+* Das **Power-on-Reset-Flag** des Chips. Es wird gesetzt, sobald die Versorgung
+  einschließlich Puffer unter die Betriebsschwelle fiel, und erst durch
+  Schreiben der Uhr gelöscht – dasselbe Flag, an dem `timeValid()` die
+  Glaubwürdigkeit der Uhrzeit festmacht.
+* Ein Wert **über dem Abgleichsintervall**. Mehr als 240 kann dort im
+  Normalbetrieb nicht stehen, weil genau bei 240 abgeglichen wird.
+
+Trifft eines davon zu, wird der RAM-Inhalt verworfen und das Byte auf null
+gesetzt; das Protokoll nennt den Grund. Der im NVS gespeicherte Stand bleibt
+dabei **unangetastet** – `flush()` schreibt nur, wenn es tatsächlich etwas zu
+übertragen gibt. Eine neue RTC oder eine leere Zelle kostet also die Stunden
+seit dem letzten Abgleich, nie den Zählerstand selbst.
+
+Das **EEPROM des RV-3028** (43 Byte neben dem RAM) wäre die dritte
+Möglichkeit, bringt hier aber nichts: Bei rund 1100 Schreibvorgängen liegen
+Flash und EEPROM beide weit innerhalb ihrer etwa 100 000 Zyklen, und das
+EEPROM kostet zusätzlich eine blockierende I2C-Sequenz von etwa 10 ms je
+Schreibvorgang. Es hätte genau einen Vorteil – der Zählerstand bliebe an der
+RTC hängen statt am ESP32, überlebte also einen Tausch des Rechners statt
+eines Tauschs der Uhr.
+
+**Ohne RTC steht dort „nicht verfügbar"**, mit dem Hinweis *Keine RTC
+vorhanden.* als Tooltip. Die angebrochene Stunde bräuchte sonst einen Platz,
+den ein Neustart nicht löscht, und den gibt es ohne gepufferte Uhr nicht.
 
 ---
 

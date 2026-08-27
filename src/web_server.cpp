@@ -246,7 +246,9 @@ static String statusJson()
 
     String json = "{";
     json += "\"uptime\":\"" + uptimeString() + "\",";
-    json += "\"hours_seconds\":" + String(hourMeter.seconds()) + ",";
+    json += "\"hours_available\":" +
+            String(hourMeter.available() ? "true" : "false") + ",";
+    json += "\"hours\":" + String(hourMeter.hours()) + ",";
     json += "\"starts\":" + String(hourMeter.starts()) + ",";
     json += "\"device_name\":\"" + jsonEscape(netManager.deviceName()) + "\",";
     json += "\"knx_name\":\"" + jsonEscape(knxLink.friendlyName()) + "\",";

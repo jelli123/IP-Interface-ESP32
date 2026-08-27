@@ -833,6 +833,7 @@ const EN = {
 'Hardware-Profil':'Hardware profile', 'WLAN einrichten':'Set up Wi-Fi',
 'Laufzeit':'Uptime', 'Betriebsstunden':'Operating hours',
 'Start':'start', 'Starts':'starts',
+'nicht verfügbar':'not available', 'Keine RTC vorhanden.':'No RTC fitted.',
 'Betriebsstunden zurücksetzen':'Reset the operating hours',
 'Betriebsstunden und Startzähler auf null setzen?':
   'Set the operating hours and the start counter to zero?',
@@ -1488,13 +1489,18 @@ async function refresh(){
 
   /*
    * Laufzeit ist die Zeit seit dem letzten Start, Betriebsstunden zaehlen
-   * ueber Neustarts und Stromausfaelle hinweg weiter. Unter einer Stunde sagt
-   * die Stundenzahl nichts, dann stehen dort Minuten.
+   * ueber Neustarts hinweg weiter - im RAM der RTC, weil das als einziger
+   * Speicher hier verschleissfrei ist.
    */
-  const secs = s.hours_seconds || 0;
-  $('hours').textContent =
-      (secs < 3600 ? Math.floor(secs / 60) + ' min' : Math.floor(secs / 3600) + ' h')
-      + ' \u00b7 ' + s.starts + ' ' + t(s.starts === 1 ? 'Start' : 'Starts');
+  const hrs = $('hours');
+  if(s.hours_available){
+    hrs.textContent = s.hours + ' h \u00b7 ' + s.starts + ' '
+                    + t(s.starts === 1 ? 'Start' : 'Starts');
+    hrs.title = '';
+  } else {
+    hrs.textContent = t('nicht verf\u00fcgbar');
+    hrs.title = t('Keine RTC vorhanden.');
+  }
   $('pa').textContent     = s.knx_pa;
   $('knxName').textContent = s.knx_name || t('nicht gesetzt');
   $('knxBadge').textContent = s.knx_name || s.device_name;
