@@ -261,9 +261,12 @@ small{color:var(--dim)}
     <div class="row"><span>MAC</span><span id="mac">-</span></div>
     <div class="row"><span>Signal</span><span id="rssi">-</span></div>
     <div class="row"><span>Ethernet (W5500)</span><span id="ethSt">-</span></div>
+    <label class="chk" id="fbRow" title="WLAN &uuml;bernimmt bei getrenntem Ethernet">
+      <input type="checkbox" id="wifiFb" onchange="setFallback()">
+      WLAN-Ersatzverbindung</label>
     <div class="actions">
       <button class="sec" onclick="openWifi()">WLAN einrichten</button>
-      <button class="sec" onclick="openName()">Name ändern</button>
+      <button class="sec" onclick="openName()">Name &auml;ndern</button>
     </div>
   </section>
 
@@ -832,6 +835,11 @@ const EN = {
 'Telegramme':'Telegrams', 'Zeitserver':'Time server', 'Netzwerk':'Network',
 'Hardware-Profil':'Hardware profile', 'WLAN einrichten':'Set up Wi-Fi',
 'Laufzeit':'Uptime', 'Betriebsstunden':'Operating hours',
+'WLAN-Ersatzverbindung':'WiFi as a standby link',
+'WLAN übernimmt bei getrenntem Ethernet':
+  'WiFi takes over when Ethernet is disconnected',
+'Ohne W5500 ist WLAN die einzige Verbindung.':
+  'Without a W5500 WiFi is the only connection.',
 'Start':'start', 'Starts':'starts',
 'nicht verfügbar':'not available', 'Keine RTC vorhanden.':'No RTC fitted.',
 'Betriebsstunden zurücksetzen':'Reset the operating hours',
@@ -1571,6 +1579,16 @@ async function refresh(){
 
   const ifn = {ethernet:'Ethernet', wifi:'WLAN'};
   $('ifc').textContent = t(ifn[s.iface] || s.iface);
+
+  /*
+   * Ohne W5500 waere das Abschalten der Ersatzverbindung ein Weg, sich selbst
+   * auszusperren - dann bleibt der Haken gesetzt und gesperrt.
+   */
+  $('wifiFb').checked  = s.wifi_fallback;
+  $('wifiFb').disabled = s.wifi_fallback_locked;
+  $('fbRow').title = t(s.wifi_fallback_locked
+      ? 'Ohne W5500 ist WLAN die einzige Verbindung.'
+      : 'WLAN übernimmt bei getrenntem Ethernet');
   $('devName').textContent  = s.device_name;
   $('hostName').textContent = s.device_name + '.local';
 
@@ -1656,6 +1674,13 @@ async function setRouting(){
 async function setBeat(){
   const body = new URLSearchParams({enabled: $('beat').checked ? '1' : '0'});
   await fetch('/api/led/heartbeat', {method:'POST', body});
+  setTimeout(refresh, 300);
+}
+
+async function setFallback(){
+  const body = new URLSearchParams({enabled: $('wifiFb').checked ? '1' : '0'});
+  const r = await fetch('/api/wifi/fallback', {method:'POST', body});
+  if(!r.ok) alert(t('Ohne W5500 ist WLAN die einzige Verbindung.'));
   setTimeout(refresh, 300);
 }
 

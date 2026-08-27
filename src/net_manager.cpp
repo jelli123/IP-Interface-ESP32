@@ -40,7 +40,19 @@ static const char*  NET_NS   = "sbip-net";
 static const char*  KEY_SSID = "ssid";
 static const char*  KEY_PASS = "pass";
 static const char*  KEY_WIFI = "wifien";
+static const char*  KEY_WIFB = "wififb";
 static const char*  KEY_NAME = "devname";
+
+/**
+ * How long mode and reality have to disagree before the device restarts into
+ * the other interface.
+ *
+ * A minute rules out a link that merely bounces, and it is comfortably more
+ * than the twenty seconds HwConfig needs to declare the profile proven - a
+ * shorter one would let a flapping cable count up the crash loop guard and
+ * eventually throw the hardware profile away.
+ */
+static const uint32_t SWITCH_GRACE_MS = 60000UL;
 
 /** Host names have no room for much else. NAME_MAX is taken by limits.h. */
 static const size_t DEVICE_NAME_MAX = 31;
@@ -99,12 +111,32 @@ bool NetManager::wifiCanBeDisabled() const
     return ethInterface.chipPresent();
 }
 
+void NetManager::setWifiFallback(bool enable)
+{
+    // Without a W5500 there is no Ethernet to fall back from, so switching
+    // this off could only ever remove the one way in that is left.
+    _wifiFallback = enable || !wifiCanBeDisabled();
+
+    netPrefs.begin(NET_NS, false);
+    netPrefs.putBool(KEY_WIFB, _wifiFallback);
+    netPrefs.end();
+}
+
+bool NetManager::hasCredentials()
+{
+    netPrefs.begin(NET_NS, false);
+    String ssid = netPrefs.isKey(KEY_SSID) ? netPrefs.getString(KEY_SSID, "") : String();
+    netPrefs.end();
+    return ssid.length() > 0;
+}
+
 void NetManager::begin()
 {
     _bootTime = millis();
 
     netPrefs.begin(NET_NS, false);
-    _wifiEnabled = netPrefs.getBool(KEY_WIFI, true);
+    _wifiEnabled  = netPrefs.getBool(KEY_WIFI, true);
+    _wifiFallback = netPrefs.getBool(KEY_WIFB, true);
     netPrefs.end();
 
     /*
@@ -121,6 +153,13 @@ void NetManager::begin()
         sysLog.println("WiFi was switched off but no Ethernet chip answered - "
                        "re-enabling to keep the device reachable");
         setWifiEnabled(true);
+    }
+
+    // Same reasoning: without a chip there is nothing to fall back from, and
+    // the stored "off" would only be a leftover from a board that is gone.
+    if (!_wifiFallback && !wifiCanBeDisabled())
+    {
+        setWifiFallback(true);
     }
 
     // NVS was already initialised by HwConfig::begin(), which has to run
@@ -354,6 +393,7 @@ void NetManager::loop()
     if (_ethMode)
     {
         ethInterface.loop();
+        superviseFailover();
         return; // no WiFi watchdog, no captive portal
     }
 
@@ -366,6 +406,55 @@ void NetManager::loop()
     }
 
     handleWifiWatchdog();
+    superviseFailover();
+}
+
+/*
+ * Run in the mode that matches reality, and take the long way round to get
+ * there.
+ *
+ * The long way is a restart, not a live switch. begin() already holds the
+ * interface decision this device has been proven on, while moving the netif
+ * under a running KNX multicast socket is what this firmware crashed on twice
+ * - once as "could not join igmp: 125", once as an InstructionFetchError
+ * during a mode change. A device whose network has just gone away is serving
+ * nobody, so a few seconds of restart cost nothing against that risk.
+ */
+void NetManager::superviseFailover()
+{
+    if (_pendingReboot || _apMode) return;
+    if (!_wifiFallback || !ethInterface.chipPresent()) return;
+
+    bool ethReady = ethInterface.active();
+
+    if (ethReady == _ethMode)
+    {
+        _switchSince = 0;
+        return;
+    }
+
+    // Restarting without stored credentials lands in the provisioning AP, and
+    // an open access point appearing because somebody pulled a cable is not
+    // an improvement over being offline.
+    if (!ethReady && !hasCredentials())
+    {
+        _switchSince = 0;
+        return;
+    }
+
+    if (_switchSince == 0)
+    {
+        _switchSince = millis();
+        sysLog.printf("Network: %s - watching for %lu s\n",
+                      ethReady ? "Ethernet is back" : "Ethernet link lost",
+                      (unsigned long)(SWITCH_GRACE_MS / 1000));
+        return;
+    }
+
+    if ((uint32_t)(millis() - _switchSince) < SWITCH_GRACE_MS) return;
+
+    sysLog.printf("Network: restarting into %s mode\n", ethReady ? "Ethernet" : "WiFi");
+    scheduleReboot();
 }
 
 bool NetManager::isOnline() const

@@ -90,6 +90,24 @@ public:
     bool wifiEnabled() const { return _wifiEnabled; }
 
     /**
+     * Let WiFi take over when the Ethernet link goes away, and hand back when
+     * it returns.
+     *
+     * The change of interface happens through a **restart**, not by switching
+     * live. The decision in begin() is the one that has been proven on this
+     * device, and moving the netif under a running KNX multicast socket is
+     * what this firmware has already crashed on twice. A device whose network
+     * just disappeared is serving nobody, so a few seconds of restart cost
+     * nothing against the risk.
+     *
+     * Only switchable off where a W5500 was found - without one there is no
+     * Ethernet to fall back from, and the setting would only be a way to lock
+     * oneself out.
+     */
+    void setWifiFallback(bool enable);
+    bool wifiFallback() const { return _wifiFallback; }
+
+    /**
      * Whether switching WiFi off is allowed at all.
      *
      * True once the W5500 has been found. A cable or an address is
@@ -116,11 +134,19 @@ public:
 private:
     bool startStation();
     void handleWifiWatchdog();
+
+    /** Restart into the other interface once reality and mode disagree. */
+    void superviseFailover();
+
+    /** @return true if an SSID is stored, without touching the radio */
+    static bool hasCredentials();
+
     String apName() const;
 
     bool     _apMode         = false;
     bool     _ethMode        = false;
     bool     _wifiEnabled    = true;
+    bool     _wifiFallback   = true;
     bool     _pendingReboot  = false;
     uint32_t _rebootAt       = 0;
     uint32_t _bootTime       = 0;
@@ -129,6 +155,7 @@ private:
     bool     _etsAddress     = false;
     uint32_t _downSince      = 0;
     uint32_t _lastKick       = 0;
+    uint32_t _switchSince    = 0; //!< mode and reality have disagreed since
 };
 
 extern NetManager netManager;

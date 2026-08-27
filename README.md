@@ -1202,6 +1202,7 @@ das Passwort und ein zweiter Ort für Fehler.
 | GET | `/api/wifi/scan[?start=1]` | asynchroner Netzwerk-Scan |
 | POST | `/api/wifi/connect` | `ssid`, `password` → speichern + Neustart |
 | POST | `/api/wifi/ap_mode` | Zugangsdaten löschen, AP starten |
+| POST | `/api/wifi/fallback` | `enabled=1\|0` → WLAN-Ersatzverbindung |
 | POST | `/api/name` | `name=` → Geräte- und mDNS-Name |
 | POST | `/api/progmode` | `state=on\|off\|toggle` |
 | GET | `/api/hwconfig` | aktives, gespeichertes und Image-Profil |
@@ -1736,9 +1737,49 @@ jenseits der Stromersparnis:
    offene Provisionierungs-AP wäre nur zusätzliche Angriffsfläche.
 
 **Die Wahl fällt einmal beim Start.** Ein später eingestecktes Kabel wird
-nicht übernommen; dafür ist ein Neustart nötig. Grund: Der KNX-Stack legt
-seinen Multicast-Socket beim Aktivieren an, ein Umschalten im laufenden
-Betrieb würde offene Tunnel abreißen.
+nicht sofort übernommen; dafür sorgt die Ersatzverbindung unten.
+
+### WLAN-Ersatzverbindung
+
+Bis dahin galt: Fällt das Kabel aus, ist das Gerät bis zum nächsten Neustart
+offline. `_ethMode` schaltete den WLAN-Watchdog dauerhaft ab, und das Funkteil
+war ohnehin aus.
+
+Der Haken **WLAN-Ersatzverbindung** auf der Startseite ändert das
+(`POST /api/wifi/fallback`, Vorgabe **ein**). `NetManager::superviseFailover()`
+vergleicht sekündlich Betriebsart und Wirklichkeit; weichen sie länger als
+eine Minute voneinander ab, **startet das Gerät neu** – und `begin()` trifft
+die Wahl dann anhand dessen, was wirklich da ist. Das gilt in beide
+Richtungen: Kabel weg → WLAN, Kabel zurück → Ethernet.
+
+**Warum ein Neustart und kein Umschalten im Betrieb?** Weil die
+Entscheidungslogik in `begin()` die ist, die auf diesem Gerät erprobt ist, und
+weil das Verschieben des Netif unter einem laufenden KNX-Multicast-Socket
+genau das ist, woran diese Firmware zweimal gescheitert ist – einmal als
+`could not join igmp: 125`, einmal als `InstructionFetchError` beim
+Moduswechsel. Ein Gerät, dessen Netz gerade verschwunden ist, bedient
+niemanden; fünf Sekunden Neustart kosten dagegen nichts.
+
+Die Minute Karenz ist kein runder Wert: Sie liegt bewusst über den zwanzig
+Sekunden, nach denen `HwConfig` das Profil für erprobt erklärt. Wäre sie
+kürzer, würde ein flatterndes Kabel den Crash-Loop-Zähler hochzählen und
+irgendwann das Hardware-Profil verwerfen.
+
+Zwei Sperren:
+
+* **Ohne gespeicherte Zugangsdaten** wird nicht umgeschaltet. Der Neustart
+  landete sonst im Provisionierungs-AP – ein offener Access Point, weil jemand
+  ein Kabel gezogen hat, ist keine Verbesserung.
+* **Ohne erkannten W5500** lässt sich der Haken nicht abschalten; er ist dann
+  gesetzt und gesperrt, mit entsprechendem Tooltip. Ohne Ethernet gäbe es
+  nichts, wovon man ausweichen könnte – die Einstellung wäre nur ein Weg, sich
+  auszusperren. `begin()` setzt sie zusätzlich zurück, falls die Platine später
+  verschwindet.
+
+**Was der Wechsel kostet:** eine neue IP-Adresse. Offene ETS-Tunnel reißen ab,
+und wer die Schnittstelle im Projekt über die IP fest eingetragen hat, muss
+sie neu zuweisen. Über die Entdeckung oder `<name>.local` gefunden, findet ETS
+das Gerät von selbst wieder.
 
 ### Zwei Fallstricke, die dabei behoben wurden
 

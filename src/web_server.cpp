@@ -289,6 +289,9 @@ static String statusJson()
     json += "\"led_heartbeat\":" + String(statusLed.heartbeat() ? "true" : "false") + ",";
     json += "\"led_brightness\":" + String(statusLed.brightness()) + ",";
     json += "\"wifi_enabled\":" + String(netManager.wifiEnabled() ? "true" : "false") + ",";
+    json += "\"wifi_fallback\":" + String(netManager.wifiFallback() ? "true" : "false") + ",";
+    json += "\"wifi_fallback_locked\":" +
+            String(netManager.wifiCanBeDisabled() ? "false" : "true") + ",";
     json += "\"prog_mode\":" + String(knxLink.progMode() ? "true" : "false") + ",";
 
     uint16_t pa = knxLink.individualAddress();
@@ -496,6 +499,29 @@ static void registerWifiRoutes()
 
         request->send(200, "application/json", "{\"status\":\"ok\"}");
         netManager.forgetCredentials();
+    });
+
+    server.on("/api/wifi/fallback", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        bool enable = true;
+        if (request->hasParam("enabled", true))
+        {
+            String value = request->getParam("enabled", true)->value();
+            enable = (value == "1" || value == "true");
+        }
+
+        if (!enable && !netManager.wifiCanBeDisabled())
+        {
+            request->send(409, "application/json",
+                          "{\"error\":\"no W5500 found - WiFi is the only way in\"}");
+            return;
+        }
+
+        netManager.setWifiFallback(enable);
+        request->send(200, "application/json",
+                      String("{\"status\":\"ok\",\"enabled\":") +
+                      (netManager.wifiFallback() ? "true" : "false") + "}");
     });
 
     server.on("/api/name", HTTP_POST, [](AsyncWebServerRequest* request) {
