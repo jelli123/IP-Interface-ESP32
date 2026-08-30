@@ -478,31 +478,45 @@ if patch_monitor():
 
 
 # --------------------------------------------------------------------------
-# 7. Ignore our own routing multicast
+# 7. Ignore routing indications that came from us
 # --------------------------------------------------------------------------
 #
 # Symptom: ETS refuses to program the individual address with "more than one
 # device in programming mode", although only this one device has it enabled.
 #
-# There is only one device - ETS just gets the answer twice.
+# Measured with the bus monitor: the device sends its IndividualAddress_
+# Response with hop count 6, and some 80 ms later reads the very same frame
+# back in over the multicast socket - with hop count 4. Two decrements means
+# it travelled through couplers on the way, so this is not a plain socket
+# loopback. The coupler then routes our own answer on to TP, where ETS sees
+# it a second time.
 #
-# A coupler answers a broadcast on both sides, so the
-# IndividualAddress_Response goes out over TP and, as a KNXnet/IP routing
-# indication, over the multicast group. The socket is a member of that group,
-# so the datagram comes straight back in. IpDataLinkLayer::loop() reads the
-# sender address but never looks at it, hands the frame to frameReceived(),
-# and the coupler dutifully routes our own answer from IP to TP - where ETS
-# sees it a second time.
+# Two independent signs that a frame is ours, both checked here:
 #
-# The same loop explains the tunnelling case: there the duplicate reaches ETS
-# because the frame routed to the TP side is also mirrored into every open
-# tunnel.
+#   the sender IP is our own          - a real loopback
+#   the source address is our own PA  - it went around and came back
 #
-# Byte order matters here: readBytesMultiCast() runs the sender through
-# htonl(), while currentIpAddress() passes on the network order that Arduino's
+# Deliberately confined to the multicast receive path. An earlier attempt put
+# the same test into DataLinkLayer::frameReceived(), which also covers the
+# tunnel path - and a tunnelled frame has to be delivered locally no matter
+# what address it carries, or ETS loses the device entirely.
+#
+# Byte order matters: readBytesMultiCast() runs the sender through htonl(),
+# while currentIpAddress() passes on the network order that Arduino's
 # IPAddress carries. Comparing them raw would never match.
+#
+# sbipLoopHook is defined in src/knx_link.cpp; it names the sender in the log
+# so the second coupler can be found rather than guessed at.
 
-LOOP_MARKER = "// sbip: our own routing multicast, looped back by the socket"
+LOOP_MARKER = "// sbip: this frame is ours - it must not go round again"
+
+LOOP_DECL = (
+    "// sbip: routing loop reporter, defined in src/knx_link.cpp\n"
+    "extern void (*sbipLoopHook)(uint32_t fromIp, uint16_t source, bool ownIp);\n"
+    "\n"
+)
+
+LOOP_ANCHOR_DECL = "void IpDataLinkLayer::loop()\n"
 
 LOOP_ANCHOR = (
     "        case RoutingIndication:\n"
@@ -516,18 +530,29 @@ LOOP_ANCHOR = (
 LOOP_NEW = (
     "        case RoutingIndication:\n"
     "        {\n"
-    "            " + LOOP_MARKER + "\n"
-    "            // Routing it back to TP is what makes ETS count a second\n"
-    "            // device in programming mode.\n"
-    "            uint32_t sbipOwn = _platform.currentIpAddress();\n"
-    "            uint32_t sbipOwnSwapped =\n"
-    "                ((sbipOwn & 0xFF) << 24) | ((sbipOwn & 0xFF00) << 8) |\n"
-    "                ((sbipOwn >> 8) & 0xFF00) | ((sbipOwn >> 24) & 0xFF);\n"
-    "\n"
-    "            if (sbipOwn != 0 && remoteAddr == sbipOwnSwapped)\n"
-    "                break;\n"
-    "\n"
     "            KnxIpRoutingIndication routingIndication(buffer, len);\n"
+    "\n"
+    "            " + LOOP_MARKER + "\n"
+    "            uint32_t sbipOwnIp = _platform.currentIpAddress();\n"
+    "            uint32_t sbipOwnSwapped =\n"
+    "                ((sbipOwnIp & 0xFF) << 24) | ((sbipOwnIp & 0xFF00) << 8) |\n"
+    "                ((sbipOwnIp >> 8) & 0xFF00) | ((sbipOwnIp >> 24) & 0xFF);\n"
+    "            bool sbipFromOwnIp = (sbipOwnIp != 0) &&"
+    " (remoteAddr == sbipOwnSwapped);\n"
+    "            bool sbipFromOwnPa =\n"
+    "                routingIndication.frame().sourceAddress() ==\n"
+    "                _deviceObject.individualAddress();\n"
+    "\n"
+    "            if (sbipFromOwnIp || sbipFromOwnPa)\n"
+    "            {\n"
+    "                if (sbipLoopHook)\n"
+    "                    sbipLoopHook(remoteAddr,\n"
+    "                                 routingIndication.frame().sourceAddress(),\n"
+    "                                 sbipFromOwnIp);\n"
+    "\n"
+    "                break;\n"
+    "            }\n"
+    "\n"
     "            frameReceived(routingIndication.frame());\n"
     "            break;\n"
     "        }\n"
@@ -544,87 +569,22 @@ def patch_loopback():
     if LOOP_MARKER in source:
         return
 
-    if source.count(LOOP_ANCHOR) != 1:
-        sys.stderr.write(
-            "patch_knx.py: anchor no longer unique, the multicast loopback "
-            "guard is NOT applied - ETS may report more than one device in "
-            "programming mode:\n  %s\n" % LOOP_ANCHOR.strip().splitlines()[0]
-        )
-        return
+    for anchor in (LOOP_ANCHOR_DECL, LOOP_ANCHOR):
+        if source.count(anchor) != 1:
+            sys.stderr.write(
+                "patch_knx.py: anchor no longer unique, the routing loop guard "
+                "is NOT applied - ETS may report more than one device in "
+                "programming mode:\n  %s\n" % anchor.strip().splitlines()[0]
+            )
+            return
+
+    patched = source.replace(LOOP_ANCHOR_DECL, LOOP_DECL + LOOP_ANCHOR_DECL)
+    patched = patched.replace(LOOP_ANCHOR, LOOP_NEW)
 
     with open(TARGET, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(source.replace(LOOP_ANCHOR, LOOP_NEW))
+        handle.write(patched)
 
-    print("patch_knx.py: multicast loopback guard applied to "
-          "ip_data_link_layer.cpp")
+    print("patch_knx.py: routing loop guard applied to ip_data_link_layer.cpp")
 
 
 patch_loopback()
-
-
-# --------------------------------------------------------------------------
-# 8. Never process a telegram we sent ourselves
-# --------------------------------------------------------------------------
-#
-# Measured with the bus monitor while ETS was assigning the individual
-# address: the device's own IndividualAddress_Response, sent with hop count 6,
-# came back in over the IP side with hop count 4 - so something out there
-# (a second coupler on the line, a router, a switch flooding the group) had
-# passed it around. The coupler then dutifully routed it on to TP, where ETS
-# saw the answer a second time and counted a second device.
-#
-# The stack already notices the situation and does nothing about it:
-#
-#     if (source == ownAddr)
-#         _deviceObject.individualAddressDuplication(true);
-#
-# A frame carrying our own individual address can never be one we are meant
-# to act on - either it is our own, looped back, or another device is using
-# our address. Both make forwarding it wrong. Dropping it closes the loop on
-# our side no matter who else keeps it turning.
-
-SELF_MARKER = "// sbip: our own address as the sender - never act on it"
-
-SELF_ANCHOR = (
-    "    if (source == ownAddr)\n"
-    "        _deviceObject.individualAddressDuplication(true);\n"
-)
-
-SELF_NEW = (
-    "    if (source == ownAddr)\n"
-    "    {\n"
-    "        _deviceObject.individualAddressDuplication(true);\n"
-    "        " + SELF_MARKER + "\n"
-    "        // Either it looped back to us or someone else took our address;\n"
-    "        // routing it on is what makes ETS count a second device.\n"
-    "        return;\n"
-    "    }\n"
-)
-
-
-def patch_self_echo():
-    if not os.path.isfile(DLL_C):
-        return
-
-    with open(DLL_C, "r", encoding="utf-8") as handle:
-        source = handle.read()
-
-    if SELF_MARKER in source:
-        return
-
-    if source.count(SELF_ANCHOR) != 1:
-        sys.stderr.write(
-            "patch_knx.py: anchor no longer unique, telegrams sent by this "
-            "device are NOT dropped on reception - a routing loop can make "
-            "ETS see more than one device:\n  %s\n"
-            % SELF_ANCHOR.strip().splitlines()[0]
-        )
-        return
-
-    with open(DLL_C, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(source.replace(SELF_ANCHOR, SELF_NEW))
-
-    print("patch_knx.py: self-sent frames dropped in data_link_layer.cpp")
-
-
-patch_self_echo()

@@ -29,6 +29,40 @@ KnxLink knxLink;
  */
 extern bool sbipRouteUnfiltered;
 
+/*
+ * Called by the routing loop guard in ip_data_link_layer.cpp when a multicast
+ * frame turns out to be ours. Defined here rather than in the patch so a
+ * failed patch costs the report, not the build.
+ *
+ * Rate limited: a loop produces one of these every few dozen milliseconds,
+ * and the point is to name the sender once, not to fill the ring.
+ */
+void (*sbipLoopHook)(uint32_t fromIp, uint16_t source, bool ownIp) = nullptr;
+
+static void reportRoutingLoop(uint32_t fromIp, uint16_t source, bool ownIp)
+{
+    static uint32_t lastAt = 0;
+    static uint32_t seen   = 0;
+
+    seen++;
+
+    if (lastAt != 0 && (millis() - lastAt) < 10000)
+    {
+        return;
+    }
+    lastAt = millis();
+
+    sysLog.printf("KNX: dropped %u looped telegram(s), last from %u.%u.%u.%u "
+                  "source %u.%u.%u (%s)\n",
+                  (unsigned)seen,
+                  (unsigned)((fromIp >> 24) & 0xFF), (unsigned)((fromIp >> 16) & 0xFF),
+                  (unsigned)((fromIp >> 8) & 0xFF), (unsigned)(fromIp & 0xFF),
+                  (unsigned)(source >> 12), (unsigned)((source >> 8) & 0x0F),
+                  (unsigned)(source & 0xFF),
+                  ownIp ? "our own IP" : "our address from elsewhere");
+    seen = 0;
+}
+
 static Preferences  knxPrefs;
 static const char*  KNX_NS       = "sbip-knx";
 static const char*  KEY_ROUTEALL = "routeall";
@@ -301,6 +335,8 @@ void KnxLink::applyIdentity()
 bool KnxLink::begin()
 {
     s_instance = this;
+
+    sbipLoopHook = &reportRoutingLoop;
 
     applyIdentity();
 

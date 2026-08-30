@@ -1747,35 +1747,52 @@ if (source == ownAddr)
 
 Danach läuft die Verarbeitung ganz normal weiter, inklusive Weiterleitung.
 
-Ein Rahmen mit der eigenen physikalischen Adresse als Absender kann aber nie
-einer sein, auf den zu reagieren wäre: Entweder er ist zurückgelaufen, oder
-ein anderes Gerät benutzt unsere Adresse. Beides macht das Weiterleiten
-falsch. Der achte Patch in [scripts/patch_knx.py](scripts/patch_knx.py)
-verwirft ihn deshalb – das schließt die Schleife auf dieser Seite, unabhängig
-davon, wer sie sonst noch am Laufen hält.
+Der siebte Patch in [scripts/patch_knx.py](scripts/patch_knx.py) verwirft
+deshalb im **Multicast-Empfangspfad** alles, was von uns stammt – erkennbar an
+zwei unabhängigen Merkmalen:
 
-Der siebte Patch verwirft zusätzlich Routing-Indikationen, die von der eigenen
-IP-Adresse stammen. Auf die Byte-Reihenfolge kommt es dabei an:
-`readBytesMultiCast()` dreht den Absender mit `htonl()`, `currentIpAddress()`
-reicht die Netzwerkreihenfolge von `IPAddress` durch – ein roher Vergleich
-träfe nie zu.
+| Merkmal | Bedeutung |
+| --- | --- |
+| Absender-IP ist die eigene | echtes Socket-Loopback |
+| Quelladresse ist die eigene PA | es war unterwegs und kam zurück |
 
-> **Zwei Sackgassen, nicht wiederholen.** Der erste Versuch unterdrückte die
-> Tunnel-Spiegelung für selbst erzeugte Telegramme in
-> `DataLinkLayer::sendTelegram()`. Für einen Tunnel-Client ist diese
-> Spiegelung aber der **einzige** Weg, auf dem ihn eine Antwort erreicht – ein
-> Tunnel empfängt keinen Routing-Multicast. Ergebnis: Die ETS sah das Gerät
-> überhaupt nicht mehr im Programmiermodus. Der zweite Versuch setzte auf
-> Multicast-Loopback allein; die Messung zeigt aber dekrementierte
-> Hop-Counts, also einen Weg über fremde Koppler.
+Auf die Byte-Reihenfolge kommt es an: `readBytesMultiCast()` dreht den
+Absender mit `htonl()`, `currentIpAddress()` reicht die Netzwerkreihenfolge
+von `IPAddress` durch – ein roher Vergleich träfe nie zu.
+
+**Wer die Schleife schließt, sagt das Protokoll.** Der Patch ruft
+`sbipLoopHook` auf, definiert in [src/knx_link.cpp](src/knx_link.cpp), und
+dort steht höchstens alle zehn Sekunden eine Zeile:
+
+```
+KNX: dropped 14 looped telegram(s), last from 192.168.179.7 source 15.15.0 (our address from elsewhere)
+```
+
+Sagt sie *our own IP*, spiegelt der eigene Socket. Nennt sie eine **fremde
+IP**, gibt es ein zweites Gerät, das dieselbe TP-Linie mit demselben IP-Netz
+verbindet – dann ist die Schleife im Anlagenaufbau begründet und nicht in
+dieser Firmware. Zwei ungefilterte Koppler zwischen einer Linie und einem
+IP-Netz erzeugen sie prinzipbedingt; der Hop-Count begrenzt sie nur.
+
+> **Drei Sackgassen, nicht wiederholen.**
+>
+> 1. Die Tunnel-Spiegelung in `DataLinkLayer::sendTelegram()` für selbst
+>    erzeugte Telegramme unterdrücken. Für einen Tunnel-Client ist sie der
+>    **einzige** Weg, auf dem ihn eine Antwort erreicht – ein Tunnel empfängt
+>    keinen Routing-Multicast. Die ETS sah das Gerät danach überhaupt nicht
+>    mehr im Programmiermodus.
+> 2. Nur auf Socket-Loopback setzen. Die gemessenen Hop-Counts widerlegen das:
+>    Loopback dekrementiert nicht.
+> 3. Dieselbe Prüfung nach `DataLinkLayer::frameReceived()` legen. Das trifft
+>    **jeden** Empfangspfad, auch die Tunnel-Zustellung – und ein getunneltes
+>    Telegramm muss lokal zugestellt werden, egal welche Adresse es trägt.
+>    Danach war das Gerät in den Adaptereinstellungen der ETS nicht mehr
+>    erreichbar. Deshalb sitzt die Prüfung jetzt ausschließlich im
+>    Multicast-Empfang.
 
 > Die unfilterte Weiterleitung oben ist **nicht** die Ursache – sie wirkt nur
 > auf `isGroupAddressInFilterTable()`, und ein Broadcast mit Zieladresse 0
 > durchläuft diese Prüfung ohnehin nicht.
-
-Wenn zwei Koppler ungefiltert dieselbe Linie mit demselben IP-Netz verbinden,
-ist eine solche Schleife die normale Folge. Der Hop-Count begrenzt sie, aber
-sechs Umläufe reichen der ETS schon für ihre Fehlermeldung.
 
 ### Fremde Produktdatenbank verwenden
 
