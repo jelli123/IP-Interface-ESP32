@@ -72,7 +72,59 @@ void BusMonitor::begin()
 
 void BusMonitor::hook(uint8_t side, bool outgoing, const uint8_t* cemi, uint16_t length)
 {
+    busMonitor.watchForLoop(side, outgoing, cemi, length);
     busMonitor.capture(side, outgoing, cemi, length);
+}
+
+/*
+ * A second coupler on the same line, found without anyone having to read a
+ * recording.
+ *
+ * Two devices that bridge the same TP line to the same IP network send each
+ * other's traffic back. The give-away is a telegram arriving from the bus
+ * that is byte for byte what we put out a moment ago, except for the source
+ * address - a KNXnet/IP interface substitutes its own tunnel address. Since
+ * the source differs, no filter on our own address can catch it, and ETS ends
+ * up seeing two answers to every question.
+ *
+ * Comparing destination and payload rather than the whole frame keeps this
+ * blind to the hop count, which the other device has decremented.
+ */
+void BusMonitor::watchForLoop(uint8_t side, bool outgoing, const uint8_t* cemi,
+                              uint16_t length)
+{
+    uint16_t ctrl = ctrlOffset(cemi);
+    if (length < ctrl + 7u) return;
+
+    // Destination, octet count and the first two APDU bytes: enough to tell
+    // one telegram from another, short enough to keep in a few bytes.
+    uint32_t mark = ((uint32_t)cemi[ctrl + 4] << 24) | ((uint32_t)cemi[ctrl + 5] << 16) |
+                    ((uint32_t)cemi[ctrl + 6] << 8) | cemi[length - 1];
+    uint16_t source = ((uint16_t)cemi[ctrl + 2] << 8) | cemi[ctrl + 3];
+
+    if (outgoing)
+    {
+        _sentMark   = mark;
+        _sentSource = source;
+        _sentAt     = millis();
+        return;
+    }
+
+    if (side != SIDE_TP || mark != _sentMark || source == _sentSource) return;
+    if (_sentAt == 0 || (millis() - _sentAt) > LOOP_WINDOW_MS) return;
+
+    _loops++;
+
+    if (_loopWarnedAt != 0 && (millis() - _loopWarnedAt) < 60000) return;
+    _loopWarnedAt = millis();
+
+    sysLog.printf("KNX: telegram loop - %u frame(s) we sent came back from the "
+                  "bus as %u.%u.%u. A second device bridges this line to the "
+                  "same IP network; ETS will see every answer twice.\n",
+                  (unsigned)_loops,
+                  (unsigned)(source >> 12), (unsigned)((source >> 8) & 0x0F),
+                  (unsigned)(source & 0xFF));
+    _loops = 0;
 }
 
 bool BusMonitor::fires(const uint8_t* cemi, uint16_t length) const

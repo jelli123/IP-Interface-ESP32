@@ -151,6 +151,19 @@ private:
     /** Does this raw cEMI frame fire the configured trigger? */
     bool fires(const uint8_t* cemi, uint16_t length) const;
 
+    /** Report a telegram of ours coming back off the bus under another name. */
+    void watchForLoop(uint8_t side, bool outgoing, const uint8_t* cemi,
+                      uint16_t length);
+
+    /** Longest a frame may take to come round for it to count as a loop. */
+    static const uint32_t LOOP_WINDOW_MS = 500;
+
+    uint32_t _sentMark     = 0;
+    uint16_t _sentSource   = 0;
+    uint32_t _sentAt       = 0;
+    uint32_t _loops        = 0;
+    uint32_t _loopWarnedAt = 0;
+
     Entry*   _ring     = nullptr;
     uint32_t _capacity = 0;
     uint32_t _head     = 0;

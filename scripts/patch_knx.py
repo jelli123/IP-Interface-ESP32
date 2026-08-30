@@ -516,6 +516,24 @@ def patch_monitor_tunnel_tx():
         1,
     )
 
+    # Say why the ETS bus monitor stays empty. The stack only speaks
+    # TUNNEL_LINKLAYER and turns down a busmonitor connection - silently,
+    # because the explanation sits behind KNX_LOG_TUNNELING.
+    layer_anchor = (
+        "        //We only support 0x02!\n"
+        "#ifdef KNX_LOG_TUNNELING\n"
+        '        println("Only LinkLayer ist supported!");\n'
+        "#endif\n"
+    )
+
+    if patched.count(layer_anchor) == 1:
+        patched = patched.replace(
+            layer_anchor,
+            "        //We only support 0x02!\n"
+            '        println("sbip: tunnel refused - only LinkLayer is '
+            'supported, the ETS bus monitor cannot work over this device");\n',
+        )
+
     with open(TARGET, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(patched)
 

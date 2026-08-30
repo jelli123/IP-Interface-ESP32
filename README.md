@@ -776,6 +776,32 @@ Ohne PSRAM bleibt er ebenfalls aus. Das ist kein Verlust an Diagnose, sondern
 ein Verweis: Der **Gruppenmonitor der ETS** kann dasselbe, und dieses Gerät
 ist als Schnittstelle dafür ohnehin eingetragen.
 
+### Der Busmonitor der ETS bleibt leer
+
+Der **Gruppenmonitor** der ETS funktioniert über dieses Gerät, der
+**Busmonitor** nicht. Das ist keine Fehlfunktion, sondern eine fehlende
+Funktion des Stacks: Ein Busmonitor-Tunnel ist eine eigene Verbindungsart,
+und `IpDataLinkLayer` nimmt ausschließlich `TUNNEL_LINKLAYER` (0x02) an:
+
+```cpp
+if (connRequest.cri().type() == TUNNEL_CONNECTION && connRequest.cri().layer() != 0x02)
+{
+    //We only support 0x02!
+    KnxIpConnectResponse connRes(0x00, E_TUNNELING_LAYER);
+```
+
+Die Absage ging bislang wortlos hinaus – die Erklärung lag hinter
+`KNX_LOG_TUNNELING`, das hier nicht gesetzt ist. Deshalb sah es so aus, als
+käme einfach nichts an. Jetzt steht es im Protokoll:
+
+```
+sbip: tunnel refused - only LinkLayer is supported, the ETS bus monitor
+cannot work over this device
+```
+
+Für das Mitlesen des Busverkehrs ist der eingebaute Busmonitor da, der
+denselben Zweck erfüllt und zusätzlich die IP- und Tunnelseite zeigt.
+
 ### Sofort oder auf Trigger
 
 | Start | Verhalten |
@@ -1727,19 +1753,51 @@ bekam die Antwort mehrfach.
 
 | ms | Seite | Ri. | Quelle | Dienst | Hop |
 | --- | --- | --- | --- | --- | --- |
-| 819006 | TP | RX | 15.15.1 | IndividualAddressRead | 6 |
-| 819006 | IP | TX | 15.15.0 | IndividualAddressResponse | 6 |
-| 819007 | TP | TX | 15.15.0 | IndividualAddressResponse | 6 |
-| 819139 | **IP** | **RX** | **15.15.0** | **IndividualAddressResponse** | **4** |
-| 819139 | TP | TX | 15.15.0 | IndividualAddressResponse | 3 |
-| 819242 | IP | RX | 15.15.0 | IndividualAddressResponse | 1 |
+| 443481 | Tunnel | TX | 1.1.5 | IndividualAddressRead | 6 |
+| 443482 | IP | TX | **15.15.0** | IndividualAddressResponse | 6 |
+| 443483 | TP | TX | **15.15.0** | IndividualAddressResponse | 6 |
+| 443540 | **TP** | **RX** | **1.1.255** | **IndividualAddressResponse** | **4** |
+| 443541 | Tunnel | TX | 1.1.255 | IndividualAddressResponse | 4 |
 
-Die vierte Zeile ist der Befund: Das Gerät empfängt seine **eigene** Antwort
-(Quelle 15.15.0 ist es selbst) über die IP-Seite wieder – mit Hop 4, obwohl es
-sie mit Hop 6 gesendet hat. Zwei Dekremente heißt, dass sie unterwegs durch
-Koppler gelaufen ist. Und dann leitet dieses Gerät die eigene Antwort brav
-weiter auf TP, wo die ETS sie ein zweites Mal sieht. Das wiederholt sich, bis
-der Hop-Count 0 erreicht.
+Zeile 2 und 3 sind die eigene Antwort, abgesendet als `15.15.0`. Zeile 4 ist
+dieselbe Antwort, 58 ms später **von der Busleitung** zurück – aber unter der
+Quelladresse `1.1.255`. Über Zeile 5 geht sie an die ETS.
+
+Die ETS bekommt also zwei `IndividualAddressResponse` von zwei verschiedenen
+Absendern und schließt daraus: **mehr als ein Gerät im Programmiermodus.**
+
+**Wer ist `1.1.255`?** Eine ersetzte Quelladresse ist die Signatur eines
+KNXnet/IP-Interfaces im Tunnelbetrieb – es trägt seine eigene Tunneladresse
+ein. Auf derselben TP-Linie hängt demnach ein **zweites Gerät**, das die Linie
+mit demselben IP-Netz verbindet, den Routing-Multicast aufnimmt und auf den
+Bus legt. Der Zeitversatz von 30–60 ms ist die Übertragungsdauer auf TP1, die
+fehlenden Hop-Zähler stammen von diesem Gerät.
+
+**Das ist kein Fehler dieser Firmware, sondern der Anlage.** Zwei ungefilterte
+Koppler zwischen einer Linie und einem IP-Netz erzeugen genau das; der
+Hop-Zähler begrenzt die Schleife nur. Abhilfe: das zweite Interface während
+der Programmierung vom Netz nehmen, oder so projektieren, dass nur eines von
+beiden koppelt.
+
+**Die Firmware sagt es jetzt selbst.** `BusMonitor::watchForLoop()` merkt sich
+Ziel und Nutzlast jedes gesendeten Telegramms und vergleicht sie mit dem, was
+kurz darauf von der Busleitung hereinkommt. Stimmt alles überein außer der
+Quelladresse, steht das im Protokoll:
+
+```
+KNX: telegram loop - 7 frame(s) we sent came back from the bus as 1.1.255.
+A second device bridges this line to the same IP network; ETS will see every
+answer twice.
+```
+
+Der Hop-Zähler wird bewusst nicht verglichen – den hat das andere Gerät schon
+verändert.
+
+> **Warum kein Filter dagegen hilft.** Die zurückkommende Antwort trägt nicht
+> mehr unsere Absenderadresse, sondern die des anderen Geräts. Sie ist von
+> einem echten Fremdtelegramm nicht zu unterscheiden – wer sie verwirft,
+> verwirft irgendwann berechtigten Busverkehr. Deshalb meldet die Firmware den
+> Befund, statt ihn zu verstecken.
 
 **Der Stack merkt es und tut nichts.** In `DataLinkLayer::frameReceived()`:
 
