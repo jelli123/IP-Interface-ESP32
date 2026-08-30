@@ -475,65 +475,85 @@ if patch_monitor():
 
 
 # --------------------------------------------------------------------------
-# 7. Do not echo our own telegrams back into the tunnels
+# 7. Ignore our own routing multicast
 # --------------------------------------------------------------------------
 #
 # Symptom: ETS refuses to program the individual address with "more than one
 # device in programming mode", although only this one device has it enabled.
 #
-# A coupler answers a broadcast on BOTH sides - dataBroadcastRequest() hands
-# the response to the IP entity and to the TP entity. On the way out through
-# the TP entity, sendTelegram() also mirrors the frame into every open tunnel,
-# which is how a router lets a tunnel client watch real bus traffic.
+# There is only one device - ETS just gets the answer twice.
 #
-# For a frame the device generated itself that mirror is wrong: ETS already
-# has the response from the IP side, and now receives the very same
-# IndividualAddress_Response a second time over its tunnel. Two answers, one
-# device - so ETS counts two.
+# A coupler answers a broadcast on both sides, so the
+# IndividualAddress_Response goes out over TP and, as a KNXnet/IP routing
+# indication, over the multicast group. The socket is a member of that group,
+# so the datagram comes straight back in. IpDataLinkLayer::loop() reads the
+# sender address but never looks at it, hands the frame to frameReceived(),
+# and the coupler dutifully routes our own answer from IP to TP - where ETS
+# sees it a second time.
 #
-# Comparing against our own individual address keeps the monitor function
-# intact for everything that genuinely came off the TP line.
+# The same loop explains the tunnelling case: there the duplicate reaches ETS
+# because the frame routed to the TP side is also mirrored into every open
+# tunnel.
+#
+# Byte order matters here: readBytesMultiCast() runs the sender through
+# htonl(), while currentIpAddress() passes on the network order that Arduino's
+# IPAddress carries. Comparing them raw would never match.
 
-ECHO_MARKER = "// sbip: never mirror our own telegrams into the tunnels"
+LOOP_MARKER = "// sbip: our own routing multicast, looped back by the socket"
 
-ECHO_ANCHOR = (
-    "    if (_networkLayerEntity.getEntityIndex() == 1)   // only send to"
-    " tunnel if we are the secondary (TP) interface\n"
-    "        _cemiServer->dataIndicationToTunnel(tmpFrame);\n"
+LOOP_ANCHOR = (
+    "        case RoutingIndication:\n"
+    "        {\n"
+    "            KnxIpRoutingIndication routingIndication(buffer, len);\n"
+    "            frameReceived(routingIndication.frame());\n"
+    "            break;\n"
+    "        }\n"
 )
 
-ECHO_NEW = (
-    "    " + ECHO_MARKER + "\n"
-    "    // ETS already has them from the IP side and would count a second\n"
-    "    // device in programming mode.\n"
-    "    if (_networkLayerEntity.getEntityIndex() == 1 &&\n"
-    "        sourceAddr != _deviceObject.individualAddress())\n"
-    "        _cemiServer->dataIndicationToTunnel(tmpFrame);\n"
+LOOP_NEW = (
+    "        case RoutingIndication:\n"
+    "        {\n"
+    "            " + LOOP_MARKER + "\n"
+    "            // Routing it back to TP is what makes ETS count a second\n"
+    "            // device in programming mode.\n"
+    "            uint32_t sbipOwn = _platform.currentIpAddress();\n"
+    "            uint32_t sbipOwnSwapped =\n"
+    "                ((sbipOwn & 0xFF) << 24) | ((sbipOwn & 0xFF00) << 8) |\n"
+    "                ((sbipOwn >> 8) & 0xFF00) | ((sbipOwn >> 24) & 0xFF);\n"
+    "\n"
+    "            if (sbipOwn != 0 && remoteAddr == sbipOwnSwapped)\n"
+    "                break;\n"
+    "\n"
+    "            KnxIpRoutingIndication routingIndication(buffer, len);\n"
+    "            frameReceived(routingIndication.frame());\n"
+    "            break;\n"
+    "        }\n"
 )
 
 
-def patch_echo():
-    if not os.path.isfile(DLL_C):
+def patch_loopback():
+    if not os.path.isfile(TARGET):
         return
 
-    with open(DLL_C, "r", encoding="utf-8") as handle:
+    with open(TARGET, "r", encoding="utf-8") as handle:
         source = handle.read()
 
-    if ECHO_MARKER in source:
+    if LOOP_MARKER in source:
         return
 
-    if source.count(ECHO_ANCHOR) != 1:
+    if source.count(LOOP_ANCHOR) != 1:
         sys.stderr.write(
-            "patch_knx.py: anchor no longer unique, the tunnel echo fix is NOT "
-            "applied - ETS may report more than one device in programming "
-            "mode:\n  %s\n" % ECHO_ANCHOR.strip().splitlines()[0]
+            "patch_knx.py: anchor no longer unique, the multicast loopback "
+            "guard is NOT applied - ETS may report more than one device in "
+            "programming mode:\n  %s\n" % LOOP_ANCHOR.strip().splitlines()[0]
         )
         return
 
-    with open(DLL_C, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(source.replace(ECHO_ANCHOR, ECHO_NEW))
+    with open(TARGET, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source.replace(LOOP_ANCHOR, LOOP_NEW))
 
-    print("patch_knx.py: tunnel echo fix applied to data_link_layer.cpp")
+    print("patch_knx.py: multicast loopback guard applied to "
+          "ip_data_link_layer.cpp")
 
 
-patch_echo()
+patch_loopback()

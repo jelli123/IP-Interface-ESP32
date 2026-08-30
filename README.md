@@ -1709,38 +1709,54 @@ Beim Vergeben der physikalischen Adresse meldete die ETS das, obwohl nur
 dieses eine Gerät im Programmiermodus war. Es war auch nur eines – die ETS
 bekam die Antwort bloß zweimal.
 
-Ein Koppler beantwortet einen Broadcast auf **beiden** Seiten:
+**Die Schleife.** Ein Koppler beantwortet einen Broadcast auf beiden Seiten:
 `NetworkLayerCoupler::dataBroadcastRequest()` reicht die
 `IndividualAddress_Response` an die IP-Instanz *und* an die TP-Instanz weiter.
-Auf dem Weg durch die TP-Instanz spiegelt `DataLinkLayer::sendTelegram()`
-jeden Rahmen zusätzlich in alle offenen Tunnel – so lässt ein Router einen
-Tunnel-Client echten Busverkehr mitlesen:
+Die IP-Instanz verschickt sie als KNXnet/IP-Routing-Multicast. Der eigene
+Socket ist Mitglied dieser Gruppe, also **kommt das Datagramm sofort wieder
+herein**. `IpDataLinkLayer::loop()` liest zwar die Absenderadresse, sieht sie
+sich aber nie an:
 
 ```cpp
-if (_networkLayerEntity.getEntityIndex() == 1)   // only send to tunnel …
-    _cemiServer->dataIndicationToTunnel(tmpFrame);
+int len = _platform.readBytesMultiCast(buffer, 512, remoteAddr, remotePort);
+...
+case RoutingIndication:
+{
+    KnxIpRoutingIndication routingIndication(buffer, len);
+    frameReceived(routingIndication.frame());   // auch die eigene
 ```
 
-Für ein selbst erzeugtes Telegramm ist diese Spiegelung falsch. Die ETS hat
-die Antwort bereits über die IP-Seite, und bekommt dieselbe
-`IndividualAddress_Response` ein zweites Mal über ihren Tunnel. Zwei
-Antworten, ein Gerät – die ETS zählt zwei.
+Damit läuft die eigene Antwort ein zweites Mal durch die Kopplerlogik und
+wird brav von IP nach TP geroutet – wo die ETS sie erneut sieht.
 
-Der siebte Patch in [scripts/patch_knx.py](scripts/patch_knx.py) vergleicht
-deshalb die Quelladresse mit der eigenen:
+Das erklärt beide Beobachtungen: Programmiert man über ein **fremdes
+TP-Interface**, kommt die Antwort zweimal auf der TP-Linie an. Programmiert
+man über den **eigenen Tunnel**, wird der nach TP geroutete Rahmen zusätzlich
+in alle offenen Tunnel gespiegelt – wieder zweimal.
 
-```cpp
-if (_networkLayerEntity.getEntityIndex() == 1 &&
-    sourceAddr != _deviceObject.individualAddress())
-    _cemiServer->dataIndicationToTunnel(tmpFrame);
-```
+Der siebte Patch in [scripts/patch_knx.py](scripts/patch_knx.py) verwirft
+deshalb Routing-Indikationen, deren Absender das Gerät selbst ist. Auf die
+Byte-Reihenfolge kommt es dabei an: `readBytesMultiCast()` dreht den Absender
+mit `htonl()`, `currentIpAddress()` reicht die Netzwerkreihenfolge von
+`IPAddress` durch – ein roher Vergleich träfe nie zu.
 
-Für echten Fremdverkehr von der TP-Linie bleibt die Spiegelung damit
-erhalten, nur die eigenen Telegramme kommen nicht mehr doppelt an.
+> **Sackgasse, nicht wiederholen.** Der erste Versuch setzte am falschen Ende
+> an und unterdrückte die Tunnel-Spiegelung für selbst erzeugte Telegramme
+> (`sourceAddr != _deviceObject.individualAddress()` in
+> `DataLinkLayer::sendTelegram()`). Für einen Tunnel-Client ist diese
+> Spiegelung aber der **einzige** Weg, auf dem ihn eine Antwort erreicht – ein
+> Tunnel empfängt keinen Routing-Multicast. Ergebnis: Die ETS sah das Gerät
+> überhaupt nicht mehr im Programmiermodus, und über ein fremdes TP-Interface
+> blieb die Doppelung bestehen. Die Spiegelung war nie das Problem, die
+> Schleife war es.
 
-> Die unfilterte Weiterleitung oben ist **nicht** die Ursache – sie wirkt nur
-> auf `isGroupAddressInFilterTable()`, und ein Broadcast mit Zieladresse 0
-> durchläuft diese Prüfung ohnehin nicht.
+> Die unfilterte Weiterleitung oben ist ebenfalls **nicht** die Ursache – sie
+> wirkt nur auf `isGroupAddressInFilterTable()`, und ein Broadcast mit
+> Zieladresse 0 durchläuft diese Prüfung ohnehin nicht.
+
+**Nachprüfen lässt sich das im Busmonitor:** Vor dem Patch erscheint das
+eigene Telegramm auf der IP-Seite zweimal – einmal gesendet, einmal
+empfangen. Danach nur noch einmal.
 
 ### Fremde Produktdatenbank verwenden
 
