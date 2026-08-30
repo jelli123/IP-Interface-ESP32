@@ -94,10 +94,14 @@ public:
     /**
      * Boot from the other slot next time.
      *
-     * Refuses when that slot holds no valid image. Takes effect on restart,
-     * and the same call switches back.
+     * Refuses when that slot holds no valid image, and says why - with the
+     * bootloader rollback enabled a slot can be present, readable and still
+     * permanently barred. Takes effect on restart, and the same call switches
+     * back.
+     *
+     * @param error receives a readable reason on failure
      */
-    static bool switchPartition();
+    static bool switchPartition(String& error);
 
 private:
     static void checkTask(void* arg);
@@ -108,6 +112,9 @@ private:
 
     /** Note in NVS which firmware runs from the current slot. */
     static void recordOwnSlot();
+
+    /** Cancel the pending rollback, if one is pending. @p why goes to the log. */
+    void markAppValid(const char* why);
 
     bool _validationPending = true;
     bool _slotRecorded      = false;

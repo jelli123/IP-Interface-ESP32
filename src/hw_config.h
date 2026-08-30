@@ -302,6 +302,16 @@ public:
     static bool validate(const HwProfile& profile, String& error);
 
     /**
+     * Trim the two ring sizes to what the PSRAM can carry.
+     *
+     * Deliberately not part of validate(): a profile stored before these
+     * fields existed loads them from the defaults, and a device with less
+     * PSRAM than that would then have its whole profile - pins included -
+     * thrown away over two numbers that only govern a diagnostic buffer.
+     */
+    static void clampMemory(HwProfile& profile);
+
+    /**
      * Replace the stored profile from a JSON document.
      *
      * Missing fields keep the value of the currently active profile, so a

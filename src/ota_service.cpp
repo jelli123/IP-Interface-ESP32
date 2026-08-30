@@ -97,6 +97,9 @@ uint32_t OtaService::sketchSize()
     return s_sketchSize;
 }
 
+/** True once, on the first boot after switchPartition() set the note. */
+static bool takeSwitchFlag();
+
 void OtaService::loop()
 {
     if (!_slotRecorded)
@@ -107,6 +110,16 @@ void OtaService::loop()
         // Measured here, in the main task and exactly once, rather than from
         // a web handler. See the note on sketchSize().
         s_sketchSize = ESP.getSketchSize();
+
+        // A slot the user picked on purpose has run here before, so there is
+        // nothing to prove and every reason to hurry: while the image sits in
+        // PENDING_VERIFY any reset makes the bootloader mark it INVALID, and
+        // an INVALID slot can never be selected again.
+        if (takeSwitchFlag())
+        {
+            _validationPending = false;
+            markAppValid("after a deliberate slot switch");
+        }
     }
 
     if (!_validationPending || millis() < OTA_VALIDATE_AFTER_MS)
@@ -115,6 +128,12 @@ void OtaService::loop()
     }
     _validationPending = false;
 
+    markAppValid("after the proving time");
+}
+
+/* Only ever acts when the bootloader is actually waiting for the verdict. */
+void OtaService::markAppValid(const char* why)
+{
     const esp_partition_t* running = esp_ota_get_running_partition();
     esp_ota_img_states_t   state;
 
@@ -122,8 +141,8 @@ void OtaService::loop()
         state == ESP_OTA_IMG_PENDING_VERIFY)
     {
         esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
-        sysLog.printf("OTA: %s app valid (was PENDING_VERIFY)\n",
-                      err == ESP_OK ? "marked" : "FAILED to mark");
+        sysLog.printf("OTA: %s app valid %s\n",
+                      err == ESP_OK ? "marked" : "FAILED to mark", why);
     }
 }
 
@@ -506,6 +525,24 @@ static const esp_partition_t* otherSlot()
     return esp_ota_get_next_update_partition(nullptr);
 }
 
+/*
+ * Survives exactly one restart: switchPartition() writes it, the next boot
+ * reads and clears it. NVS rather than RTC memory because the switch is meant
+ * to survive a power cycle too.
+ */
+static const char* KEY_SWITCHED = "switched";
+
+static bool takeSwitchFlag()
+{
+    if (!prefs.begin(FW_NS, false)) return false;
+
+    bool pending = prefs.isKey(KEY_SWITCHED) && prefs.getBool(KEY_SWITCHED, false);
+    if (pending) prefs.remove(KEY_SWITCHED);
+
+    prefs.end();
+    return pending;
+}
+
 /** One slot as a JSON object. */
 static String partitionJson(const esp_partition_t* part, bool running)
 {
@@ -631,7 +668,7 @@ String OtaService::partitionsJson()
     return cached;
 }
 
-bool OtaService::switchPartition()
+bool OtaService::switchPartition(String& error)
 {
     const esp_partition_t* other = otherSlot();
     esp_app_desc_t         desc;
@@ -639,16 +676,57 @@ bool OtaService::switchPartition()
     if (other == nullptr ||
         esp_ota_get_partition_description(other, &desc) != ESP_OK)
     {
-        sysLog.println("OTA: the other slot holds no valid firmware");
+        error = "the other slot holds no valid firmware";
+        sysLog.println("OTA: " + error);
         return false;
     }
 
-    if (esp_ota_set_boot_partition(other) != ESP_OK)
+    /*
+     * Worth naming separately. With the bootloader rollback enabled a slot
+     * that was left in PENDING_VERIFY across a reset is marked INVALID, and
+     * from then on esp_ota_set_boot_partition() refuses it for good - the
+     * image is still there and still reads as valid, which is exactly why
+     * "nothing happens" is the wrong thing to report.
+     */
+    esp_ota_img_states_t state;
+
+    if (esp_ota_get_state_partition(other, &state) == ESP_OK &&
+        (state == ESP_OTA_IMG_INVALID || state == ESP_OTA_IMG_ABORTED))
     {
-        sysLog.println("OTA: could not switch the boot partition");
+        error = String("the bootloader has rejected ") + other->label +
+                " (state " + (state == ESP_OTA_IMG_INVALID ? "invalid" : "aborted") +
+                ") - only a fresh upload can bring it back";
+        sysLog.println("OTA: " + error);
         return false;
     }
 
+    esp_err_t err = esp_ota_set_boot_partition(other);
+
+    if (err != ESP_OK)
+    {
+        error = String("could not switch the boot partition: ") + esp_err_to_name(err);
+        sysLog.println("OTA: " + error);
+        return false;
+    }
+
+    // Read back rather than trust the return code: this writes the otadata
+    // sector, and a switch that silently did not stick is the whole complaint.
+    const esp_partition_t* boot = esp_ota_get_boot_partition();
+
+    if (boot != other)
+    {
+        error = "the boot partition did not change";
+        sysLog.println("OTA: " + error);
+        return false;
+    }
+
+    if (prefs.begin(FW_NS, false))
+    {
+        prefs.putBool(KEY_SWITCHED, true);
+        prefs.end();
+    }
+
+    error = "";
     sysLog.printf("OTA: next boot from %s (%s)\n", other->label, desc.version);
     return true;
 }

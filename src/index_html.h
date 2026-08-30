@@ -308,6 +308,8 @@ small{color:var(--dim)}
       <button class="sec" onclick="openAuth()">Zugang</button>
       <button class="sec" onclick="resetPeaks('cpu')">Spitzenwerte zur&uuml;cksetzen</button>
       <button class="sec" onclick="resetHours()">Betriebsstunden zur&uuml;cksetzen</button>
+      <button class="sec" onclick="askReboot()"
+              title="Offene ETS-Verbindungen reißen dabei ab">Ger&auml;t neu starten</button>
     </div>
   </section>
 
@@ -1211,6 +1213,11 @@ const EN = {
   'Delete the profile stored in the device and restart',
 'SHA-256 der Datei (optional, aus':'SHA-256 of the file (optional, from',
 
+'Gerät jetzt neu starten?':'Restart the device now?',
+'Der Bootlader hat diese Partition verworfen. Nur ein neuer Upload hilft.':
+  'The boot loader has rejected this partition. Only a fresh upload helps.',
+'Offene ETS-Verbindungen reißen dabei ab':
+  'Open ETS connections are dropped',
 'UART-Nummer':'UART number',
 'Protokoll (KiB)':'Log (KiB)', 'Busmonitor (KiB)':'Bus monitor (KiB)',
 'Speicheraufteilung':'Memory split', 'PSRAM-Aufteilung':'PSRAM split',
@@ -1703,7 +1710,14 @@ async function refresh(){
   const parts = s.build.partitions || [];
   $('partRun').textContent = parts[0] ? slot(parts[0]) : '-';
   $('partAlt').textContent = parts[1] ? slot(parts[1]) : '-';
-  $('swBtn').disabled = !(parts[1] && parts[1].valid);
+  // Ein Abbild kann lesbar und trotzdem gesperrt sein: der Bootlader merkt
+  // sich einen verworfenen Slot dauerhaft in den OTA-Daten.
+  const barred = parts[1] && (parts[1].state === 'invalid' ||
+                             parts[1].state === 'aborted');
+  $('swBtn').disabled = !(parts[1] && parts[1].valid) || barred;
+  $('swBtn').title = barred
+      ? t('Der Bootlader hat diese Partition verworfen. Nur ein neuer Upload hilft.')
+      : '';
   $('ver').textContent  = s.build.version;
   $('build').textContent= '#' + s.build.number + ' / ' + s.build.git;
 
@@ -2474,8 +2488,11 @@ async function switchPart(){
 
   if(!confirm(msg)) return;
   const r = await fetch('/api/ota/switch', {method:'POST'});
-  alert(t(r.ok ? 'Umgeschaltet. Das Gerät startet neu.'
-              : 'Umschalten nicht möglich.'));
+  if(r.ok){ alert(t('Umgeschaltet. Das Gerät startet neu.')); return; }
+
+  let why = '';
+  try { why = (await r.json()).error || ''; } catch(e){}
+  alert(t('Umschalten nicht möglich.') + (why ? '\n\n' + why : ''));
 }
 
 async function resetKnx(){
@@ -3039,6 +3056,10 @@ async function hwUpload(){
 async function doReboot(){
   await fetch('/api/reboot', {method:'POST'});
   alert(t('Neustart läuft. Die Seite in einigen Sekunden neu laden.'));
+}
+
+function askReboot(){
+  if(confirm(t('Gerät jetzt neu starten?'))) doReboot();
 }
 
 function openWifi(){

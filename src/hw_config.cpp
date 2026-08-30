@@ -225,6 +225,8 @@ HwProfile HwConfig::defaults()
     strlcpy(p.updateUrl, UPDATE_MANIFEST_URL, sizeof(p.updateUrl));
     strlcpy(p.lpcUrl, LPC_MANIFEST_URL, sizeof(p.lpcUrl));
 
+    clampMemory(p);
+
     return p;
 }
 
@@ -648,25 +650,40 @@ bool HwConfig::validate(const HwProfile& p, String& error)
     }
 
     // The two rings are the only large PSRAM tenants, but not the only ones:
-    // TLS handshakes and the firmware staging buffer also draw from it, so a
-    // slice stays free. Without PSRAM both rings fall back on their own and
-    // the numbers are then just a stored wish - no reason to refuse them.
-    {
-        uint32_t psramKib = (uint32_t)(ESP.getPsramSize() / 1024);
-        if (psramKib > HW_PSRAM_RESERVE_KIB)
-        {
-            uint32_t budget = psramKib - HW_PSRAM_RESERVE_KIB;
-            if ((uint32_t)p.logKib + p.monitorKib > budget)
-            {
-                error = "log + monitor exceed the PSRAM budget of " +
-                        String(budget) + " KiB";
-                return false;
-            }
-        }
-    }
+    // TLS handshakes and the firmware staging buffer also draw from it. That
+    // is a matter for clampMemory() rather than for this function - failing
+    // here would discard the pins as well.
 
     error = "";
     return true;
+}
+
+/*
+ * Silently, and never as a reason to reject a profile.
+ *
+ * Without PSRAM nothing is trimmed: both rings already fall back on their
+ * own, and a profile written on a WROVER has to survive being moved to a
+ * WROOM and back without losing the numbers on the way.
+ */
+void HwConfig::clampMemory(HwProfile& p)
+{
+    uint32_t psramKib = (uint32_t)(ESP.getPsramSize() / 1024);
+
+    if (psramKib <= HW_PSRAM_RESERVE_KIB)
+    {
+        return;
+    }
+
+    uint32_t budget = psramKib - HW_PSRAM_RESERVE_KIB;
+
+    if (p.logKib > budget)
+    {
+        p.logKib = (uint16_t)budget;
+    }
+    if ((uint32_t)p.logKib + p.monitorKib > budget)
+    {
+        p.monitorKib = (uint16_t)(budget - p.logKib);
+    }
 }
 
 /* ------------------------------------------------------------------------- *
@@ -714,6 +731,7 @@ void HwConfig::load()
                 sizeof(_stored.lpcUrl));
         _stored.logKib     = prefs.getUShort("logkib", d.logKib);
         _stored.monitorKib = prefs.getUShort("monkib", d.monitorKib);
+        clampMemory(_stored);
         loadLists(d);
     }
     else
@@ -1162,6 +1180,7 @@ bool HwConfig::applyJson(const String& json, String& error)
 
     p.logKib     = (uint16_t)jsonGetInt(json, "log_kib", p.logKib);
     p.monitorKib = (uint16_t)jsonGetInt(json, "monitor_kib", p.monitorKib);
+    clampMemory(p);
 
     bool ok =
         readList(json, "buttons", HW_MAX_BUTTONS, p.buttonCount, p.buttons,

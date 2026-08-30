@@ -1173,10 +1173,12 @@ static void registerOtaRoutes()
     server.on("/api/ota/switch", HTTP_POST, [](AsyncWebServerRequest* request) {
         if (!mutationAllowed(request)) return;
 
-        if (!OtaService::switchPartition())
+        String error;
+
+        if (!OtaService::switchPartition(error))
         {
             request->send(409, "application/json",
-                          "{\"error\":\"the other slot holds no valid firmware\"}");
+                          "{\"error\":\"" + jsonEscape(error) + "\"}");
             return;
         }
 

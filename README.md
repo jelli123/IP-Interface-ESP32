@@ -527,12 +527,18 @@ Speicheraufteilung*), mit Schiebereglern und einem gestapelten Balken.
 | Protokoll | `log_kib` | 512 KiB |
 | Busmonitor | `monitor_kib` | 384 KiB |
 
-Die Summe darf `PSRAM − 256 KiB` nicht überschreiten – die Reserve
+Die Summe wird auf `PSRAM − 256 KiB` **gekappt** – die Reserve
 (`HW_PSRAM_RESERVE_KIB` in [src/hw_config.h](src/hw_config.h)) geht an
 TLS-Handshakes und den Zwischenspeicher des Firmware-Updates. Ein Heap, der
 erst beim Start des Updates voll ist, ist ein schlechter Ort für diese
-Erkenntnis. Das Formular weicht deshalb sofort aus, statt beim Speichern zu
+Erkenntnis. Das Formular weicht schon beim Tippen aus, statt beim Speichern zu
 meckern.
+
+> Gekappt, **nicht** abgewiesen: Ein Profil, das vor diesen Feldern angelegt
+> wurde, lädt sie aus den Vorgaben. Würde das zu einem Fehler in
+> `validate()` führen, flöge das **ganze** Profil weg – Pins inbegriffen, und
+> plötzlich findet das Gerät weder SB-Interface noch W5500. Genau das ist
+> einmal passiert; `clampMemory()` ist die Lehre daraus.
 
 `0` schaltet ab: ohne Protokollpuffer bleibt der 4-KiB-Notring im internen
 RAM, ohne Monitorring entfällt der Busmonitor. Beides wirkt erst nach einem
@@ -1533,6 +1539,35 @@ Beides ist hier bewusst nicht umgesetzt: Das Interface ist für ein lokales
 KNX-Netz gedacht, und die schreibenden Endpunkte sind bereits Origin-geprüft
 und im AP-Modus gesperrt. Wer die Firmware über ein nicht vertrauenswürdiges
 Netz verteilt, sollte Secure Boot v2 vorsehen.
+
+### Zwischen den beiden Slots wechseln
+
+Im Dashboard unter *System → Partitionstabelle* steht neben jedem Slot, welche
+Firmware darin liegt und in welchem **OTA-Zustand** er ist. *Umschalten* setzt
+die Startpartition und startet neu.
+
+Der Bootloader hat den Rollback aktiviert (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`),
+und das hat eine Falle, die man kennen muss:
+
+| Zustand | Bedeutung |
+| --- | --- |
+| `geprüft` | Der Slot ist freigegeben. |
+| `auf Bewährung` | Läuft gerade zur Probe. **Ein Reset jetzt verwirft ihn.** |
+| `ungültig`, `abgebrochen` | Vom Bootloader dauerhaft gesperrt. |
+
+Nach einem Wechsel startet der neue Slot in *auf Bewährung*. Kommt in dieser
+Zeit ein Reset, bevor die Firmware sich freigegeben hat, schaltet der
+Bootloader zurück und markiert den Slot als **ungültig** – ab dann lässt er
+sich nicht mehr anwählen, obwohl das Abbild unversehrt im Flash liegt. Genau
+das sieht wie „Umschalten bewirkt nichts" aus.
+
+Deshalb gibt die Firmware sich nach einem **bewusst gewählten** Wechsel sofort
+frei statt nach den 30 Sekunden, die für ein frisches OTA-Image gelten: Der
+Slot lief hier schon einmal, es gibt nichts zu beweisen. Der Merker dafür
+liegt in NVS und überlebt genau einen Neustart.
+
+Ein bereits gesperrter Slot lässt sich nur durch einen neuen Upload
+zurückholen; der Knopf ist dann abgeschaltet und nennt den Grund.
 
 ---
 
