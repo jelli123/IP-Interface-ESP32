@@ -421,10 +421,13 @@ MON_ANCHOR_TUNNEL = (
 )
 
 MON_NEW_TUNNEL = (
-    "    // sbip: this one arrived over IP, and the call below is local\n"
-    "    // delivery - without the flag it would show up as a TP reception.\n"
+    "    // sbip: the cEMI server hangs off the SECONDARY (TP) layer -\n"
+    "    // bau091A.cpp does _cemiServer.dataLinkLayer(_dlLayerSecondary).\n"
+    "    // Reporting a fixed 0 here labelled every tunnelled telegram as IP\n"
+    "    // and made the monitor useless for tracing a routing loop.\n"
     "    if (sbipMonitorHook)\n"
-    "        sbipMonitorHook(0, false, frame.data(), frame.totalLenght());\n"
+    "        sbipMonitorHook(_networkLayerEntity.getEntityIndex(), false,\n"
+    "                        frame.data(), frame.totalLenght());\n"
     "\n"
     "    // Send to local stack ( => cemiServer for potential other tunnel and"
     " network layer for routing)\n"
@@ -557,3 +560,71 @@ def patch_loopback():
 
 
 patch_loopback()
+
+
+# --------------------------------------------------------------------------
+# 8. Never process a telegram we sent ourselves
+# --------------------------------------------------------------------------
+#
+# Measured with the bus monitor while ETS was assigning the individual
+# address: the device's own IndividualAddress_Response, sent with hop count 6,
+# came back in over the IP side with hop count 4 - so something out there
+# (a second coupler on the line, a router, a switch flooding the group) had
+# passed it around. The coupler then dutifully routed it on to TP, where ETS
+# saw the answer a second time and counted a second device.
+#
+# The stack already notices the situation and does nothing about it:
+#
+#     if (source == ownAddr)
+#         _deviceObject.individualAddressDuplication(true);
+#
+# A frame carrying our own individual address can never be one we are meant
+# to act on - either it is our own, looped back, or another device is using
+# our address. Both make forwarding it wrong. Dropping it closes the loop on
+# our side no matter who else keeps it turning.
+
+SELF_MARKER = "// sbip: our own address as the sender - never act on it"
+
+SELF_ANCHOR = (
+    "    if (source == ownAddr)\n"
+    "        _deviceObject.individualAddressDuplication(true);\n"
+)
+
+SELF_NEW = (
+    "    if (source == ownAddr)\n"
+    "    {\n"
+    "        _deviceObject.individualAddressDuplication(true);\n"
+    "        " + SELF_MARKER + "\n"
+    "        // Either it looped back to us or someone else took our address;\n"
+    "        // routing it on is what makes ETS count a second device.\n"
+    "        return;\n"
+    "    }\n"
+)
+
+
+def patch_self_echo():
+    if not os.path.isfile(DLL_C):
+        return
+
+    with open(DLL_C, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if SELF_MARKER in source:
+        return
+
+    if source.count(SELF_ANCHOR) != 1:
+        sys.stderr.write(
+            "patch_knx.py: anchor no longer unique, telegrams sent by this "
+            "device are NOT dropped on reception - a routing loop can make "
+            "ETS see more than one device:\n  %s\n"
+            % SELF_ANCHOR.strip().splitlines()[0]
+        )
+        return
+
+    with open(DLL_C, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source.replace(SELF_ANCHOR, SELF_NEW))
+
+    print("patch_knx.py: self-sent frames dropped in data_link_layer.cpp")
+
+
+patch_self_echo()

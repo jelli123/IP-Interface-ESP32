@@ -114,13 +114,13 @@ void OtaService::loop()
         const esp_partition_t* running = esp_ota_get_running_partition();
         const esp_partition_t* boot    = esp_ota_get_boot_partition();
 
-        if (running != nullptr && boot != nullptr && running != boot)
-        {
-            // The boot loader did not take what otadata asked for, which is
-            // what a rollback looks like from here.
-            sysLog.printf("OTA: running from %s although %s is selected\n",
-                          running->label, boot->label);
-        }
+        // Logged every start, not only on a mismatch: after a switch this one
+        // line says whether the boot loader took what it was told to.
+        sysLog.printf("OTA: running from %s, next boot %s%s\n",
+                      running ? running->label : "?",
+                      boot ? boot->label : "?",
+                      (running && boot && running != boot)
+                          ? " - the boot loader did not take it" : "");
 
         // A slot the user picked on purpose has run here before, so there is
         // nothing to prove and every reason to hurry: while the image sits in

@@ -723,9 +723,20 @@ Patch in `data_link_layer.cpp`, an drei Stellen:
 | `dataRequestFromTunnel()` | was über einen Tunnel hereinkommt |
 
 Die dritte Stelle braucht eine Unterdrückungsflagge: Sie ruft ihrerseits
-`frameReceived()` für die lokale Zustellung auf. Ohne die Flagge stünde ein
-Telegramm, das die ETS durch einen Tunnel schickt, als **TP-Empfang** in der
-Liste – obwohl es über IP kam.
+`frameReceived()` für die lokale Zustellung auf, was dasselbe Telegramm ein
+zweites Mal in die Liste schriebe.
+
+> **Der cEMI-Server hängt an der TP-Schicht**, nicht an der IP-Schicht –
+> `bau091A.cpp` macht `_cemiServer.dataLinkLayer(_dlLayerSecondary)` mit dem
+> Kommentar *„Secondary I/F is the important one!"*. Der Patch meldete hier
+> ursprünglich eine fest verdrahtete `0` (= IP), weil ein Telegramm aus einem
+> Tunnel ja über IP hereinkommt. Das ist zwar wahr, aber nicht die Frage, die
+> die Spalte beantwortet: Sie nennt die **Schicht**, die den Rahmen bearbeitet.
+> Die Folge war, dass jedes getunnelte Telegramm als IP-Empfang erschien und
+> auf der TP-Seite nie ein Empfang auftauchte – eine Fehldiagnose, die beim
+> Suchen der Telegrammschleife oben zweimal in die falsche Richtung geführt
+> hat. Jetzt steht dort `_networkLayerEntity.getEntityIndex()` wie an den
+> anderen beiden Stellen.
 
 Beide Symbole sind in [src/bus_monitor.cpp](src/bus_monitor.cpp) definiert,
 nicht im Stack. Findet der Patch seine Anker nicht mehr, kostet das den
@@ -1707,56 +1718,64 @@ erzeugen Telegrammschleifen.
 
 Beim Vergeben der physikalischen Adresse meldete die ETS das, obwohl nur
 dieses eine Gerät im Programmiermodus war. Es war auch nur eines – die ETS
-bekam die Antwort bloß zweimal.
+bekam die Antwort mehrfach.
 
-**Die Schleife.** Ein Koppler beantwortet einen Broadcast auf beiden Seiten:
-`NetworkLayerCoupler::dataBroadcastRequest()` reicht die
-`IndividualAddress_Response` an die IP-Instanz *und* an die TP-Instanz weiter.
-Die IP-Instanz verschickt sie als KNXnet/IP-Routing-Multicast. Der eigene
-Socket ist Mitglied dieser Gruppe, also **kommt das Datagramm sofort wieder
-herein**. `IpDataLinkLayer::loop()` liest zwar die Absenderadresse, sieht sie
-sich aber nie an:
+**Die Messung.** Der Busmonitor zeigt es beim Programmieren:
+
+| ms | Seite | Ri. | Quelle | Dienst | Hop |
+| --- | --- | --- | --- | --- | --- |
+| 819006 | TP | RX | 15.15.1 | IndividualAddressRead | 6 |
+| 819006 | IP | TX | 15.15.0 | IndividualAddressResponse | 6 |
+| 819007 | TP | TX | 15.15.0 | IndividualAddressResponse | 6 |
+| 819139 | **IP** | **RX** | **15.15.0** | **IndividualAddressResponse** | **4** |
+| 819139 | TP | TX | 15.15.0 | IndividualAddressResponse | 3 |
+| 819242 | IP | RX | 15.15.0 | IndividualAddressResponse | 1 |
+
+Die vierte Zeile ist der Befund: Das Gerät empfängt seine **eigene** Antwort
+(Quelle 15.15.0 ist es selbst) über die IP-Seite wieder – mit Hop 4, obwohl es
+sie mit Hop 6 gesendet hat. Zwei Dekremente heißt, dass sie unterwegs durch
+Koppler gelaufen ist. Und dann leitet dieses Gerät die eigene Antwort brav
+weiter auf TP, wo die ETS sie ein zweites Mal sieht. Das wiederholt sich, bis
+der Hop-Count 0 erreicht.
+
+**Der Stack merkt es und tut nichts.** In `DataLinkLayer::frameReceived()`:
 
 ```cpp
-int len = _platform.readBytesMultiCast(buffer, 512, remoteAddr, remotePort);
-...
-case RoutingIndication:
-{
-    KnxIpRoutingIndication routingIndication(buffer, len);
-    frameReceived(routingIndication.frame());   // auch die eigene
+if (source == ownAddr)
+    _deviceObject.individualAddressDuplication(true);
 ```
 
-Damit läuft die eigene Antwort ein zweites Mal durch die Kopplerlogik und
-wird brav von IP nach TP geroutet – wo die ETS sie erneut sieht.
+Danach läuft die Verarbeitung ganz normal weiter, inklusive Weiterleitung.
 
-Das erklärt beide Beobachtungen: Programmiert man über ein **fremdes
-TP-Interface**, kommt die Antwort zweimal auf der TP-Linie an. Programmiert
-man über den **eigenen Tunnel**, wird der nach TP geroutete Rahmen zusätzlich
-in alle offenen Tunnel gespiegelt – wieder zweimal.
+Ein Rahmen mit der eigenen physikalischen Adresse als Absender kann aber nie
+einer sein, auf den zu reagieren wäre: Entweder er ist zurückgelaufen, oder
+ein anderes Gerät benutzt unsere Adresse. Beides macht das Weiterleiten
+falsch. Der achte Patch in [scripts/patch_knx.py](scripts/patch_knx.py)
+verwirft ihn deshalb – das schließt die Schleife auf dieser Seite, unabhängig
+davon, wer sie sonst noch am Laufen hält.
 
-Der siebte Patch in [scripts/patch_knx.py](scripts/patch_knx.py) verwirft
-deshalb Routing-Indikationen, deren Absender das Gerät selbst ist. Auf die
-Byte-Reihenfolge kommt es dabei an: `readBytesMultiCast()` dreht den Absender
-mit `htonl()`, `currentIpAddress()` reicht die Netzwerkreihenfolge von
-`IPAddress` durch – ein roher Vergleich träfe nie zu.
+Der siebte Patch verwirft zusätzlich Routing-Indikationen, die von der eigenen
+IP-Adresse stammen. Auf die Byte-Reihenfolge kommt es dabei an:
+`readBytesMultiCast()` dreht den Absender mit `htonl()`, `currentIpAddress()`
+reicht die Netzwerkreihenfolge von `IPAddress` durch – ein roher Vergleich
+träfe nie zu.
 
-> **Sackgasse, nicht wiederholen.** Der erste Versuch setzte am falschen Ende
-> an und unterdrückte die Tunnel-Spiegelung für selbst erzeugte Telegramme
-> (`sourceAddr != _deviceObject.individualAddress()` in
-> `DataLinkLayer::sendTelegram()`). Für einen Tunnel-Client ist diese
+> **Zwei Sackgassen, nicht wiederholen.** Der erste Versuch unterdrückte die
+> Tunnel-Spiegelung für selbst erzeugte Telegramme in
+> `DataLinkLayer::sendTelegram()`. Für einen Tunnel-Client ist diese
 > Spiegelung aber der **einzige** Weg, auf dem ihn eine Antwort erreicht – ein
 > Tunnel empfängt keinen Routing-Multicast. Ergebnis: Die ETS sah das Gerät
-> überhaupt nicht mehr im Programmiermodus, und über ein fremdes TP-Interface
-> blieb die Doppelung bestehen. Die Spiegelung war nie das Problem, die
-> Schleife war es.
+> überhaupt nicht mehr im Programmiermodus. Der zweite Versuch setzte auf
+> Multicast-Loopback allein; die Messung zeigt aber dekrementierte
+> Hop-Counts, also einen Weg über fremde Koppler.
 
-> Die unfilterte Weiterleitung oben ist ebenfalls **nicht** die Ursache – sie
-> wirkt nur auf `isGroupAddressInFilterTable()`, und ein Broadcast mit
-> Zieladresse 0 durchläuft diese Prüfung ohnehin nicht.
+> Die unfilterte Weiterleitung oben ist **nicht** die Ursache – sie wirkt nur
+> auf `isGroupAddressInFilterTable()`, und ein Broadcast mit Zieladresse 0
+> durchläuft diese Prüfung ohnehin nicht.
 
-**Nachprüfen lässt sich das im Busmonitor:** Vor dem Patch erscheint das
-eigene Telegramm auf der IP-Seite zweimal – einmal gesendet, einmal
-empfangen. Danach nur noch einmal.
+Wenn zwei Koppler ungefiltert dieselbe Linie mit demselben IP-Netz verbinden,
+ist eine solche Schleife die normale Folge. Der Hop-Count begrenzt sie, aber
+sechs Umläufe reichen der ETS schon für ihre Fehlermeldung.
 
 ### Fremde Produktdatenbank verwenden
 
