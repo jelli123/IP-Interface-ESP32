@@ -1323,6 +1323,43 @@ const char* apciName(uint16_t apci)
     }
 }
 
+/*
+ * What the frame actually is.
+ *
+ * The transport layer comes before any APCI, and skipping it was wrong in a
+ * way that mattered: a T_Connect carries no second byte, so reading one as
+ * APCI 0x000 turned every connection setup into a "GroupValueRead" - point to
+ * point traffic that looked like group traffic in the list.
+ *
+ * The three GroupValue services also only exist towards a group address. On a
+ * physical destination the same APCI means something else, so it is shown as
+ * a number rather than under a name it does not carry.
+ */
+const char* serviceName(const uint8_t* tpdu, uint8_t tpduLen, bool group,
+                        char* scratch, size_t scratchLen)
+{
+    if (tpduLen < 1) return "";
+
+    uint8_t t = tpdu[0];
+
+    if (t == 0x80) return "T_Connect";
+    if (t == 0x81) return "T_Disconnect";
+    if ((t & 0xC3) == 0xC2) return "T_ACK";
+    if ((t & 0xC3) == 0xC3) return "T_NAK";
+
+    if (tpduLen < 2) return "";
+
+    uint16_t apci = (uint16_t)(((t & 0x03) << 8) | tpdu[1]);
+
+    if (!group && apci <= 0x080)
+    {
+        snprintf(scratch, scratchLen, "APCI 0x%03X", apci);
+        return scratch;
+    }
+
+    return apciName(apci);
+}
+
 const char* priorityName(uint8_t ctrl1)
 {
     switch (ctrl1 & 0x0C)
@@ -1384,13 +1421,12 @@ int monitorEntryJson(char* out, size_t max, uint32_t seq,
     const uint8_t* tpdu    = cemi + ctrl + 7;
     uint8_t        tpduLen = (uint8_t)(entry.stored - (ctrl + 7));
 
-    uint16_t apci = 0;
+    char     service[16] = {0};
     char     data[2 * BusMonitor::RAW_MAX + 1] = {0};
+    const char* name = serviceName(tpdu, tpduLen, group, service, sizeof(service));
 
     if (tpduLen >= 2)
     {
-        apci = (uint16_t)(((tpdu[0] & 0x03) << 8) | tpdu[1]);
-
         if (count <= 1)
         {
             // A value of six bits or less rides in the APCI byte itself.
@@ -1412,7 +1448,7 @@ int monitorEntryJson(char* out, size_t max, uint32_t seq,
                     (ctrl1 & 0x20) ? 0u : 1u,          // bit clear means repeated
                     (ctrl2 >> 4) & 0x07,
                     (ctrl1 & 0x80) ? 0u : 1u,          // bit clear means extended
-                    (unsigned)count, apciName(apci), data);
+                    (unsigned)count, name, data);
 }
 
 String monitorStateJson()

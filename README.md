@@ -777,7 +777,6 @@ ein Verweis: Der **Gruppenmonitor der ETS** kann dasselbe, und dieses Gerät
 ist als Schnittstelle dafür ohnehin eingetragen.
 
 ### Der Busmonitor der ETS bleibt leer
-
 Der **Gruppenmonitor** der ETS funktioniert über dieses Gerät, der
 **Busmonitor** nicht. Das ist keine Fehlfunktion, sondern eine fehlende
 Funktion des Stacks: Ein Busmonitor-Tunnel ist eine eigene Verbindungsart,
@@ -879,6 +878,30 @@ Jede Angabe nennt den Typ, aus dem sie stammt, damit sichtbar bleibt, dass es
 eine Annahme ist. Die Spalte **Bits** daneben sagt, wie breit die Nutzdaten
 sind; bei bis zu sechs Bit steht `≤ 6`, weil die tatsächliche Breite – ein Bit
 bei DPT 1, vier bei DPT 3 – nirgends im Telegramm steht.
+
+### Die Spalte „Dienst" nennt zuerst die Transportschicht
+
+Vor der APCI steht die **TPCI**, und die zu überspringen war ein Fehler mit
+Folgen: Ein `T_Connect` besteht aus einem einzigen Byte. Wer trotzdem ein
+zweites liest, bekommt APCI 0x000 – also `GroupValueRead`. Jeder
+Verbindungsaufbau der ETS stand damit als Gruppentelegramm in der Liste,
+obwohl es reiner Punkt-zu-Punkt-Verkehr ist:
+
+```
+Tunnel;TX;1.1.5;1.1.0;GroupValueRead      <- in Wirklichkeit T_Connect
+```
+
+Erkannt werden jetzt `T_Connect`, `T_Disconnect`, `T_ACK` und `T_NAK`.
+
+Dazu kommt: `GroupValueRead`, `-Response` und `-Write` gibt es **nur** zu
+einer Gruppenadresse. Steht im Ziel eine physikalische Adresse, bedeutet
+dieselbe APCI etwas anderes, und die Spalte zeigt dann `APCI 0x0xx` statt
+eines Namens, den das Telegramm nicht trägt.
+
+> Praktisch heißt das: Wer im Monitor nach echtem Gruppenverkehr sucht, achtet
+> auf ein Ziel in der Form `1/2/3`. Ziele wie `1.1.0` sind Punkt-zu-Punkt,
+> `0/0/0` ist ein Broadcast – beides erscheint im **Gruppenmonitor der ETS**
+> grundsätzlich nicht.
 
 Bei 1 Bit und 2 Byte trifft die Deutung fast immer, bei 1 Byte ist sie
 mehrdeutig, und bei 3 Byte lassen sich Uhrzeit und Datum grundsätzlich nicht
