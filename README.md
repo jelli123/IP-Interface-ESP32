@@ -348,8 +348,25 @@ ab:
 durch, wird das Profil verworfen und die Image-Werte greifen. Dasselbe Muster
 wie beim OTA-Rollback.
 
-**3. Werkeinstellungen zur Laufzeit.** Ein Taster mit dieser Funktion löscht
-die gesamte NVS-Partition, siehe *Taster und LEDs*.
+**3. Werkeinstellungen zur Laufzeit.** Zwei Wege, beide löschen die gesamte
+NVS-Partition:
+
+* *System → Werkeinstellungen* im Dashboard (`POST /api/factory`), mit
+  doppelter Rückfrage.
+* Ein Taster mit dieser Funktion, siehe *Taster und LEDs*.
+
+Der Knopf im Dashboard ist der wichtigere von beiden: Die Vorgabe enthält
+**keinen** Werkeinstellungs-Taster, und ohne einen solchen blieb sonst nur das
+Löschen des Flash über USB – ein schlechter Rettungsweg für ein Gerät, das im
+Verteiler sitzt und über das Netz erreichbar ist.
+
+Gelöscht wird in beiden Fällen im Haupttask, nicht im Web-Handler:
+`nvs_flash_erase()` entzieht jedem offenen `Preferences`-Handle die Grundlage,
+also darf danach nichts mehr auf dem alten Inhalt weiterlaufen.
+
+> *Profil im Gerät löschen* im Profildialog ist etwas anderes und viel
+> harmloser: Es leert nur den Namensraum `hwcfg`, WLAN und KNX bleiben. Es
+> meldet jetzt auch, wenn das misslingt, statt einen Erfolg zu behaupten.
 
 > **Warum es keine Taster-Rettung beim Einschalten gibt.** Naheliegend wäre,
 > den Taster während des Starts gedrückt zu halten. Das kann auf keinem
@@ -1268,6 +1285,7 @@ das Passwort und ein zweiter Ort für Fehler.
 | GET | `/api/monitor/frames` | Ausschnitt, `?from=` und `?max=` |
 | POST | `/api/auth` | `user=`, `password=` → Zugangsschutz |
 | POST | `/api/reboot` | Neustart auslösen |
+| POST | `/api/factory` | **gesamte NVS-Partition löschen** und neu starten |
 | GET | `/api/time` | Zustand und Konfiguration des Zeitservers |
 | POST | `/api/time/config` | Konfiguration schreiben (Teilfelder erlaubt) |
 | POST | `/api/time/set` | `epoch` (UTC-Sekunden) → Uhr stellen |
@@ -1685,6 +1703,45 @@ projektiert hat, will sie normalerweise auch. Nur einschalten, wenn dieses Gerä
 die einzige Verbindung zwischen Linie und IP ist – zwei Koppler ohne Filter
 erzeugen Telegrammschleifen.
 
+### „Mehr als ein Gerät im Programmiermodus"
+
+Beim Vergeben der physikalischen Adresse meldete die ETS das, obwohl nur
+dieses eine Gerät im Programmiermodus war. Es war auch nur eines – die ETS
+bekam die Antwort bloß zweimal.
+
+Ein Koppler beantwortet einen Broadcast auf **beiden** Seiten:
+`NetworkLayerCoupler::dataBroadcastRequest()` reicht die
+`IndividualAddress_Response` an die IP-Instanz *und* an die TP-Instanz weiter.
+Auf dem Weg durch die TP-Instanz spiegelt `DataLinkLayer::sendTelegram()`
+jeden Rahmen zusätzlich in alle offenen Tunnel – so lässt ein Router einen
+Tunnel-Client echten Busverkehr mitlesen:
+
+```cpp
+if (_networkLayerEntity.getEntityIndex() == 1)   // only send to tunnel …
+    _cemiServer->dataIndicationToTunnel(tmpFrame);
+```
+
+Für ein selbst erzeugtes Telegramm ist diese Spiegelung falsch. Die ETS hat
+die Antwort bereits über die IP-Seite, und bekommt dieselbe
+`IndividualAddress_Response` ein zweites Mal über ihren Tunnel. Zwei
+Antworten, ein Gerät – die ETS zählt zwei.
+
+Der siebte Patch in [scripts/patch_knx.py](scripts/patch_knx.py) vergleicht
+deshalb die Quelladresse mit der eigenen:
+
+```cpp
+if (_networkLayerEntity.getEntityIndex() == 1 &&
+    sourceAddr != _deviceObject.individualAddress())
+    _cemiServer->dataIndicationToTunnel(tmpFrame);
+```
+
+Für echten Fremdverkehr von der TP-Linie bleibt die Spiegelung damit
+erhalten, nur die eigenen Telegramme kommen nicht mehr doppelt an.
+
+> Die unfilterte Weiterleitung oben ist **nicht** die Ursache – sie wirkt nur
+> auf `isGroupAddressInFilterTable()`, und ein Broadcast mit Zieladresse 0
+> durchläuft diese Prüfung ohnehin nicht.
+
 ### Fremde Produktdatenbank verwenden
 
 Statt eine eigene Produktdatenbank zu erstellen, kann sich die Firmware als
@@ -1786,6 +1843,15 @@ freien Pins woanders liegen:
 `3V3` und `GND` gehen in allen Fällen an 3,3 V und Masse. Das Modul zieht beim
 Link-Aufbau kurzzeitig deutlich über 100 mA – ein USB-Port am Entwicklungsboard
 reicht dafür meist, ein schwacher LDO nicht.
+
+**Wird der Chip nur sporadisch erkannt?** Ohne verdrahtete `RST`-Leitung
+verlässt sich der W5500 auf seinen eigenen Power-on-Reset, und dessen PLL
+braucht rund 50 ms. Beim Kaltstart kann das nach dem Punkt liegen, an dem der
+ESP32 nachsieht. Die Firmware fragt das Versionsregister deshalb **sechsmal im
+Abstand von 25 ms** ab und schreibt den zuletzt gelesenen Wert ins Protokoll:
+`0x00`/`0xFF` heißt, dass niemand MISO treibt (Verdrahtung, Versorgung, falsche
+Pins), jeder andere Wert deutet auf einen fremden Chip oder auf zu lange
+Leitungen für den Takt.
 
 Die Vorgaben stehen als `SBIP_ETH_*_PIN` in
 [platformio.ini](platformio.ini) und lassen sich zur Laufzeit über das

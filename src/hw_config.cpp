@@ -1064,16 +1064,34 @@ bool HwConfig::sameWiring(const HwProfile& a, const HwProfile& b)
     return true;
 }
 
-void HwConfig::resetToDefaults()
+bool HwConfig::resetToDefaults()
 {
-    prefs.begin(NS, false);
-    prefs.clear();
-    prefs.end();
+    // Own handle, like store() and loop(): Preferences::begin() returns false
+    // on an object that is already open, and clear() then quietly does
+    // nothing - which is how "delete the profile" ends up looking like it
+    // worked while the profile is still there after the restart.
+    Preferences erase;
+
+    if (!erase.begin(NS, false))
+    {
+        sysLog.println("HW: could not open the profile namespace to clear it");
+        return false;
+    }
+
+    bool ok = erase.clear();
+    erase.end();
+
+    if (!ok)
+    {
+        sysLog.println("HW: clearing the stored profile FAILED");
+        return false;
+    }
 
     _hasStored     = false;
     _stored        = defaults();
     _rebootPending = true;
     sysLog.println("HW: stored profile cleared, defaults active after reboot");
+    return true;
 }
 
 const char* HwConfig::fallbackReason() const

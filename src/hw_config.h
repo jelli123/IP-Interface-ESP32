@@ -323,8 +323,13 @@ public:
      */
     bool applyJson(const String& json, String& error);
 
-    /** Drop the stored profile and go back to the built-in defaults. */
-    void resetToDefaults();
+    /**
+     * Drop the stored profile and go back to the built-in defaults.
+     *
+     * @return false when the namespace could not be cleared - the caller has
+     *         to say so rather than promise a reset that did not happen.
+     */
+    bool resetToDefaults();
 
     /**
      * True when two profiles describe the same wiring.

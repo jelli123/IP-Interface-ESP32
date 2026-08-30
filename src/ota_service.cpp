@@ -111,6 +111,17 @@ void OtaService::loop()
         // a web handler. See the note on sketchSize().
         s_sketchSize = ESP.getSketchSize();
 
+        const esp_partition_t* running = esp_ota_get_running_partition();
+        const esp_partition_t* boot    = esp_ota_get_boot_partition();
+
+        if (running != nullptr && boot != nullptr && running != boot)
+        {
+            // The boot loader did not take what otadata asked for, which is
+            // what a rollback looks like from here.
+            sysLog.printf("OTA: running from %s although %s is selected\n",
+                          running->label, boot->label);
+        }
+
         // A slot the user picked on purpose has run here before, so there is
         // nothing to prove and every reason to hurry: while the image sits in
         // PENDING_VERIFY any reset makes the bootloader mark it INVALID, and
@@ -550,6 +561,12 @@ static String partitionJson(const esp_partition_t* part, bool running)
 
     String json = "{\"label\":\"" + String(part->label) + "\",";
     json += "\"running\":" + String(running ? "true" : "false") + ",";
+
+    // What the boot loader will actually take next time. Without this a
+    // switch that was accepted but did not stick is indistinguishable from
+    // one that never happened.
+    json += "\"boot\":" +
+            String(esp_ota_get_boot_partition() == part ? "true" : "false") + ",";
 
     esp_ota_img_states_t state;
     const char*          stateName = "?";

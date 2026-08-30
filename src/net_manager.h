@@ -79,6 +79,16 @@ public:
     void scheduleReboot();
 
     /**
+     * Erase the whole NVS partition, then restart.
+     *
+     * Hardware profile, WiFi credentials, KNX configuration, operating hours
+     * and passwords - everything. Runs on the main task for the same reason
+     * the button-triggered reset does: afterwards no open Preferences handle
+     * describes anything that still exists.
+     */
+    void scheduleFactoryReset();
+
+    /**
      * Whether the WiFi radio may come up at all.
      *
      * Applied during begin() only. Turning the radio off while the access
@@ -148,6 +158,7 @@ private:
     bool     _wifiEnabled    = true;
     bool     _wifiFallback   = true;
     bool     _pendingReboot  = false;
+    bool     _pendingErase   = false;
     uint32_t _rebootAt       = 0;
     uint32_t _bootTime       = 0;
     uint32_t _lastCheck      = 0;

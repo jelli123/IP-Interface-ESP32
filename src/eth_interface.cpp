@@ -28,6 +28,19 @@ EthInterface ethInterface;
 /** SPI clock for the probe. Deliberately slow, the driver raises it later. */
 static const uint32_t PROBE_SPI_HZ = 4000000UL;
 
+/*
+ * How often to ask for the version register, and how long to wait between
+ * tries.
+ *
+ * One read is not enough. Without a wired reset line the W5500 relies on its
+ * own power-on reset, and its PLL needs some 50 ms after the supply is
+ * stable - which on a cold start can easily be later than the point the ESP32
+ * reaches this code. A single miss then looks exactly like a missing chip,
+ * and the board comes up on WiFi "sporadically".
+ */
+static const uint8_t  PROBE_ATTEMPTS = 6;
+static const uint32_t PROBE_RETRY_MS = 25UL;
+
 /** How long to wait for the link to come up after starting the driver. */
 static const uint32_t LINK_TIMEOUT_MS = 4000UL;
 
@@ -76,25 +89,42 @@ bool EthInterface::probeChip()
 
     resetChip();
 
-    SPI.beginTransaction(SPISettings(PROBE_SPI_HZ, MSBFIRST, SPI_MODE0));
-    digitalWrite(hw.ethCsPin, LOW);
-    SPI.transfer((uint8_t)(W5500_ADDR_VERSIONR >> 8));
-    SPI.transfer((uint8_t)(W5500_ADDR_VERSIONR & 0xFF));
-    SPI.transfer(W5500_CTRL_READ_1);
-    uint8_t version = SPI.transfer(0x00);
-    digitalWrite(hw.ethCsPin, HIGH);
-    SPI.endTransaction();
+    uint8_t version = 0;
 
-    if (version != W5500_VERSION)
+    for (uint8_t attempt = 0; attempt < PROBE_ATTEMPTS; attempt++)
     {
-        // 0x00 or 0xFF simply means nothing is driving MISO.
-        if (version != 0x00 && version != 0xFF)
+        if (attempt > 0)
         {
-            sysLog.printf("ETH: unexpected chip on SPI, VERSIONR=0x%02X\n", version);
+            delay(PROBE_RETRY_MS);
         }
-        return false;
+
+        SPI.beginTransaction(SPISettings(PROBE_SPI_HZ, MSBFIRST, SPI_MODE0));
+        digitalWrite(hw.ethCsPin, LOW);
+        SPI.transfer((uint8_t)(W5500_ADDR_VERSIONR >> 8));
+        SPI.transfer((uint8_t)(W5500_ADDR_VERSIONR & 0xFF));
+        SPI.transfer(W5500_CTRL_READ_1);
+        version = SPI.transfer(0x00);
+        digitalWrite(hw.ethCsPin, HIGH);
+        SPI.endTransaction();
+
+        if (version == W5500_VERSION)
+        {
+            if (attempt > 0)
+            {
+                sysLog.printf("ETH: W5500 answered on attempt %u\n",
+                              (unsigned)(attempt + 1));
+            }
+            return true;
+        }
     }
-    return true;
+
+    // 0x00 and 0xFF mean nothing is driving MISO; anything else is a chip that
+    // answers but is not a W5500, or wiring too long for the clock.
+    sysLog.printf("ETH: no W5500 after %u tries, VERSIONR=0x%02X (%s)\n",
+                  (unsigned)PROBE_ATTEMPTS, version,
+                  (version == 0x00 || version == 0xFF) ? "no answer"
+                                                       : "unexpected chip");
+    return false;
 }
 
 bool EthInterface::begin(void (*keepAlive)())
@@ -108,7 +138,7 @@ bool EthInterface::begin(void (*keepAlive)())
 
     if (!probeChip())
     {
-        sysLog.println("ETH: no W5500 found, continuing without Ethernet");
+        sysLog.println("ETH: continuing without Ethernet");
         return false;
     }
 

@@ -936,9 +936,37 @@ static void registerHardwareRoutes()
 
     server.on("/api/hwconfig/reset", HTTP_POST, [](AsyncWebServerRequest* request) {
         if (!mutationAllowed(request)) return;
-        hwConfig.resetToDefaults();
+
+        if (!hwConfig.resetToDefaults())
+        {
+            request->send(500, "application/json",
+                          "{\"error\":\"the stored profile could not be cleared\"}");
+            return;
+        }
+
         request->send(200, "application/json",
                       "{\"status\":\"ok\",\"reboot_required\":true}");
+    });
+
+    /*
+     * Factory reset: the whole NVS partition, not just the profile.
+     *
+     * Without this the only way out of a bad configuration was a button
+     * assigned to HW_BTNF_FACTORY - and the defaults deliberately carry none,
+     * so a device whose profile no longer matches its wiring had to be erased
+     * over USB. That is a poor answer for something reachable over the
+     * network.
+     *
+     * Erases everything: hardware profile, WiFi credentials, KNX
+     * configuration, operating hours, passwords.
+     */
+    server.on("/api/factory", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        sysLog.println("Factory reset requested over the API");
+        request->send(200, "application/json",
+                      "{\"status\":\"ok\",\"reboot\":true}");
+        netManager.scheduleFactoryReset();
     });
 
     /*

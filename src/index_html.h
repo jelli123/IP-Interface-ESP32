@@ -310,6 +310,8 @@ small{color:var(--dim)}
       <button class="sec" onclick="resetHours()">Betriebsstunden zur&uuml;cksetzen</button>
       <button class="sec" onclick="askReboot()"
               title="Offene ETS-Verbindungen reißen dabei ab">Ger&auml;t neu starten</button>
+      <button class="sec" onclick="factoryReset()"
+              title="Löscht den gesamten NVS-Speicher">Werkseinstellungen</button>
     </div>
   </section>
 
@@ -1214,6 +1216,22 @@ const EN = {
 'SHA-256 der Datei (optional, aus':'SHA-256 of the file (optional, from',
 
 'Gerät jetzt neu starten?':'Restart the device now?',
+'startet als nächstes':'boots next',
+'Werkseinstellungen':'Factory reset',
+'Löscht den gesamten NVS-Speicher':'Erases the whole NVS partition',
+'Löschen nicht möglich.':'Cannot erase.',
+'Wirklich alles löschen? Das lässt sich nicht rückgängig machen.':
+  'Really erase everything? This cannot be undone.',
+['Werkseinstellungen herstellen?\n\nGelöscht werden Hardware-Profil, '
++ 'WLAN-Zugangsdaten, KNX-Konfiguration, Betriebsstunden und ein gesetztes '
++ 'Passwort. Das Gerät öffnet danach wieder einen offenen Access Point.']:
+  'Restore factory settings?\n\nThis erases the hardware profile, the WiFi '
++ 'credentials, the KNX configuration, the operating hours and any password '
++ 'that is set. The device then opens an unprotected access point again.',
+['Wird gelöscht. Das Gerät startet neu und ist danach nur noch über seinen '
++ 'Access Point erreichbar.']:
+  'Erasing. The device restarts and is then only reachable over its access '
++ 'point.',
 'Der Bootlader hat diese Partition verworfen. Nur ein neuer Upload hilft.':
   'The boot loader has rejected this partition. Only a fresh upload helps.',
 'Offene ETS-Verbindungen reißen dabei ab':
@@ -1705,7 +1723,8 @@ async function refresh(){
                undefined:'ohne OTA-Vermerk'};
   const slot = p => p.label + ' \u00b7 '
       + (p.firmware || t(p.valid ? 'unbekannt' : 'leer'))
-      + ' \u00b7 ' + t(PST[p.state] || p.state);
+      + ' \u00b7 ' + t(PST[p.state] || p.state)
+      + (p.boot && !p.running ? ' \u00b7 ' + t('startet als n\u00e4chstes') : '');
 
   const parts = s.build.partitions || [];
   $('partRun').textContent = parts[0] ? slot(parts[0]) : '-';
@@ -3027,10 +3046,30 @@ function hwSave(){ return hwPost(hwCollect()); }
 
 async function hwReset(){
   if(!confirm(t('Gespeichertes Profil verwerfen und die Werte des Images verwenden?'))) return;
-  await fetch('/api/hwconfig/reset', {method:'POST'});
+  const r = await fetch('/api/hwconfig/reset', {method:'POST'});
+  if(!r.ok){
+    let why = '';
+    try { why = (await r.json()).error || ''; } catch(e){}
+    alert(t('Zurücksetzen fehlgeschlagen.') + (why ? '\n\n' + why : ''));
+    return;
+  }
   hwDlg.close();
   refreshHw();
   if(confirm(t('Zurückgesetzt. Jetzt neu starten?'))) doReboot();
+}
+
+async function factoryReset(){
+  if(!confirm(t('Werkseinstellungen herstellen?\n\n'
+            + 'Gelöscht werden Hardware-Profil, WLAN-Zugangsdaten, '
+            + 'KNX-Konfiguration, Betriebsstunden und ein gesetztes '
+            + 'Passwort. Das Gerät öffnet danach wieder einen offenen '
+            + 'Access Point.'))) return;
+  if(!confirm(t('Wirklich alles löschen? Das lässt sich nicht rückgängig machen.'))) return;
+
+  const r = await fetch('/api/factory', {method:'POST'});
+  alert(t(r.ok ? 'Wird gelöscht. Das Gerät startet neu und ist danach '
+               + 'nur noch über seinen Access Point erreichbar.'
+               : 'Löschen nicht möglich.'));
 }
 
 function hwDownload(){

@@ -472,3 +472,68 @@ def patch_monitor():
 
 if patch_monitor():
     env.Append(CPPDEFINES=["SBIP_MONITOR_HOOK"])  # noqa: F821
+
+
+# --------------------------------------------------------------------------
+# 7. Do not echo our own telegrams back into the tunnels
+# --------------------------------------------------------------------------
+#
+# Symptom: ETS refuses to program the individual address with "more than one
+# device in programming mode", although only this one device has it enabled.
+#
+# A coupler answers a broadcast on BOTH sides - dataBroadcastRequest() hands
+# the response to the IP entity and to the TP entity. On the way out through
+# the TP entity, sendTelegram() also mirrors the frame into every open tunnel,
+# which is how a router lets a tunnel client watch real bus traffic.
+#
+# For a frame the device generated itself that mirror is wrong: ETS already
+# has the response from the IP side, and now receives the very same
+# IndividualAddress_Response a second time over its tunnel. Two answers, one
+# device - so ETS counts two.
+#
+# Comparing against our own individual address keeps the monitor function
+# intact for everything that genuinely came off the TP line.
+
+ECHO_MARKER = "// sbip: never mirror our own telegrams into the tunnels"
+
+ECHO_ANCHOR = (
+    "    if (_networkLayerEntity.getEntityIndex() == 1)   // only send to"
+    " tunnel if we are the secondary (TP) interface\n"
+    "        _cemiServer->dataIndicationToTunnel(tmpFrame);\n"
+)
+
+ECHO_NEW = (
+    "    " + ECHO_MARKER + "\n"
+    "    // ETS already has them from the IP side and would count a second\n"
+    "    // device in programming mode.\n"
+    "    if (_networkLayerEntity.getEntityIndex() == 1 &&\n"
+    "        sourceAddr != _deviceObject.individualAddress())\n"
+    "        _cemiServer->dataIndicationToTunnel(tmpFrame);\n"
+)
+
+
+def patch_echo():
+    if not os.path.isfile(DLL_C):
+        return
+
+    with open(DLL_C, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if ECHO_MARKER in source:
+        return
+
+    if source.count(ECHO_ANCHOR) != 1:
+        sys.stderr.write(
+            "patch_knx.py: anchor no longer unique, the tunnel echo fix is NOT "
+            "applied - ETS may report more than one device in programming "
+            "mode:\n  %s\n" % ECHO_ANCHOR.strip().splitlines()[0]
+        )
+        return
+
+    with open(DLL_C, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source.replace(ECHO_ANCHOR, ECHO_NEW))
+
+    print("patch_knx.py: tunnel echo fix applied to data_link_layer.cpp")
+
+
+patch_echo()

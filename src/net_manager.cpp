@@ -7,6 +7,7 @@
 #include <WiFi.h>
 #include <esp_mac.h>
 #include <esp_wifi.h>
+#include <nvs_flash.h>
 
 #include "eth_interface.h"
 #include "button_service.h"
@@ -386,6 +387,17 @@ void NetManager::loop()
 {
     if (_pendingReboot && (uint32_t)(millis() - _rebootAt) > 2000)
     {
+        // On the main task, never from the web handler that asked for it:
+        // nvs_flash_erase() invalidates every open Preferences handle, so
+        // nothing may still be running on top of the old contents.
+        if (_pendingErase)
+        {
+            sysLog.println("Factory reset - erasing NVS");
+            Serial.flush();
+            nvs_flash_erase();
+            delay(100);
+        }
+
         sysLog.println("Rebooting");
         ESP.restart();
     }
@@ -565,6 +577,12 @@ void NetManager::scheduleReboot()
 {
     _pendingReboot = true;
     _rebootAt      = millis();
+}
+
+void NetManager::scheduleFactoryReset()
+{
+    _pendingErase = true;
+    scheduleReboot();
 }
 
 String NetManager::currentSsid() const
