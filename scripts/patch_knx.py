@@ -434,6 +434,23 @@ MON_NEW_TUNNEL = (
     "    sbipMonitorSuppress = false;\n"
 )
 
+MON_ANCHOR_TUN_TX = (
+    "    _platform.sendBytesUniCast(tunnel->IpAddress, tunnel->PortData,"
+    " req.data(), req.totalLength());\n"
+)
+
+MON_NEW_TUN_TX = (
+    "    // sbip: side 2 = tunnel. Without this the monitor shows everything\n"
+    "    // the coupler emits but not what actually reaches a tunnel client,\n"
+    "    // which is the one thing that matters when ETS sees nothing.\n"
+    "    if (sbipMonitorHook)\n"
+    "        sbipMonitorHook(2, true, frame.data(), frame.totalLenght());\n"
+    "\n"
+    "    if (!_platform.sendBytesUniCast(tunnel->IpAddress, tunnel->PortData,"
+    " req.data(), req.totalLength()))\n"
+    "        println(\"sbip: sending to the tunnel failed\");\n"
+)
+
 MON_EDITS = (
     (MON_ANCHOR_DECL, MON_DECL + MON_ANCHOR_DECL),
     (MON_ANCHOR_RX, MON_NEW_RX),
@@ -471,7 +488,42 @@ def patch_monitor():
     return True
 
 
+def patch_monitor_tunnel_tx():
+    """The one direction data_link_layer.cpp cannot see."""
+    if not os.path.isfile(TARGET):
+        return
+
+    with open(TARGET, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if "sbip: side 2 = tunnel" in source:
+        return
+
+    if source.count(MON_ANCHOR_TUN_TX) != 1:
+        sys.stderr.write(
+            "patch_knx.py: anchor no longer unique, telegrams sent to a tunnel "
+            "stay invisible in the bus monitor:\n  %s\n"
+            % MON_ANCHOR_TUN_TX.strip()
+        )
+        return
+
+    patched = source.replace(MON_ANCHOR_TUN_TX, MON_NEW_TUN_TX)
+
+    # The declaration lives in data_link_layer.cpp; this file needs its own.
+    patched = patched.replace(
+        "void IpDataLinkLayer::sendFrameToTunnel(",
+        MON_DECL + "void IpDataLinkLayer::sendFrameToTunnel(",
+        1,
+    )
+
+    with open(TARGET, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(patched)
+
+    print("patch_knx.py: tunnel transmit hook applied to ip_data_link_layer.cpp")
+
+
 if patch_monitor():
+    patch_monitor_tunnel_tx()
     env.Append(CPPDEFINES=["SBIP_MONITOR_HOOK"])  # noqa: F821
 
 

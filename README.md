@@ -1797,6 +1797,45 @@ IP-Netz erzeugen sie prinzipbedingt; der Hop-Count begrenzt sie nur.
 > auf `isGroupAddressInFilterTable()`, und ein Broadcast mit Zieladresse 0
 > durchläuft diese Prüfung ohnehin nicht.
 
+### Die Adresse muss auf `.0` enden
+
+**Das Gerät ist ein Koppler, und die ETS darf ihm keine Teilnehmeradresse
+geben.** Wird ihm etwa `1.1.5` statt `1.1.0` zugewiesen, findet die ETS es
+zwar noch über Broadcasts – der Programmiermodus wird angezeigt –, aber kein
+physikalisch adressiertes Telegramm kommt mehr an oder heraus.
+
+Der Grund steht in `NetworkLayerCoupler::evaluateCouplerType()`:
+
+```cpp
+if ((_deviceObj.individualAddress() & 0x00FF) == 0x00)
+{
+    // Device is a router: x.y.0 -> LineCoupler, x.0.0 -> BackboneCoupler
+}
+else
+{
+    // Device is not a router, check if TP1 bridge or TP1 repeater
+    /*  ... vollständig auskommentiert ...  */
+}
+```
+
+Der `else`-Zweig ist oben unfertig. `_couplerType` behält dann, was vorher
+darin stand, und `routeDataIndividual()` steigt mit
+*„unknown coupler type“* wortlos aus – jedes physikalisch adressierte
+Telegramm wird verworfen. Broadcasts laufen weiter, weshalb das Gerät
+auffindbar bleibt und der Fehler schwer zu sehen ist.
+
+Die Firmware warnt deshalb im Protokoll, sobald die Adresse nicht auf `.0`
+endet:
+
+```
+KNX: WARNING - address 1.1.5 does not end in .0, so the stack cannot tell
+which coupler this is and drops every physically addressed telegram.
+```
+
+> Nicht zu verwechseln mit den **Tunnel-Adressen**: Die dürfen und sollen
+> Teilnehmeradressen sein (`1.1.5` und so weiter). Nur die **Geräteadresse**
+> des Kopplers selbst muss auf `.0` enden.
+
 ### Fremde Produktdatenbank verwenden
 
 Statt eine eigene Produktdatenbank zu erstellen, kann sich die Firmware als

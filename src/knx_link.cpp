@@ -525,6 +525,40 @@ void KnxLink::superviseRouting()
     {
         applyRouting();
     }
+
+    warnAboutCouplerAddress();
+}
+
+/*
+ * A coupler needs an address ending in .0, and the stack does not say so.
+ *
+ * NetworkLayerCoupler::evaluateCouplerType() only recognises x.y.0 and x.0.0;
+ * its else branch - "not a router" - is entirely commented out upstream, so
+ * _couplerType keeps whatever it held. routeDataIndividual() then bails out
+ * on "unknown coupler type" and every physically addressed telegram is
+ * silently dropped. The device still answers broadcasts, which is exactly
+ * what makes this hard to see: ETS finds the device but cannot talk to it.
+ */
+void KnxLink::warnAboutCouplerAddress()
+{
+    uint16_t address = knx.individualAddress();
+
+    if (address == _lastCheckedAddress)
+    {
+        return;
+    }
+    _lastCheckedAddress = address;
+
+    if ((address & 0x00FF) != 0x0000)
+    {
+        sysLog.printf("KNX: WARNING - address %u.%u.%u does not end in .0, so "
+                      "the stack cannot tell which coupler this is and drops "
+                      "every physically addressed telegram. Give the device an "
+                      "address like %u.%u.0 in the ETS.\n",
+                      (unsigned)(address >> 12), (unsigned)((address >> 8) & 0x0F),
+                      (unsigned)(address & 0xFF),
+                      (unsigned)(address >> 12), (unsigned)((address >> 8) & 0x0F));
+    }
 }
 
 void KnxLink::activityTrampoline(uint8_t info)

@@ -239,6 +239,9 @@ private:
     /** Notice an ETS download arriving, or its configuration being cleared. */
     void superviseRouting();
 
+    /** Say so when the address makes the coupler logic drop everything. */
+    void warnAboutCouplerAddress();
+
     Stats _stats = {};
     char  _selfTest[48] = "pending";
 
@@ -254,6 +257,7 @@ private:
     uint32_t _busPeakAt         = 0;
 
     uint32_t _lastRoutingCheck  = 0;
+    uint16_t _lastCheckedAddress = 0xFFFF;
     bool     _routeAllOverride  = false;
     bool     _wasConfigured     = false;
 };
