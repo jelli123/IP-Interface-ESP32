@@ -647,6 +647,24 @@ bool HwConfig::validate(const HwProfile& p, String& error)
         }
     }
 
+    // The two rings are the only large PSRAM tenants, but not the only ones:
+    // TLS handshakes and the firmware staging buffer also draw from it, so a
+    // slice stays free. Without PSRAM both rings fall back on their own and
+    // the numbers are then just a stored wish - no reason to refuse them.
+    {
+        uint32_t psramKib = (uint32_t)(ESP.getPsramSize() / 1024);
+        if (psramKib > HW_PSRAM_RESERVE_KIB)
+        {
+            uint32_t budget = psramKib - HW_PSRAM_RESERVE_KIB;
+            if ((uint32_t)p.logKib + p.monitorKib > budget)
+            {
+                error = "log + monitor exceed the PSRAM budget of " +
+                        String(budget) + " KiB";
+                return false;
+            }
+        }
+    }
+
     error = "";
     return true;
 }
@@ -694,6 +712,8 @@ void HwConfig::load()
                 prefs.isKey("lpcurl") ? prefs.getString("lpcurl", d.lpcUrl).c_str()
                                       : d.lpcUrl,
                 sizeof(_stored.lpcUrl));
+        _stored.logKib     = prefs.getUShort("logkib", d.logKib);
+        _stored.monitorKib = prefs.getUShort("monkib", d.monitorKib);
         loadLists(d);
     }
     else
@@ -809,6 +829,8 @@ void HwConfig::store(const HwProfile& p)
     store.putUChar("emhz", p.ethSpiMhz);
     store.putString("updurl", p.updateUrl);
     store.putString("lpcurl", p.lpcUrl);
+    store.putUShort("logkib", p.logKib);
+    store.putUShort("monkib", p.monitorKib);
 
     /*
      * Blobs only when they differ.
@@ -1138,6 +1160,9 @@ bool HwConfig::applyJson(const String& json, String& error)
         strlcpy(p.lpcUrl, jsonGetString(json, "lpc_url").c_str(), sizeof(p.lpcUrl));
     }
 
+    p.logKib     = (uint16_t)jsonGetInt(json, "log_kib", p.logKib);
+    p.monitorKib = (uint16_t)jsonGetInt(json, "monitor_kib", p.monitorKib);
+
     bool ok =
         readList(json, "buttons", HW_MAX_BUTTONS, p.buttonCount, p.buttons,
                  [](HwButton& b, const String& e) {
@@ -1277,7 +1302,9 @@ String HwConfig::profileToJson(const HwProfile& p)
     j += "\"eth_rst\":" + String(p.ethRstPin) + ",";
     j += "\"eth_spi_mhz\":" + String(p.ethSpiMhz) + ",";
     j += "\"update_url\":\"" + jsonEscape(String(p.updateUrl)) + "\",";
-    j += "\"lpc_url\":\"" + jsonEscape(String(p.lpcUrl)) + "\"";
+    j += "\"lpc_url\":\"" + jsonEscape(String(p.lpcUrl)) + "\",";
+    j += "\"log_kib\":" + String(p.logKib) + ",";
+    j += "\"monitor_kib\":" + String(p.monitorKib);
     j += "}";
     return j;
 }
@@ -1293,6 +1320,8 @@ String HwConfig::toJson() const
     j += "\"fallback\":\"" + String(fallbackReason()) + "\",";
     j += "\"reboot_pending\":" + String(_rebootPending ? "true" : "false") + ",";
     j += "\"chip\":\"" + String(ESP.getChipModel()) + "\",";
+    j += "\"psram_kib\":" + String((uint32_t)(ESP.getPsramSize() / 1024)) + ",";
+    j += "\"psram_reserve_kib\":" + String(HW_PSRAM_RESERVE_KIB) + ",";
     j += "\"gpio_count\":" + String(SOC_GPIO_PIN_COUNT) + ",";
     j += "\"uart_count\":" + String(SOC_UART_NUM) + ",";
 

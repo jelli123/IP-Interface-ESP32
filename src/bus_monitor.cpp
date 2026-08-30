@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include <esp_heap_caps.h>
 
+#include "hw_config.h"
 #include "log_buffer.h"
 
 BusMonitor busMonitor;
@@ -17,13 +18,8 @@ bool sbipMonitorSuppress = false;
 
 namespace
 {
-/*
- * 8000 frames, 384 KiB. A busy TP1 line carries some 30 telegrams a second,
- * so this holds roughly four minutes of continuous traffic - long enough to
- * catch what an ETS download or a misbehaving actuator does, and a rounding
- * error against the 2 MB the smallest PSRAM module carries.
- */
-const uint32_t RING_FRAMES = 8000;
+/** Below this the ring is not worth the PSRAM block. */
+const uint32_t MIN_FRAMES = 200;
 
 /** Offset of CTRL1 within a cEMI frame: message code, then the add-info. */
 inline uint16_t ctrlOffset(const uint8_t* cemi)
@@ -35,13 +31,24 @@ inline uint16_t ctrlOffset(const uint8_t* cemi)
 void BusMonitor::begin()
 {
     /*
-     * PSRAM only, deliberately. The ring is worth 384 KiB and the internal
-     * heap has some 200 KiB free at this point - taking a slice of that would
-     * trade a diagnostic aid against the tunnel connections and the web
-     * server, which is the wrong way round. Without PSRAM the ETS bus monitor
-     * is still there.
+     * PSRAM only, deliberately. The internal heap has some 200 KiB free at
+     * this point - taking a slice of that would trade a diagnostic aid
+     * against the tunnel connections and the web server, which is the wrong
+     * way round. Without PSRAM the ETS bus monitor is still there.
+     *
+     * The size comes from the hardware profile, which is already loaded when
+     * this runs. 48 bytes per frame and some 30 telegrams a second on a busy
+     * TP1 line means the default 384 KiB hold about four minutes.
      */
-    _ring = (Entry*)heap_caps_malloc(RING_FRAMES * sizeof(Entry), MALLOC_CAP_SPIRAM);
+    uint32_t frames = (uint32_t)hwConfig.active().monitorKib * 1024 / sizeof(Entry);
+
+    if (frames < MIN_FRAMES)
+    {
+        sysLog.println("Monitor: switched off in the hardware profile");
+        return;
+    }
+
+    _ring = (Entry*)heap_caps_malloc(frames * sizeof(Entry), MALLOC_CAP_SPIRAM);
 
     if (_ring == nullptr)
     {
@@ -49,7 +56,7 @@ void BusMonitor::begin()
         return;
     }
 
-    _capacity = RING_FRAMES;
+    _capacity = frames;
 
 #ifdef SBIP_MONITOR_HOOK
     sbipMonitorHook = &BusMonitor::hook;

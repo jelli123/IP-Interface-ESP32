@@ -79,6 +79,13 @@ void setup()
      */
     hwConfig.begin();
 
+    // The ring was allocated before the profile could be read, so the size
+    // from it only takes effect now. Does nothing without PSRAM.
+    if (hwConfig.active().logKib > 0)
+    {
+        sysLog.resize((size_t)hwConfig.active().logKib * 1024);
+    }
+
     // Straight after the profile and before anything else touches a pin: the
     // two ISP lines have to reach their idle state early, or a board with
     // inverters holds the LPC in reset for the whole of our own startup.

@@ -140,6 +140,7 @@ konfigurierbar. Das Dashboard bietet ein Formular, JSON-Upload und -Download.
 | `button_assign[]`, `led_assign[]` | wozu sie dienen |
 | `i2c_enabled`, `i2c_sda`, `i2c_scl` | RV-3028-C7 |
 | `eth_enabled`, `eth_sck`, `eth_miso`, `eth_mosi`, `eth_cs`, `eth_irq`, `eth_rst`, `eth_spi_mhz` | W5500 |
+| `log_kib`, `monitor_kib` | PSRAM für Protokoll und Busmonitor, siehe *PSRAM aufteilen* |
 
 `-1` bedeutet bei den Peripherie-Pins „nicht bestückt". Ein hochgeladenes JSON
 darf Teilmengen enthalten – fehlende Felder behalten ihren Wert. Eine
@@ -510,7 +511,42 @@ internen RAMs. Allokationen bis 4 KB bleiben ohnehin intern
 zusätzlich ausdrücklich intern angefordert: Der Treiber liest ihn aus einem
 Interrupt, und PSRAM ist nicht erreichbar, solange der Flash-Cache aus ist.
 
-Genutzt wird es für den **Protokollpuffer**, siehe unten.
+Genutzt wird es für den **Protokollpuffer** und den **Busmonitor**, siehe
+unten.
+
+### PSRAM aufteilen
+
+Beide Ringe sind die einzigen großen PSRAM-Mieter, und wie viel jeder
+bekommt, ist Geschmackssache: Wer einen sporadischen Absturz sucht, will
+Protokoll; wer einem Aktor beim Schwatzen zusehen will, Busmonitor. Deshalb
+steht die Aufteilung im **Hardware-Profil** (*Hardware → Profil bearbeiten →
+Speicheraufteilung*), mit Schiebereglern und einem gestapelten Balken.
+
+| Feld | JSON | Vorgabe |
+| --- | --- | --- |
+| Protokoll | `log_kib` | 512 KiB |
+| Busmonitor | `monitor_kib` | 384 KiB |
+
+Die Summe darf `PSRAM − 256 KiB` nicht überschreiten – die Reserve
+(`HW_PSRAM_RESERVE_KIB` in [src/hw_config.h](src/hw_config.h)) geht an
+TLS-Handshakes und den Zwischenspeicher des Firmware-Updates. Ein Heap, der
+erst beim Start des Updates voll ist, ist ein schlechter Ort für diese
+Erkenntnis. Das Formular weicht deshalb sofort aus, statt beim Speichern zu
+meckern.
+
+`0` schaltet ab: ohne Protokollpuffer bleibt der 4-KiB-Notring im internen
+RAM, ohne Monitorring entfällt der Busmonitor. Beides wirkt erst nach einem
+Neustart.
+
+Ohne PSRAM bleiben die Werte folgenlos – sie werden trotzdem angenommen und
+gespeichert, damit ein Profil zwischen einem WROOM und einem WROVER hin- und
+hergeschoben werden kann.
+
+> `LogBuffer::begin()` muss laufen, bevor irgendetwas loggen kann – also
+> bevor das Hardware-Profil gelesen ist. Die gewählte Größe zieht deshalb
+> erst `sysLog.resize()` direkt nach `hwConfig.begin()` nach. Dabei wandern
+> nur die neuesten 16 KiB mit: Mehr zu kopieren brächte nichts und hält die
+> Sperre unnötig lange.
 
 ### Protokollpuffer
 
@@ -520,7 +556,7 @@ im Dashboard unter *System → Protokoll* abrufbar.
 
 | | |
 | --- | --- |
-| mit PSRAM | 64 KiB |
+| mit PSRAM | 512 KiB, im Hardware-Profil einstellbar |
 | ohne PSRAM | 4 KiB im internen RAM |
 
 Zwei Quellen speisen ihn: alles, was über `sysLog` geschrieben wird – das ist
@@ -689,17 +725,19 @@ Rahmen sind es, und die tragen ihre wahre Länge mit.
 
 ### PSRAM oder gar nicht
 
-Der Ring fasst 8000 Telegramme und belegt **384 KiB** – ausschließlich im
-PSRAM. Der interne Heap hat an dieser Stelle etwa 200 KiB frei, und den gegen
-ein Diagnosewerkzeug einzutauschen wäre die falsche Reihenfolge: Er hält die
-Tunnelverbindungen und den Webserver am Leben.
+Der Ring liegt **ausschließlich im PSRAM**. Der interne Heap hat an dieser
+Stelle etwa 200 KiB frei, und den gegen ein Diagnosewerkzeug einzutauschen
+wäre die falsche Reihenfolge: Er hält die Tunnelverbindungen und den Webserver
+am Leben.
 
-Ohne PSRAM bleibt der Monitor also aus. Das ist kein Verlust an Diagnose,
-sondern ein Verweis: Der **Gruppenmonitor der ETS** kann dasselbe, und dieses
-Gerät ist als Schnittstelle dafür ohnehin eingetragen.
+Wie groß er ist, steht im Hardware-Profil (siehe *PSRAM aufteilen*). Die
+Vorgabe sind **384 KiB**, also 8000 Telegramme – bei 30 Telegrammen pro
+Sekunde, einer gut ausgelasteten TP1-Linie, rund vier Minuten Dauerverkehr.
+Unter 200 Telegrammen lohnt der Block nicht, dort bleibt der Monitor aus.
 
-Bei 30 Telegrammen pro Sekunde – eine gut ausgelastete TP1-Linie – reicht der
-Ring für rund vier Minuten Dauerverkehr.
+Ohne PSRAM bleibt er ebenfalls aus. Das ist kein Verlust an Diagnose, sondern
+ein Verweis: Der **Gruppenmonitor der ETS** kann dasselbe, und dieses Gerät
+ist als Schnittstelle dafür ohnehin eingetragen.
 
 ### Sofort oder auf Trigger
 
@@ -1693,20 +1731,39 @@ Der KNX-Stack funktioniert deshalb **unverändert** über Ethernet.
 
 ### Verdrahtung
 
-| W5500 | ESP32 (`esp32dev`) |
-| --- | --- |
-| SCK | 18 |
-| MISO | 19 |
-| MOSI | 23 |
-| SCS | 5 |
-| INT | nicht nötig (`SBIP_ETH_IRQ_PIN`, Default −1 = Polling) |
-| RST | nicht nötig (`SBIP_ETH_RST_PIN`, Default −1) |
-| 3V3, GND | 3,3 V, GND |
+Vier Leitungen plus Versorgung. `SCS` ist der Chip-Select des W5500, `INT` und
+`RST` bleiben in allen Vorgaben unbeschaltet (−1): der Treiber pollt, und der
+Reset des Moduls hängt am eigenen RC-Glied.
 
-Vorkonfiguriert für `esp32dev`, `esp32s3` und `esp32s2`. Beim XIAO ESP32-C3
-sind die GPIOs bereits durch KNX-UART, I2C, LED und Taster belegt – dort ist
-Ethernet in der Vorgabe deaktiviert, lässt sich aber über das Hardware-Profil
-nachträglich einschalten, wenn man dafür etwas anderes aufgibt.
+Je nach Entwicklungsboard sind unterschiedliche GPIOs vorbelegt, weil die
+freien Pins woanders liegen:
+
+| W5500 | `esp32dev` | `esp32s3` | `esp32s2` | `esp32c3` | `esp32c6` |
+| --- | --- | --- | --- | --- | --- |
+| SCK | 18 | 12 | 12 | – | – |
+| MISO | 19 | 13 | 13 | – | – |
+| MOSI | 23 | 11 | 11 | – | – |
+| SCS | 5 | 10 | 10 | – | – |
+| INT | −1 | −1 | −1 | – | – |
+| RST | −1 | −1 | −1 | – | – |
+| Vorgabe | aktiv | aktiv | aktiv | aus | aus |
+
+`3V3` und `GND` gehen in allen Fällen an 3,3 V und Masse. Das Modul zieht beim
+Link-Aufbau kurzzeitig deutlich über 100 mA – ein USB-Port am Entwicklungsboard
+reicht dafür meist, ein schwacher LDO nicht.
+
+Die Vorgaben stehen als `SBIP_ETH_*_PIN` in
+[platformio.ini](platformio.ini) und lassen sich zur Laufzeit über das
+Hardware-Profil überschreiben.
+
+**XIAO ESP32-C3** (`esp32c3`): Das Board führt nur elf GPIOs heraus, die
+bereits durch KNX-UART, I2C, LED und Taster belegt sind. Ethernet ist dort in
+der Vorgabe deaktiviert und lässt sich nur einschalten, wenn man dafür etwas
+anderes aufgibt.
+
+**ESP32-C6-DevKitC-1** (`esp32c6`): Freie Pins gibt es genug, aber keine
+Vorgabe – die Belegung hängt davon ab, welche Stiftleiste man benutzt. SCK,
+MISO, MOSI und SCS im Hardware-Profil eintragen, dann läuft es.
 
 Der Treiber ist immer einkompiliert, damit genau das möglich bleibt. Mit
 `-DSBIP_ETH_COMPILED=0` entfällt er vollständig (spart rund 40 KB), dann ist

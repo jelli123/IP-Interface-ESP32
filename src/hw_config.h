@@ -27,6 +27,13 @@ static const uint8_t HW_NAME_MAX = 16;
 /** Longest update manifest URL the profile holds. */
 static const uint8_t HW_URL_MAX = 160;
 
+/**
+ * PSRAM the log and the bus monitor must leave alone. TLS handshakes and the
+ * firmware staging buffer live there too, and a heap that is full when the
+ * update starts is a bad place to find out.
+ */
+static const uint16_t HW_PSRAM_RESERVE_KIB = 256;
+
 enum : uint8_t
 {
     HW_MAX_BUTTONS    = 8,
@@ -224,6 +231,14 @@ struct HwProfile
      * one file can serve both where that is convenient.
      */
     char    lpcUrl[HW_URL_MAX + 1] = {0};
+
+    /*
+     * How the PSRAM is shared out, in KiB. Both fall back to a small internal
+     * buffer or to nothing at all when no PSRAM is fitted, so these are a
+     * wish, not a promise. 0 switches the respective ring off.
+     */
+    uint16_t logKib     = 512;
+    uint16_t monitorKib = 384;
 
     /** @return true if any LED reacts to @p condition */
     bool usesCondition(uint8_t condition) const;

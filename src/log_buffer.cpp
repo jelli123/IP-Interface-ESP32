@@ -116,10 +116,62 @@ void LogBuffer::begin()
 }
 
 /*
+ * Only the newest lines move across.
+ *
+ * This runs a few dozen milliseconds into the start-up, when the log holds a
+ * couple of kilobytes - copying the whole ring instead would buy nothing and
+ * would keep the lock held for milliseconds. Lines written by another task
+ * between the copy and the swap are lost; at this point in the boot there
+ * are none worth the extra locking.
+ */
+bool LogBuffer::resize(size_t bytes)
+{
+    static const size_t CARRY_MAX = 16 * 1024;
+
+    if (_buf == nullptr || bytes < INTERNAL_SIZE || bytes == _size)
+    {
+        return false;
+    }
+
+    char* fresh = (char*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+
+    if (fresh == nullptr)
+    {
+        printf("Log: %u KiB do not fit in PSRAM, keeping %u KiB\n",
+               (unsigned)(bytes / 1024), (unsigned)(_size / 1024));
+        return false;
+    }
+
+    size_t carry = _filled;
+    if (carry > bytes)     carry = bytes;
+    if (carry > CARRY_MAX) carry = CARRY_MAX;
+
+    size_t start = (_head + _size - carry) % _size;
+
+    for (size_t i = 0; i < carry; i++)
+    {
+        fresh[i] = _buf[(start + i) % _size];
+    }
+
+    portENTER_CRITICAL(&_lock);
+    char* previous = _buf;
+    _buf    = fresh;
+    _size   = bytes;
+    _head   = (carry < bytes) ? carry : 0;
+    _filled = carry;
+    _psram  = true;
+    portEXIT_CRITICAL(&_lock);
+
+    free(previous);
+
+    printf("Log: ring resized to %u KiB in PSRAM\n", (unsigned)(bytes / 1024));
+    return true;
+}
+
+/*
  * Straight into the main ring: no timestamp, and not mirrored back into the
  * RTC ring the text came from.
- */
-void LogBuffer::appendRaw(const char* data, size_t len)
+ */void LogBuffer::appendRaw(const char* data, size_t len)
 {
     if (_buf == nullptr || len == 0) return;
 

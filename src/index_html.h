@@ -1,4 +1,4 @@
-/*
+﻿/*
  *  index_html.h - Dashboard, served from flash.
  *
  *  Kept as a single self-contained page: no external assets, no framework,
@@ -96,8 +96,29 @@ dialog .grp>label:not(.chk):first-child{margin-top:0}
 dialog label.chk{display:flex;align-items:center;gap:9px;margin:0;
 font-size:13px;color:var(--fg)}
 input[type=checkbox]{width:auto;margin:0;flex:0 0 auto;accent-color:var(--acc)}
-.trio{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-.trio input{margin:6px 0}
+/* Feldraster: jedes Eingabefeld traegt seine eigene Beschriftung, sonst muss
+ * man von "SCK / MISO / MOSI" auf drei Kaesten abzaehlen. Bricht um, wenn der
+ * Platz nicht reicht. */
+.fields{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:6px 0}
+.fields>div{flex:1 1 96px}
+.fields label{margin:0 0 3px;display:block}
+.fields input,.fields select{margin:0}
+/* Schieberegler tragen den Rahmen der Textfelder nicht, sonst sitzt der
+ * Griff in einem Kasten. */
+input[type=range]{width:100%;margin:8px 0 0;padding:0;border:0;height:18px;
+background:none;accent-color:var(--acc)}
+/* Gestapelter Balken fuer die PSRAM-Aufteilung: sehen ist schneller als
+ * zwei Zahlen gegen eine dritte zu rechnen. */
+.membar{display:flex;height:12px;border-radius:6px;overflow:hidden;
+background:var(--bg);border:1px solid var(--line);margin:10px 0 4px}
+.membar i{display:block;min-width:0}
+#memLog{background:var(--acc)}
+#memMon{background:var(--warn)}
+#memRes{background:var(--dim);opacity:.45}
+/* Am PC zieht sich der Profildialog sonst ueber den ganzen Schirm, und die
+ * Eingabefelder werden absurd breit. */
+#hwDlg{max-width:min(94vw,720px)}
+#timeDlg{max-width:min(94vw,620px)}
 /* Row editors. The selected row is what the minus button acts on, so it has
  * to be obvious which one that is - a border alone is too quiet here. */
 #logDlg{max-width:min(96vw,900px);width:900px}
@@ -132,10 +153,7 @@ table.mon tbody tr:hover td{background:rgba(255,255,255,.06)}
 table.mon tr.mark td{background:rgba(94,168,255,.20)}
 table.mon td.val{color:var(--fg)}
 table.mon td.dim{color:var(--dim)}
-.monf{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:6px 0}
-.monf label{margin:0 0 3px;display:block}
-.monf>div{flex:1 1 130px}
-.monf input,.monf select{margin:0}
+.fields.wide>div{flex:1 1 130px}
 table.rows{width:100%;border-collapse:collapse;margin:6px 0 4px}table.rows td{padding:2px 3px}
 table.rows tr.hd th{padding:2px 4px 5px;text-align:left;font-size:11px;
 font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);
@@ -158,7 +176,7 @@ button.ico svg .sol{fill:currentColor;stroke:none}
  * Absatz klebte am Vorgaenger - sie braucht denselben Luftraum wie ein
  * eigener Abschnitt. */
 .actions + label.chk, p + label.chk, .bar + label.chk,
-.trio + label.chk{margin-top:14px}
+.fields + label.chk{margin-top:14px}
 label.chk{display:flex;align-items:center;gap:9px;font-size:13px}
 small{color:var(--dim)}
 </style>
@@ -302,6 +320,7 @@ small{color:var(--dim)}
     <div class="row"><span>LEDs</span><span id="hwLeds">-</span></div>
     <div class="row"><span>I2C (RTC)</span><span id="hwI2c">-</span></div>
     <div class="row"><span>SPI (W5500)</span><span id="hwEth">-</span></div>
+    <div class="row"><span>PSRAM-Aufteilung</span><span id="hwMem">-</span></div>
     <div class="row"><span>Online-Update</span><span id="hwUpd">-</span></div>
     <div class="row"><span>SB-Interface-Download</span><span id="hwLpcDl">-</span></div>
     <div class="actions">
@@ -428,7 +447,7 @@ small{color:var(--dim)}
 
   <div class="grp">
     <label class="hd">Aufzeichnen</label>
-    <div class="monf">
+    <div class="fields wide">
       <div><label>Seite</label>
         <select id="monSides">
           <option value="tp,ip">TP und IP</option>
@@ -466,7 +485,7 @@ small{color:var(--dim)}
 
   <div class="grp">
     <label class="hd">Anzeige filtern</label>
-    <div class="monf">
+    <div class="fields wide">
       <div><label>Seite</label>
         <select id="fSide" onchange="monRender()">
           <option value="">alle</option>
@@ -683,28 +702,26 @@ small{color:var(--dim)}
 
   <div class="grp">
     <label class="hd">KNX-UART</label>
-    <label>UART-Nummer / RX / TX</label>
-    <div class="trio">
-      <input id="hwUart" type="number" min="0">
-      <input id="hwRx"   type="number" min="-1">
-      <input id="hwTx"   type="number" min="-1">
+    <div class="fields">
+      <div><label>UART-Nummer</label><input id="hwUart" type="number" min="0"></div>
+      <div><label>RX</label><input id="hwRx" type="number" min="-1"></div>
+      <div><label>TX</label><input id="hwTx" type="number" min="-1"></div>
     </div>
   </div>
 
   <div class="grp">
     <label class="hd">SB-Interface programmieren</label>
-    <label>Reset / ISP (&minus;1 = nicht verdrahtet)</label>
-    <div class="trio">
-      <input id="hwLpcRst" type="number" min="-1">
-      <input id="hwLpcIsp" type="number" min="-1">
-      <span></span>
+    <div class="fields">
+      <div><label>Reset</label><input id="hwLpcRst" type="number" min="-1"></div>
+      <div><label>ISP</label><input id="hwLpcIsp" type="number" min="-1"></div>
     </div>
     <label class="chk"><input type="checkbox" id="hwLpcInv">
       Steuerleitungen laufen über Inverter</label>
-    <p><small>Zwei Leitungen zum LPC des SB-Interface: /RESET und PIO0_1. Ohne
-    Inverter werden sie nur nach Masse gezogen und sonst losgelassen &ndash; die
-    Pull-ups des LPC halten ihn dann im Anwendungsprogramm. Die UART teilen sie
-    sich mit dem KNX-Stack.</small></p>
+    <p><small>&minus;1 hei&szlig;t nicht verdrahtet. Zwei Leitungen zum LPC des
+    SB-Interface: /RESET und PIO0_1. Ohne Inverter werden sie nur nach Masse
+    gezogen und sonst losgelassen &ndash; die Pull-ups des LPC halten ihn dann
+    im Anwendungsprogramm. Die UART teilen sie sich mit dem
+    KNX-Stack.</small></p>
   </div>
 
   <div class="grp">
@@ -764,29 +781,51 @@ small{color:var(--dim)}
   <div class="grp">
     <label class="hd">Echtzeituhr</label>
     <label class="chk"><input type="checkbox" id="hwI2cEn"> RTC über I2C aktivieren</label>
-    <label>SDA / SCL</label>
-    <div class="trio">
-      <input id="hwSda" type="number" min="-1">
-      <input id="hwScl" type="number" min="-1">
-      <span></span>
+    <div class="fields">
+      <div><label>SDA</label><input id="hwSda" type="number" min="-1"></div>
+      <div><label>SCL</label><input id="hwScl" type="number" min="-1"></div>
     </div>
   </div>
 
   <div class="grp">
     <label class="hd">Ethernet</label>
     <label class="chk"><input type="checkbox" id="hwEthEn"> Ethernet W5500 aktivieren</label>
-    <label>SCK / MISO / MOSI</label>
-    <div class="trio">
-      <input id="hwSck"  type="number" min="-1">
-      <input id="hwMiso" type="number" min="-1">
-      <input id="hwMosi" type="number" min="-1">
+    <div class="fields">
+      <div><label>SCK</label><input id="hwSck" type="number" min="-1"></div>
+      <div><label>MISO</label><input id="hwMiso" type="number" min="-1"></div>
+      <div><label>MOSI</label><input id="hwMosi" type="number" min="-1"></div>
     </div>
-    <label>CS / IRQ / RST (&minus;1 = ungenutzt)</label>
-    <div class="trio">
-      <input id="hwCs"  type="number" min="-1">
-      <input id="hwIrq" type="number" min="-1">
-      <input id="hwRst" type="number" min="-1">
+    <div class="fields">
+      <div><label>CS</label><input id="hwCs" type="number" min="-1"></div>
+      <div><label>IRQ</label><input id="hwIrq" type="number" min="-1"></div>
+      <div><label>RST</label><input id="hwRst" type="number" min="-1"></div>
     </div>
+    <p><small>&minus;1 hei&szlig;t ungenutzt. IRQ und RST braucht der W5500
+    nicht; SCK, MISO, MOSI und CS schon.</small></p>
+  </div>
+
+  <div class="grp" id="hwMemGrp">
+    <label class="hd">Speicheraufteilung</label>
+    <div class="fields">
+      <div><label>Protokoll (KiB)</label>
+        <input id="hwLogKib" type="number" min="0" step="16"
+               oninput="memSync('hwLogKib')">
+        <input id="hwLogRng" type="range" min="0" step="16"
+               oninput="memSync('hwLogRng')"></div>
+      <div><label>Busmonitor (KiB)</label>
+        <input id="hwMonKib" type="number" min="0" step="16"
+               oninput="memSync('hwMonKib')">
+        <input id="hwMonRng" type="range" min="0" step="16"
+               oninput="memSync('hwMonRng')"></div>
+    </div>
+    <div class="membar"><i id="memLog"></i><i id="memMon"></i><i id="memRes"></i></div>
+    <p><small id="hwMemInfo" data-dyn></small></p>
+    <p><small>Beides liegt im PSRAM, ein Rest bleibt f&uuml;r TLS und den
+    Zwischenspeicher des Updates frei. 0 schaltet ab: ohne Protokollpuffer
+    bleibt ein kleiner Notring im internen RAM, ohne Monitorring entf&auml;llt
+    der Busmonitor. Der Busmonitor braucht 48 Byte je Telegramm, eine belebte
+    TP1-Linie tr&auml;gt gut 30 pro Sekunde. Wirkt nach einem
+    Neustart.</small></p>
   </div>
 
   <div class="grp">
@@ -1170,8 +1209,29 @@ const EN = {
   'Fill the form with the firmware defaults, save nothing',
 'Gespeichertes Profil im Gerät löschen und neu starten':
   'Delete the profile stored in the device and restart',
-'CS / IRQ / RST (\u22121 = ungenutzt)':'CS / IRQ / RST (\u22121 = unused)',
 'SHA-256 der Datei (optional, aus':'SHA-256 of the file (optional, from',
+
+'UART-Nummer':'UART number',
+'Protokoll (KiB)':'Log (KiB)', 'Busmonitor (KiB)':'Bus monitor (KiB)',
+'Speicheraufteilung':'Memory split', 'PSRAM-Aufteilung':'PSRAM split',
+'KiB reserviert':'KiB reserved', 'KiB frei':'KiB free',
+'Monitor fasst':'the monitor holds', 'Telegramme':'telegrams',
+'Ohne PSRAM bleiben die Werte ohne Wirkung.':
+  'Without PSRAM these values have no effect.',
+['−1 heißt ungenutzt. IRQ und RST braucht der W5500 nicht; SCK, MISO, MOSI '
++ 'und CS schon.']:
+  '−1 means unused. The W5500 needs no IRQ and no RST; it does need SCK, '
++ 'MISO, MOSI and CS.',
+['Beides liegt im PSRAM, ein Rest bleibt für TLS und den Zwischenspeicher '
++ 'des Updates frei. 0 schaltet ab: ohne Protokollpuffer bleibt ein kleiner '
++ 'Notring im internen RAM, ohne Monitorring entfällt der Busmonitor. Der '
++ 'Busmonitor braucht 48 Byte je Telegramm, eine belebte TP1-Linie trägt gut '
++ '30 pro Sekunde. Wirkt nach einem Neustart.']:
+  'Both live in PSRAM, with a remainder left free for TLS and the update '
++ 'staging buffer. 0 switches them off: without a log buffer a small fallback '
++ 'ring in internal RAM remains, without a monitor ring the bus monitor is '
++ 'gone. The monitor needs 48 bytes per telegram, and a busy TP1 line carries '
++ 'a good 30 per second. Takes effect after a restart.',
 
 'Änderungen am Profil werden erst nach einem Neustart aktiv.':
   'Profile changes take effect after a restart.',
@@ -1337,14 +1397,14 @@ const EN = {
 + 'für einige Sekunden.']:
   'Erase and reprogram the LPC now? The KNX connection rests for a few '
 + 'seconds while it runs.',
-['Zwei Leitungen zum LPC des SB-Interface: /RESET und PIO0_1. Ohne Inverter '
-+ 'werden sie nur nach Masse gezogen und sonst losgelassen – die Pull-ups des '
-+ 'LPC halten ihn dann im Anwendungsprogramm. Die UART teilen sie sich mit '
-+ 'dem KNX-Stack.']:
-  'Two lines to the SB-Interface\'s LPC: /RESET and PIO0_1. Without inverters '
-+ 'they are only pulled to ground and otherwise let go - the pull-ups on the '
-+ 'LPC then keep it in the application. They share the UART with the KNX '
-+ 'stack.',
+['−1 heißt nicht verdrahtet. Zwei Leitungen zum LPC des SB-Interface: '
++ '/RESET und PIO0_1. Ohne Inverter werden sie nur nach Masse gezogen und '
++ 'sonst losgelassen – die Pull-ups des LPC halten ihn dann im '
++ 'Anwendungsprogramm. Die UART teilen sie sich mit dem KNX-Stack.']:
+  '−1 means not wired. Two lines to the SB-Interface\'s LPC: /RESET and '
++ 'PIO0_1. Without inverters they are only pulled to ground and otherwise let '
++ 'go - the pull-ups on the LPC then keep it in the application. They share '
++ 'the UART with the KNX stack.',
 ['Der ESP32 legt den LPC über zwei Steuerleitungen in seinen ROM-Bootlader '
 + 'und spricht ihn über dieselbe UART an, die sonst der KNX-Stack benutzt. '
 + 'Während eines Auftrags ruht der Busverkehr für einige Sekunden.']:
@@ -2542,12 +2602,14 @@ async function sendTime(){
 // --- Hardware-Profil ---
 const HWF = ['knx_uart','knx_rx','knx_tx','lpc_reset','lpc_isp',
              'i2c_sda','i2c_scl','eth_sck','eth_miso','eth_mosi',
-             'eth_cs','eth_irq','eth_rst','eth_spi_mhz'];
+             'eth_cs','eth_irq','eth_rst','eth_spi_mhz',
+             'log_kib','monitor_kib'];
 const HWID = {knx_uart:'hwUart', knx_rx:'hwRx', knx_tx:'hwTx',
               lpc_reset:'hwLpcRst', lpc_isp:'hwLpcIsp',
               i2c_sda:'hwSda', i2c_scl:'hwScl',
               eth_sck:'hwSck', eth_miso:'hwMiso', eth_mosi:'hwMosi',
-              eth_cs:'hwCs', eth_irq:'hwIrq', eth_rst:'hwRst'};
+              eth_cs:'hwCs', eth_irq:'hwIrq', eth_rst:'hwRst',
+              log_kib:'hwLogKib', monitor_kib:'hwMonKib'};
 let hwState = null;
 
 // Row editors. Order matches the enums in hw_config.h - the index is what
@@ -2600,6 +2662,8 @@ async function refreshHw(){
   $('hwEth').textContent = a.eth_enabled
       ? ('SCK ' + a.eth_sck + ', MISO ' + a.eth_miso + ', MOSI ' + a.eth_mosi + ', CS ' + a.eth_cs)
       : t('aus');
+  $('hwMem').textContent = t('Protokoll') + ' ' + a.log_kib + ' KiB, '
+                         + t('Busmonitor') + ' ' + a.monitor_kib + ' KiB';
   $('hwUpd').textContent = a.update_url || t('aus');
   $('hwLpcDl').textContent = a.lpc_url || t('aus');
 }
@@ -2611,6 +2675,7 @@ function hwFill(p){
   $('hwEthEn').checked  = p.eth_enabled;
   $('hwUpdUrl').value   = p.update_url || '';
   $('hwLpcUrl').value   = p.lpc_url || '';
+  memSync();
   // Deep copy: editing a row must not change the document we compare against
   // when the user hits "Standard" again.
   for(const kind in RTBL){
@@ -2619,6 +2684,49 @@ function hwFill(p){
     rowRender(kind);
   }
   syncGroups();
+}
+
+/* --- PSRAM-Aufteilung ---------------------------------------------------- *
+ * Zahl und Regler zeigen denselben Wert; wer zuletzt bewegt wurde, gewinnt.
+ * Der jeweils andere weicht aus, wenn das Budget sonst ueberschritten wuerde
+ * - ein Formular, das erst beim Speichern meckert, laesst einen raten, welche
+ * der beiden Zahlen zu gross war.
+ * ------------------------------------------------------------------------ */
+
+function memSync(src){
+  const total = hwState ? (hwState.psram_kib || 0) : 0;
+  const keep  = hwState ? (hwState.psram_reserve_kib || 0) : 0;
+  const budget = total > keep ? total - keep : 0;
+
+  // Die Regler kennen ihr Maximum erst, wenn das Geraet geantwortet hat.
+  $('hwLogRng').max = $('hwMonRng').max = budget;
+
+  if(src === 'hwLogRng')      $('hwLogKib').value = $('hwLogRng').value;
+  else if(src === 'hwMonRng') $('hwMonKib').value = $('hwMonRng').value;
+
+  let lg = Math.max(0, parseInt($('hwLogKib').value, 10) || 0);
+  let mo = Math.max(0, parseInt($('hwMonKib').value, 10) || 0);
+
+  if(budget > 0 && lg + mo > budget){
+    // Das zuletzt angefasste Feld behaelt seinen Wert.
+    if(src === 'hwMonKib' || src === 'hwMonRng') lg = Math.max(0, budget - mo);
+    else                                         mo = Math.max(0, budget - lg);
+  }
+
+  $('hwLogKib').value = $('hwLogRng').value = lg;
+  $('hwMonKib').value = $('hwMonRng').value = mo;
+
+  const span = budget || 1;
+  $('memLog').style.width = (100 * Math.min(lg, span) / span) + '%';
+  $('memMon').style.width = (100 * Math.min(mo, span) / span) + '%';
+  $('memRes').style.width = (100 * Math.max(0, span - lg - mo) / span) + '%';
+
+  $('hwMemInfo').textContent = total
+      ? (total + ' KiB PSRAM, ' + keep + ' ' + t('KiB reserviert') + ', '
+         + Math.max(0, budget - lg - mo) + ' ' + t('KiB frei') + ' \u2013 '
+         + t('Monitor fasst') + ' ' + Math.floor(mo * 1024 / 48) + ' '
+         + t('Telegramme'))
+      : t('Ohne PSRAM bleiben die Werte ohne Wirkung.');
 }
 
 /* --- Zeileneditoren ------------------------------------------------------ *

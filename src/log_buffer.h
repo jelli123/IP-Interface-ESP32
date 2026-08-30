@@ -21,6 +21,16 @@ public:
     /** Allocate the ring and start capturing the ESP-IDF log. */
     void begin();
 
+    /**
+     * Move the ring into a PSRAM block of @p bytes, carrying the newest lines.
+     *
+     * begin() has to run before anything can log, which is before the
+     * hardware profile is known - so the size the user chose can only be
+     * applied afterwards. Fails without PSRAM and when the block does not
+     * fit; the ring then stays as it was.
+     */
+    bool resize(size_t bytes);
+
     /** Bytes the ring can hold. */
     size_t capacity() const { return _size; }
 
