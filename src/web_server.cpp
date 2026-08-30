@@ -1351,6 +1351,15 @@ const char* serviceName(const uint8_t* tpdu, uint8_t tpduLen, bool group,
 
     uint16_t apci = (uint16_t)(((t & 0x03) << 8) | tpdu[1]);
 
+    /*
+     * The three group services carry a value of up to six bits inside the
+     * APCI itself, so only the top four bits are the code. Matching the whole
+     * word left every "on" telegram (APCI 0x081) without a name while "off"
+     * (0x080) got one - the most common telegram on any installation, and the
+     * one you look for first.
+     */
+    if (apci < 0x0C0) apci &= 0x3C0;
+
     if (!group && apci <= 0x080)
     {
         snprintf(scratch, scratchLen, "APCI 0x%03X", apci);

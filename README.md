@@ -898,6 +898,20 @@ einer Gruppenadresse. Steht im Ziel eine physikalische Adresse, bedeutet
 dieselbe APCI etwas anderes, und die Spalte zeigt dann `APCI 0x0xx` statt
 eines Namens, den das Telegramm nicht trägt.
 
+**Und die kurzen Dienste tragen ihren Wert in der APCI.** Bei einem
+Gruppentelegramm mit bis zu sechs Bit Nutzdaten stehen nur die oberen vier
+Bit für den Code, die unteren sechs sind der Wert. Ein Vergleich über das
+ganze Wort traf deshalb `GroupValueWrite` mit dem Wert 0 (`0x080`), aber
+nicht mit dem Wert 1 (`0x081`) – ausgerechnet jedes zweite Ein-/Aus-Telegramm
+stand ohne Dienstnamen in der Liste:
+
+```
+IP;RX;0.0.3;0/0/1;low;;01;              <- Einschalten, ohne Namen
+IP;RX;0.0.3;0/0/1;low;GroupValueWrite;00;Aus (1.x)
+```
+
+Unterhalb von `0x0C0` wird die APCI deshalb auf ihre oberen vier Bit maskiert.
+
 > Praktisch heißt das: Wer im Monitor nach echtem Gruppenverkehr sucht, achtet
 > auf ein Ziel in der Form `1/2/3`. Ziele wie `1.1.0` sind Punkt-zu-Punkt,
 > `0/0/0` ist ein Broadcast – beides erscheint im **Gruppenmonitor der ETS**
