@@ -421,13 +421,11 @@ MON_ANCHOR_TUNNEL = (
 )
 
 MON_NEW_TUNNEL = (
-    "    // sbip: the cEMI server hangs off the SECONDARY (TP) layer -\n"
-    "    // bau091A.cpp does _cemiServer.dataLinkLayer(_dlLayerSecondary).\n"
-    "    // Reporting a fixed 0 here labelled every tunnelled telegram as IP\n"
-    "    // and made the monitor useless for tracing a routing loop.\n"
+    "    // sbip: side 2 = handed over by a tunnel client. Neither IP nor TP\n"
+    "    // is honest here - it arrives over IP but is delivered on the layer\n"
+    "    // the cEMI server sits on, which bau091A.cpp sets to the TP one.\n"
     "    if (sbipMonitorHook)\n"
-    "        sbipMonitorHook(_networkLayerEntity.getEntityIndex(), false,\n"
-    "                        frame.data(), frame.totalLenght());\n"
+    "        sbipMonitorHook(2, false, frame.data(), frame.totalLenght());\n"
     "\n"
     "    // Send to local stack ( => cemiServer for potential other tunnel and"
     " network layer for routing)\n"

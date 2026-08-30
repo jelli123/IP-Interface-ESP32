@@ -1497,7 +1497,8 @@ static void registerMonitorRoutes()
             return false;
         };
 
-        uint8_t             sides   = BusMonitor::WATCH_IP | BusMonitor::WATCH_TP;
+        uint8_t             sides   = BusMonitor::WATCH_IP | BusMonitor::WATCH_TP |
+                                      BusMonitor::WATCH_TUNNEL;
         BusMonitor::Trigger mode    = BusMonitor::TRG_NOW;
         uint16_t            address = 0;
         uint32_t            pre     = 0;
@@ -1508,13 +1509,15 @@ static void registerMonitorRoutes()
         if (param("sides", value))
         {
             sides = 0;
-            if (value.indexOf("tp") >= 0) sides |= BusMonitor::WATCH_TP;
-            if (value.indexOf("ip") >= 0) sides |= BusMonitor::WATCH_IP;
+            // "tunnel" before "tp": indexOf would otherwise never see it.
+            if (value.indexOf("tunnel") >= 0) sides |= BusMonitor::WATCH_TUNNEL;
+            if (value.indexOf("tp") >= 0)     sides |= BusMonitor::WATCH_TP;
+            if (value.indexOf("ip") >= 0)     sides |= BusMonitor::WATCH_IP;
 
             if (sides == 0)
             {
                 request->send(400, "application/json",
-                              "{\"error\":\"sides must name tp, ip or both\"}");
+                              "{\"error\":\"sides must name tp, ip or tunnel\"}");
                 return;
             }
         }

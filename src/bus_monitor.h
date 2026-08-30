@@ -28,14 +28,23 @@ public:
     /** Matches the stack's network layer entity index. */
     enum Side : uint8_t
     {
-        SIDE_IP = 0,
-        SIDE_TP = 1
+        SIDE_IP  = 0,
+        SIDE_TP  = 1,
+        /*
+         * A frame handed over by a tunnel client, before the coupler has
+         * decided anything about it. Neither IP nor TP would be honest here:
+         * it arrives over IP but is delivered on the layer the cEMI server
+         * sits on, which is the TP one. Labelling it as either has already
+         * caused two wrong diagnoses of a routing loop.
+         */
+        SIDE_TUNNEL = 2
     };
 
     enum Sides : uint8_t
     {
-        WATCH_IP = 1 << SIDE_IP,
-        WATCH_TP = 1 << SIDE_TP
+        WATCH_IP     = 1 << SIDE_IP,
+        WATCH_TP     = 1 << SIDE_TP,
+        WATCH_TUNNEL = 1 << SIDE_TUNNEL
     };
 
     enum State : uint8_t
@@ -150,7 +159,7 @@ private:
     uint32_t _missed   = 0;
 
     volatile State _state = ST_OFF;
-    uint8_t  _sides         = WATCH_IP | WATCH_TP;
+    uint8_t  _sides         = WATCH_IP | WATCH_TP | WATCH_TUNNEL;
     Trigger  _trigger       = TRG_NOW;
     uint16_t _triggerAddress = 0;
     uint32_t _pre           = 0;

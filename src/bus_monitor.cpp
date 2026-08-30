@@ -110,7 +110,8 @@ void BusMonitor::capture(uint8_t side, bool outgoing, const uint8_t* cemi, uint1
     State state = _state;
     if (state == ST_OFF || state == ST_FULL) return;
 
-    if ((_sides & (1 << (side & 1))) == 0) return;
+    if (side > SIDE_TUNNEL) return;
+    if ((_sides & (1 << side)) == 0) return;
 
     /*
      * While armed the ring keeps running, capped at the pre-trigger count.
@@ -134,7 +135,7 @@ void BusMonitor::capture(uint8_t side, bool outgoing, const uint8_t* cemi, uint1
 
     Entry& slot = _ring[_head];
     slot.ms       = millis();
-    slot.side     = side & 1;
+    slot.side     = side;
     slot.outgoing = outgoing ? 1 : 0;
     slot.stored   = stored;
     slot.length   = (length > 255) ? 255 : (uint8_t)length;
@@ -180,7 +181,8 @@ bool BusMonitor::start(uint8_t sides, Trigger trigger, uint16_t address,
     // while the side mask and the trigger change underneath it.
     _state = ST_OFF;
 
-    _sides          = (sides & (WATCH_IP | WATCH_TP)) ? sides : (WATCH_IP | WATCH_TP);
+    const uint8_t all = WATCH_IP | WATCH_TP | WATCH_TUNNEL;
+    _sides          = (sides & all) ? (uint8_t)(sides & all) : all;
     _trigger        = trigger;
     _triggerAddress = address;
     _pre            = (pre > _capacity) ? _capacity : pre;

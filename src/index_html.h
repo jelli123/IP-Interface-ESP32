@@ -147,6 +147,7 @@ table.mon tbody tr{cursor:pointer}
 table.mon tr.tx td{background:rgba(210,153,34,.10)}
 table.mon tr.tp td:first-child{box-shadow:inset 3px 0 0 var(--ok)}
 table.mon tr.ip td:first-child{box-shadow:inset 3px 0 0 var(--acc)}
+table.mon tr.tun td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 table.mon tbody tr:hover td{background:rgba(255,255,255,.06)}
 /* Alles zur angeklickten Gruppenadresse. Nach dem Hover notiert, damit die
  * Auswahl beim Ueberfahren nicht verschwindet. */
@@ -359,7 +360,7 @@ small{color:var(--dim)}
       <button class="sec" id="instBtn" onclick="installUpdate()" disabled>Installieren</button>
       <button class="sec" onclick="fw.click()">Datei hochladen</button>
       <input type="file" id="fw" accept=".bin" style="display:none" onchange="upload()">
-      <button class="sec" id="swBtn" onclick="switchPart()" disabled>Partition wechseln</button>
+      <button class="sec" id="swBtn" onclick="switchPart()">Partition wechseln</button>
     </div>
     <label style="display:block;margin-top:10px;font-size:12px;color:var(--dim)">
       SHA-256 der Datei (optional, aus <code>sha256sum</code>)</label>
@@ -454,9 +455,10 @@ small{color:var(--dim)}
     <div class="fields wide">
       <div><label>Seite</label>
         <select id="monSides">
-          <option value="tp,ip">TP und IP</option>
+          <option value="tp,ip,tunnel">alle</option>
           <option value="tp">nur TP</option>
           <option value="ip">nur IP</option>
+          <option value="tunnel">nur Tunnel</option>
         </select></div>
       <div><label>Start</label>
         <select id="monMode" onchange="monModeChanged()">
@@ -495,6 +497,7 @@ small{color:var(--dim)}
           <option value="">alle</option>
           <option value="1">TP</option>
           <option value="0">IP</option>
+          <option value="2">Tunnel</option>
         </select></div>
       <div><label>Richtung</label>
         <select id="fDir" onchange="monRender()">
@@ -1234,6 +1237,12 @@ const EN = {
 + 'point.',
 'Der Bootlader hat diese Partition verworfen. Nur ein neuer Upload hilft.':
   'The boot loader has rejected this partition. Only a fresh upload helps.',
+'Startet nach dem Wechsel neu':'Restarts after the switch',
+'Die zweite Partition ist noch nicht bekannt. Seite neu laden.':
+  'The second partition is not known yet. Reload the page.',
+'Die zweite Partition enthält keine startfähige Firmware.':
+  'The second partition holds no bootable firmware.',
+'Tunnel':'Tunnel', 'nur Tunnel':'tunnel only',
 'Offene ETS-Verbindungen reißen dabei ab':
   'Open ETS connections are dropped',
 'UART-Nummer':'UART number',
@@ -1729,14 +1738,9 @@ async function refresh(){
   const parts = s.build.partitions || [];
   $('partRun').textContent = parts[0] ? slot(parts[0]) : '-';
   $('partAlt').textContent = parts[1] ? slot(parts[1]) : '-';
-  // Ein Abbild kann lesbar und trotzdem gesperrt sein: der Bootlader merkt
-  // sich einen verworfenen Slot dauerhaft in den OTA-Daten.
-  const barred = parts[1] && (parts[1].state === 'invalid' ||
-                             parts[1].state === 'aborted');
-  $('swBtn').disabled = !(parts[1] && parts[1].valid) || barred;
-  $('swBtn').title = barred
-      ? t('Der Bootlader hat diese Partition verworfen. Nur ein neuer Upload hilft.')
-      : '';
+  // Nicht sperren, sondern beim Klick den Grund nennen: ein toter Knopf sieht
+  // aus wie ein kaputtes Geraet.
+  $('swBtn').title = t('Startet nach dem Wechsel neu');
   $('ver').textContent  = s.build.version;
   $('build').textContent= '#' + s.build.number + ' / ' + s.build.git;
 
@@ -2020,6 +2024,11 @@ function downloadLog(){
 
 const MON_WIN = 400; //!< Telegramme je Abruf
 let monRows = [], monState = null, monFollow = false, monTimer = null;
+
+// Seite 2 ist die Uebergabe durch einen Tunnel-Client - weder IP noch TP,
+// siehe bus_monitor.h.
+const SIDE_TXT = ['IP', 'TP', 'Tunnel'];
+const SIDE_CLS = ['ip', 'tp', 'tun'];
 let monSel = null;   //!< hervorgehobene Gruppenadresse
 
 function openMon(){
@@ -2094,8 +2103,7 @@ async function monLoad(newest){
 }
 
 function monRender(scroll){
-  const fSide = $('fSide').value, fDir = $('fDir').value, fKind = $('fKind').value;
-  const fSrc = $('fSrc').value.trim(), fDst = $('fDst').value.trim();
+  const fSide = $('fSide').value, fDir = $('fDir').value, fKind = $('fKind').value;  const fSrc = $('fSrc').value.trim(), fDst = $('fDst').value.trim();
   const fSvc = $('fSvc').value.trim().toLowerCase();
 
   const rows = monRows.filter(r =>
@@ -2115,12 +2123,12 @@ function monRender(scroll){
   const body = rows.map(r => {
     const gap = previous === null ? '' : (r.ms - previous) + ' ms';
     previous = r.ms;
-    const cls = (r.o ? 'tx' : 'rx') + ' ' + (r.t ? 'tp' : 'ip')
+    const cls = (r.o ? 'tx' : 'rx') + ' ' + SIDE_CLS[r.t]
               + (monSel && r.dst === monSel ? ' mark' : '');
     return '<tr class="' + cls + '" onclick="monPick(\'' + esc(r.dst || '') + '\')">'
       + '<td>' + monTime(r.ms) + '</td>'
       + '<td class="dim">' + gap + '</td>'
-      + '<td>' + (r.t ? 'TP' : 'IP') + '</td>'
+      + '<td>' + SIDE_TXT[r.t] + '</td>'
       + '<td>' + (r.o ? '&rarr;' : '&larr;') + '</td>'
       + '<td>' + esc(r.src || '') + '</td>'
       + '<td>' + esc(r.dst || '') + '</td>'
@@ -2321,7 +2329,7 @@ function monDownload(){
   const sep = ';';
   const head = ['ms','Seite','Richtung','Quelle','Ziel','Prio','Wdh','Hop',
                 'Dienst','Daten','Wert'].join(sep);
-  const body = monRows.map(r => [r.ms, r.t ? 'TP' : 'IP', r.o ? 'TX' : 'RX',
+  const body = monRows.map(r => [r.ms, SIDE_TXT[r.t], r.o ? 'TX' : 'RX',
       r.src || '', r.dst || '', r.p || '', r.r || 0, r.h === undefined ? '' : r.h,
       r.a || '', r.d || r.raw || '', monValue(r)].join(sep)).join('\n');
 
@@ -2494,12 +2502,25 @@ async function lpcUpload(){
 async function switchPart(){
   const p = ((last && last.build.partitions) || [])[1];
 
+  if(!p){
+    alert(t('Die zweite Partition ist noch nicht bekannt. Seite neu laden.'));
+    return;
+  }
+  if(!p.valid){
+    alert(t('Die zweite Partition enthält keine startfähige Firmware.'));
+    return;
+  }
+  if(p.state === 'invalid' || p.state === 'aborted'){
+    alert(t('Der Bootlader hat diese Partition verworfen. Nur ein neuer Upload hilft.'));
+    return;
+  }
+
   let msg = t('Beim nächsten Start die andere Partition verwenden? '
             + 'Das Gerät startet neu.');
 
   // A slot holding a bootable image we have never run is fair game, but the
   // user should know they are jumping to something unidentified.
-  if(p && !p.firmware){
+  if(!p.firmware){
     msg += '\n\n' + t('Achtung: Der Inhalt ist unbekannt. Diese Partition '
          + 'hat unter der aktuellen Firmware noch nie gelaufen, dort liegt '
          + 'vermutlich ein älterer Stand.');

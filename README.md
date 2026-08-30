@@ -726,17 +726,20 @@ Die dritte Stelle braucht eine Unterdrückungsflagge: Sie ruft ihrerseits
 `frameReceived()` für die lokale Zustellung auf, was dasselbe Telegramm ein
 zweites Mal in die Liste schriebe.
 
-> **Der cEMI-Server hängt an der TP-Schicht**, nicht an der IP-Schicht –
-> `bau091A.cpp` macht `_cemiServer.dataLinkLayer(_dlLayerSecondary)` mit dem
-> Kommentar *„Secondary I/F is the important one!"*. Der Patch meldete hier
-> ursprünglich eine fest verdrahtete `0` (= IP), weil ein Telegramm aus einem
-> Tunnel ja über IP hereinkommt. Das ist zwar wahr, aber nicht die Frage, die
-> die Spalte beantwortet: Sie nennt die **Schicht**, die den Rahmen bearbeitet.
-> Die Folge war, dass jedes getunnelte Telegramm als IP-Empfang erschien und
-> auf der TP-Seite nie ein Empfang auftauchte – eine Fehldiagnose, die beim
-> Suchen der Telegrammschleife oben zweimal in die falsche Richtung geführt
-> hat. Jetzt steht dort `_networkLayerEntity.getEntityIndex()` wie an den
-> anderen beiden Stellen.
+**Sie bekommt eine eigene Seite: `Tunnel`.** Weder *IP* noch *TP* wäre dort
+ehrlich – das Telegramm kommt über IP herein, wird aber auf der Schicht
+zugestellt, an der der cEMI-Server hängt, und das ist laut `bau091A.cpp` die
+**TP**-Schicht (`_cemiServer.dataLinkLayer(_dlLayerSecondary)`, Kommentar
+dort: *„Secondary I/F is the important one!“*). Ursprünglich stand hier eine
+fest verdrahtete `0` (= IP). Die Folge war eine Aufzeichnung, in der auf der
+TP-Seite nie ein Empfang auftauchte und ein Telegramm scheinbar auf derselben
+Seite wieder hinausging, auf der es hereinkam – was ein Koppler nie tut. Das
+hat beim Suchen der Telegrammschleife oben **zweimal** in die falsche Richtung
+geführt.
+
+> Wer eine Aufzeichnung deutet, sollte das im Kopf haben: `Tunnel` ist die
+> Übergabe durch einen Tunnel-Client, `IP` der Routing-Multicast, `TP` die
+> Busleitung.
 
 Beide Symbole sind in [src/bus_monitor.cpp](src/bus_monitor.cpp) definiert,
 nicht im Stack. Findet der Patch seine Anker nicht mehr, kostet das den
