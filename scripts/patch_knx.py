@@ -544,7 +544,7 @@ def patch_monitor_tunnel_tx():
     print("patch_knx.py: tunnel transmit hook applied to ip_data_link_layer.cpp")
 
 
-DROP_MARKER = "sbip: no tunnel for "
+DROP_MARKER = "sbip: no tunnel to take the "
 
 DROP_ANCHOR = (
     "    if (tun == nullptr)\n"
@@ -557,28 +557,43 @@ DROP_ANCHOR = (
     "    }\n"
 )
 
-DROP_NEW = (
-    "    if (tun == nullptr)\n"
-    "    {\n"
-    '        print("' + DROP_MARKER + '");\n'
-    "        print(frame.destinationAddress() >> 12);\n"
-    '        print(".");\n'
-    "        print((frame.destinationAddress() >> 8) & 0x0F);\n"
-    '        print(".");\n'
-    "        print(frame.destinationAddress() & 0xFF);\n"
-    '        println(" - the frame is dropped");\n'
-    "        return;\n"
-    "    }\n"
-)
+# The same block sits in dataRequestToTunnel, dataConfirmationToTunnel and
+# dataIndicationToTunnel, in that order. Naming them apart is the whole point:
+# a missing confirmation and a missing reply look identical from outside but
+# mean very different things.
+DROP_KINDS = ("request", "confirmation", "indication")
+
+
+def drop_block(kind):
+    return (
+        "    if (tun == nullptr)\n"
+        "    {\n"
+        '        print("' + DROP_MARKER + kind + ' for ");\n'
+        "        print(frame.sourceAddress() >> 12);\n"
+        '        print(".");\n'
+        "        print((frame.sourceAddress() >> 8) & 0x0F);\n"
+        '        print(".");\n'
+        "        print(frame.sourceAddress() & 0xFF);\n"
+        '        print(" -> ");\n'
+        "        print(frame.destinationAddress() >> 12);\n"
+        '        print(".");\n'
+        "        print((frame.destinationAddress() >> 8) & 0x0F);\n"
+        '        print(".");\n'
+        "        print(frame.destinationAddress() & 0xFF);\n"
+        '        println(" - dropped");\n'
+        "        return;\n"
+        "    }\n"
+    )
 
 
 def with_drop_log(source):
-    # Three call sites share this block - dataRequestToTunnel,
-    # dataConfirmationToTunnel and dataIndicationToTunnel. All three drop the
-    # frame, so all three get the same line; the address in it says which.
     if DROP_MARKER in source or DROP_ANCHOR not in source:
         return source
-    return source.replace(DROP_ANCHOR, DROP_NEW)
+
+    for kind in DROP_KINDS:
+        source = source.replace(DROP_ANCHOR, drop_block(kind), 1)
+
+    return source
 
 
 def patch_tunnel_drop_log():
