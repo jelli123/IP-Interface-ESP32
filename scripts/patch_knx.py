@@ -1145,3 +1145,186 @@ def patch_physical_routing():
 
 
 patch_physical_routing()
+
+
+# --------------------------------------------------------------------------
+# 11. Put a tunnel client's frame on the bus
+# --------------------------------------------------------------------------
+#
+# This is the one that actually broke "read device information over TP".
+# DataLinkLayer::dataRequestFromTunnel() ends in sendFrame(), but three
+# early returns sit in front of it, and the middle one is:
+#
+#     if (isRoutedPA(frame.destinationAddress()))
+#         return;
+#
+# "Routed" means: another line owns this address, so the coupler will carry
+# it and I need not put it on TP myself. isRoutedPA() answers that by
+# comparing the destination against our own subnetwork address - which is
+# 0xFF00 while unprogrammed. Every real address then looks foreign, and
+# every ETS request left through the routing multicast instead of the bus.
+#
+# The recording showed exactly that: Tunnel;RX 15.15.1 -> 1.1.1 followed by
+# IP;TX and no TP send at all.
+
+ROUTEDPA_MARKER = "// sbip: an interface has no second line to hand this to"
+
+ROUTEDPA_ANCHOR = (
+    "bool DataLinkLayer::isRoutedPA(uint16_t pa)\n"
+    "{\n"
+    "    uint16_t ownpa = _deviceObject.individualAddress();\n"
+)
+
+ROUTEDPA_NEW = (
+    "// sbip: set by RouterObject, see KnxLink::routeUnfiltered()\n"
+    "extern bool sbipRouteUnfiltered;\n"
+    "\n"
+    "bool DataLinkLayer::isRoutedPA(uint16_t pa)\n"
+    "{\n"
+    "    " + ROUTEDPA_MARKER + "\n"
+    "    // Unprogrammed we are 15.15.0, so the comparison below calls every\n"
+    "    // real address foreign and dataRequestFromTunnel() returns before\n"
+    "    // sendFrame() - the bus never sees what ETS asked for.\n"
+    "    if (sbipRouteUnfiltered)\n"
+    "        return false;\n"
+    "\n"
+    "    uint16_t ownpa = _deviceObject.individualAddress();\n"
+)
+
+# The same function is the reason the recording looked innocent: the send
+# that dataRequestFromTunnel() performs goes straight to sendFrame() and
+# skips sendTelegram(), where the monitor hook of patch 6 sits.
+
+TUNTP_MARKER = "// sbip: sendFrame() skips sendTelegram() and its hook"
+
+TUNTP_ANCHOR = (
+    "    // Send to KNX medium\n"
+    "    sendFrame(frame);\n"
+)
+
+TUNTP_NEW = (
+    "    " + TUNTP_MARKER + "\n"
+    "    // Without this line a frame handed over by ETS disappears from the\n"
+    "    // recording at the moment it goes onto the bus.\n"
+    "    if (sbipMonitorHook)\n"
+    "        sbipMonitorHook(_networkLayerEntity.getEntityIndex(), true,\n"
+    "                        frame.data(), frame.totalLenght());\n"
+    "\n"
+    "    // Send to KNX medium\n"
+    "    sendFrame(frame);\n"
+)
+
+
+def patch_tunnel_to_bus():
+    with open(DLL_C, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if ROUTEDPA_MARKER in source:
+        return
+
+    if source.count(ROUTEDPA_ANCHOR) != 1:
+        sys.stderr.write(
+            "patch_knx.py: anchor no longer unique, a tunnel client "
+            "cannot reach any device on the bus:\n  %s\n"
+            % ROUTEDPA_ANCHOR.strip().splitlines()[0]
+        )
+        return
+
+    source = source.replace(ROUTEDPA_ANCHOR, ROUTEDPA_NEW)
+
+    # Only useful once patch 6 has declared the hook.
+    if "sbipMonitorHook" in source and source.count(TUNTP_ANCHOR) == 1:
+        source = source.replace(TUNTP_ANCHOR, TUNTP_NEW)
+
+    with open(DLL_C, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source)
+
+    print("patch_knx.py: tunnel-to-bus path opened in data_link_layer.cpp")
+
+
+patch_tunnel_to_bus()
+
+
+# --------------------------------------------------------------------------
+# 12. Notice a tunnel client that never answers
+# --------------------------------------------------------------------------
+#
+# A tunnelling request has to be acknowledged. The library receives the ack
+# and drops it on the floor, so "ETS shows nothing" and "the frames never
+# arrive" look identical from here - and that question has cost several
+# rounds of testing. Counting both sides settles it.
+
+ACK_MARKER = "// sbip: a client that never acknowledges is not receiving"
+
+ACK_ANCHOR = (
+    "void IpDataLinkLayer::sendFrameToTunnel(KnxIpTunnelConnection* tunnel,"
+    " CemiFrame& frame)\n"
+    "{\n"
+)
+
+ACK_NEW = (
+    ACK_MARKER + "\n"
+    "static uint32_t sbipTunnelSent = 0;\n"
+    "static uint32_t sbipTunnelAcked = 0;\n"
+    "static bool sbipTunnelAckWarned = false;\n"
+    "\n"
+    "void IpDataLinkLayer::sendFrameToTunnel(KnxIpTunnelConnection* tunnel,"
+    " CemiFrame& frame)\n"
+    "{\n"
+    "    if (!sbipTunnelAckWarned && ++sbipTunnelSent - sbipTunnelAcked >= 10)\n"
+    "    {\n"
+    "        sbipTunnelAckWarned = true;\n"
+    "        println(\"KNX: a tunnel client is not acknowledging anything we \"\n"
+    "                \"send. The frames leave this device, so they are lost on \"\n"
+    "                \"the way (firewall, router between the subnets) or the \"\n"
+    "                \"client rejects them.\");\n"
+    "    }\n"
+    "\n"
+)
+
+ACK_RX_ANCHOR = (
+    "        case TunnelingAck:\n"
+    "        {\n"
+    "            //TOOD nothing to do now\n"
+    "            //println(\"got Ack\");\n"
+    "            break;\n"
+    "        }\n"
+)
+
+ACK_RX_NEW = (
+    "        case TunnelingAck:\n"
+    "        {\n"
+    "            sbipTunnelAcked++;\n"
+    "            sbipTunnelAckWarned = false;\n"
+    "            break;\n"
+    "        }\n"
+)
+
+
+def patch_tunnel_ack():
+    with open(TARGET, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if ACK_MARKER in source:
+        return
+
+    for anchor in (ACK_ANCHOR, ACK_RX_ANCHOR):
+        if source.count(anchor) != 1:
+            sys.stderr.write(
+                "patch_knx.py: anchor no longer unique, an unresponsive "
+                "tunnel client stays invisible:\n  %s\n"
+                % anchor.strip().splitlines()[0]
+            )
+            return
+
+    source = source.replace(ACK_ANCHOR, ACK_NEW)
+    source = source.replace(ACK_RX_ANCHOR, ACK_RX_NEW)
+
+    with open(TARGET, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source)
+
+    print("patch_knx.py: tunnel acknowledge watch applied to "
+          "ip_data_link_layer.cpp")
+
+
+patch_tunnel_ack()

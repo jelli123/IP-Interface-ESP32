@@ -1797,9 +1797,23 @@ Linienkoppler ist das genau richtig. Für ein Gerät, das noch gar nicht weiß, 
 es steht, ist es fatal: Das Auslesen von Geräteinformationen über TP scheitert,
 ohne dass irgendwo ein Fehler auftaucht. Das Telegramm ist einfach nicht da.
 
-Der Patch setzt deshalb `sbipRouteUnfiltered` auch in
-`NetworkLayerCoupler::isRoutedIndividualAddress()` vor die Linienprüfung. Die
-Zustellung an das Gerät selbst hängt nicht daran – die entscheidet sich in
+Dieselbe Rechnung steht ein zweites Mal im Stack, eine Ebene tiefer, und *die*
+war der eigentliche Grund. `DataLinkLayer::dataRequestFromTunnel()` endet in
+`sendFrame()`, aber davor liegen drei vorzeitige Rücksprünge:
+
+```cpp
+if (isRoutedPA(frame.destinationAddress()))
+    return;
+```
+
+„Routed" heißt hier: *Eine andere Linie besitzt diese Adresse, der Koppler
+trägt sie hin, ich muss sie nicht selbst auf TP legen.* Unprogrammiert sieht
+jede echte Adresse fremd aus – und so verließ jede ETS-Anfrage das Gerät über
+den Routing-Multicast statt über die Busleitung. Die Aufzeichnung zeigte genau
+das: `Tunnel;RX 15.15.1 → 1.1.1`, danach `IP;TX`, und auf TP nichts.
+
+Beide Stellen hängen jetzt am selben Schalter. Die Zustellung an das Gerät
+selbst hängt an keiner von beiden – die entscheidet sich in
 `routeDataIndividual()` weiter oben am Vergleich mit der eigenen Adresse.
 
 Damit deckt der eine Schalter beide Fälle ab:
@@ -1809,6 +1823,26 @@ Damit deckt der eine Schalter beide Fälle ab:
 | noch kein ETS-Download | alles durch | alles durch |
 | ETS hat programmiert | Filtertabelle | Linienfilter des Kopplers |
 | Schalter eingeschaltet | alles durch | alles durch |
+
+### Wenn die ETS trotzdem nichts sieht
+
+Der Busmonitor zeigt mit `Tunnel;TX`, dass ein Telegramm das Gerät in Richtung
+Tunnelverbindung verlassen hat. Das beweist nur den Absendevorgang, nicht die
+Ankunft – und genau diese Lücke hat mehrere Testrunden gekostet.
+
+Ein Tunnelrahmen muss vom Client quittiert werden; die Bibliothek nahm die
+Quittung entgegen und verwarf sie kommentarlos. Jetzt werden beide Seiten
+gezählt. Bleiben zehn Rahmen unquittiert, steht im Protokoll:
+
+```
+KNX: a tunnel client is not acknowledging anything we send. The frames
+leave this device, so they are lost on the way (firewall, router between
+the subnets) or the client rejects them.
+```
+
+Erscheint die Zeile, liegt der Fehler **hinter** dem Gerät – typischerweise
+eine Firewall auf dem ETS-Rechner oder der Router zwischen zwei Subnetzen.
+Erscheint sie nicht, quittiert die ETS, und die Telegramme kommen an.
 
 ### „Mehr als ein Gerät im Programmiermodus"
 

@@ -1398,8 +1398,14 @@ int monitorEntryJson(char* out, size_t max, uint32_t seq,
              (unsigned)entry.side, (unsigned)entry.outgoing);
 
     // Anything that is not a full L_Data header still belongs in the list -
-    // silently dropping a frame is worse than showing it raw.
-    if (entry.stored < ctrl + 7)
+    // silently dropping a frame is worse than showing it raw. Management
+    // frames (M_Prop*, message code 0xF*) share the tunnel with bus traffic
+    // and carry no addresses; reading one as L_Data invented senders like
+    // "3.8.16" and cost a misdiagnosis.
+    bool isData = entry.stored >= 2 &&
+                  (cemi[0] == 0x11 || cemi[0] == 0x29 || cemi[0] == 0x2E);
+
+    if (!isData || entry.stored < ctrl + 7)
     {
         char raw[2 * BusMonitor::RAW_MAX + 1] = {0};
         for (uint8_t i = 0; i < entry.stored; i++)
