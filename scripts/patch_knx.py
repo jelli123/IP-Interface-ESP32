@@ -656,3 +656,111 @@ def patch_loopback():
 
 
 patch_loopback()
+
+
+# --------------------------------------------------------------------------
+# 8. Ask the IP layer which addresses belong to a tunnel
+# --------------------------------------------------------------------------
+#
+# Patch 4 stopped isTunnelingPA() from dereferencing a wild pointer by having
+# it answer "no". The comment there called that "only an optimisation". It is
+# not - it is the switch that decides whether a reply addressed to a tunnel
+# client goes out onto the TP line or into the tunnel:
+#
+#     if (getEntityIndex() == 1 && addrType == IndividualAddress)
+#         if (isTunnelingPA(destinationAddr))
+#             sendTheFrame = false;
+#
+# Measured with ETS connected through a tunnel as 1.1.4, asking the device
+# (1.1.0) for its device descriptor:
+#
+#     IP;RX;1.1.4;1.1.0;DeviceDescriptorRead
+#     TP;TX;1.1.0;1.1.4;DeviceDescriptorResponse   <- onto the bus
+#
+# The same exchange over routing, where the source is outside our own line,
+# is answered correctly. So this only bites once the tunnel address sits in
+# the same line as the device - which is the normal case after ETS has given
+# the device its address.
+#
+# DataLinkLayer::_ipParameters is never assigned on the TP layer, so the
+# property is the wrong source anyway. IpDataLinkLayer::isTunnelAddress()
+# knows the connections that are actually open, and the cEMI server holds a
+# pointer to that layer.
+
+TUNPA_MARKER = "// sbip: ask the IP layer, which knows the open connections"
+
+TUNPA_SRV_H_ANCHOR = "        uint16_t clientAddress() const;\n"
+
+TUNPA_SRV_H_NEW = (
+    "        uint16_t clientAddress() const;\n"
+    "        // sbip: reaches IpDataLinkLayer::isTunnelAddress()\n"
+    "        bool isTunnelAddress(uint16_t pa);\n"
+)
+
+TUNPA_SRV_C_ANCHOR = "void CemiServer::dataIndicationToTunnel(CemiFrame& frame)\n"
+
+TUNPA_SRV_C_NEW = (
+    "bool CemiServer::isTunnelAddress(uint16_t pa)\n"
+    "{\n"
+    "    // sbip: the primary layer is the IP one, and only it keeps the\n"
+    "    // table of open tunnel connections.\n"
+    "    return (_dataLinkLayerPrimary != nullptr) &&\n"
+    "           _dataLinkLayerPrimary->isTunnelAddress(pa);\n"
+    "}\n"
+    "\n"
+    "void CemiServer::dataIndicationToTunnel(CemiFrame& frame)\n"
+)
+
+TUNPA_DLL_ANCHOR = (
+    "    if (_ipParameters == nullptr)\n"
+    "        return false;\n"
+)
+
+TUNPA_DLL_NEW = (
+    "    if (_ipParameters == nullptr)\n"
+    "    {\n"
+    "        " + TUNPA_MARKER + "\n"
+    "        // Answering \"no\" here sends replies for a tunnel client onto\n"
+    "        // the TP line instead, where ETS never sees them.\n"
+    "        return (_cemiServer != nullptr) && _cemiServer->isTunnelAddress(pa);\n"
+    "    }\n"
+)
+
+
+def patch_tunnel_pa():
+    knx_dir  = os.path.dirname(DLL_C)
+    server_h = os.path.join(knx_dir, "cemi_server.h")
+    server_c = os.path.join(knx_dir, "cemi_server.cpp")
+
+    for path in (server_h, server_c, DLL_C):
+        if not os.path.isfile(path):
+            return
+
+    with open(DLL_C, "r", encoding="utf-8") as handle:
+        if TUNPA_MARKER in handle.read():
+            return
+
+    edits = ((server_h, TUNPA_SRV_H_ANCHOR, TUNPA_SRV_H_NEW),
+             (server_c, TUNPA_SRV_C_ANCHOR, TUNPA_SRV_C_NEW),
+             (DLL_C,    TUNPA_DLL_ANCHOR,   TUNPA_DLL_NEW))
+
+    for path, anchor, _ in edits:
+        with open(path, "r", encoding="utf-8") as handle:
+            if handle.read().count(anchor) != 1:
+                sys.stderr.write(
+                    "patch_knx.py: anchor no longer unique, replies to a "
+                    "tunnel client go to TP instead of the tunnel:\n  %s\n"
+                    % anchor.strip().splitlines()[0]
+                )
+                return
+
+    for path, anchor, replacement in edits:
+        with open(path, "r", encoding="utf-8") as handle:
+            source = handle.read()
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(source.replace(anchor, replacement))
+
+    print("patch_knx.py: tunnel address lookup restored")
+
+
+patch_tunnel_pa()

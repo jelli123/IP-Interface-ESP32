@@ -1931,6 +1931,41 @@ which coupler this is and drops every physically addressed telegram.
 > Teilnehmeradressen sein (`1.1.5` und so weiter). Nur die **Geräteadresse**
 > des Kopplers selbst muss auf `.0` enden.
 
+### Antworten an einen Tunnel landeten auf der Busleitung
+
+Nachdem die ETS dem Gerät die Adresse `1.1.0` gegeben hatte, scheiterte jeder
+weitere Zugriff über den Tunnel. Der Busmonitor zeigt beide Fälle
+nebeneinander:
+
+| Weg der ETS | Anfrage | Antwort |
+| --- | --- | --- |
+| Routing, Quelle `0.0.1` | `IP;RX` | `IP;TX` → kommt an |
+| Tunnel, Quelle `1.1.4` | `IP;RX` | **`TP;TX`** → geht auf den Bus |
+
+Die Weiche dafür ist `DataLinkLayer::sendTelegram()`:
+
+```cpp
+if (getEntityIndex() == 1 && addrType == IndividualAddress)
+    if (isTunnelingPA(destinationAddr))
+        sendTheFrame = false;   // nicht auf TP, der Empfänger sitzt im Tunnel
+```
+
+`isTunnelingPA()` fragte dazu `DataLinkLayer::_ipParameters` – einen Zeiger,
+der auf der TP-Schicht **nie zugewiesen wird**. Der vierte Patch hatte das
+seinerzeit mit einem Null-Test entschärft und die Funktion `false` antworten
+lassen; der Kommentar dort nannte das *„nur eine Optimierung“*. Das war
+falsch. Es ist die Entscheidung, ob eine Antwort den Empfänger überhaupt
+erreicht.
+
+Auffällig wird das erst, wenn die **Tunneladresse in derselben Linie liegt
+wie das Gerät** – also genau dann, wenn die ETS mit der Projektierung fertig
+ist. Vorher (`0.0.1` gegen `1.1.0`) führt derselbe Code die Antwort korrekt
+über die IP-Seite.
+
+Der achte Patch holt die Auskunft dort, wo sie stimmt:
+`IpDataLinkLayer::isTunnelAddress()` kennt die tatsächlich offenen
+Verbindungen, und der cEMI-Server hält einen Zeiger auf diese Schicht.
+
 ### Fremde Produktdatenbank verwenden
 
 Statt eine eigene Produktdatenbank zu erstellen, kann sich die Firmware als
