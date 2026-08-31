@@ -1982,6 +1982,36 @@ Broadcasts sind nicht betroffen – `IndividualAddressRead` wird zuverlässig
 beantwortet. Es trifft nur Punkt-zu-Punkt-Verkehr an die eigene Adresse, also
 genau das, was ein Applikationsdownload braucht.
 
+### Wenn ein Endpunkt den anderen verschluckt
+
+*Partition wechseln* meldete im Protokoll `OTA: upload accepted, rebooting
+shortly` – die Antwort des **Datei-Uploads**. Ein Klick, der die Startpartition
+setzen sollte, landete also im Upload-Handler, der brav neu startete, ohne
+etwas umzuschalten.
+
+Der Grund ist die Vorgabe von `AsyncURIMatcher`:
+
+```cpp
+(_value == path) || path.startsWith(_value + "/")
+```
+
+`/api/ota` beantwortet damit auch `/api/ota/switch`, und der **zuerst
+registrierte** Handler gewinnt. Dieselbe Falle traf `/api/hwconfig`, das
+`/api/hwconfig/reset` abfing – deshalb blieb *Profil im Gerät löschen* ohne
+Wirkung.
+
+Betroffen sind nur Paare mit **derselben HTTP-Methode**; bei GET gegen POST
+greift die Zuordnung nicht. Beide sind jetzt exakt gebunden:
+
+```cpp
+server.on(AsyncURIMatcher::exact("/api/ota"), HTTP_POST, ...);
+server.on(AsyncURIMatcher::exact("/api/hwconfig"), HTTP_POST, ...);
+```
+
+> **Regel für neue Routen:** Wer einen Endpunkt anlegt, der Präfix eines
+> anderen mit gleicher Methode ist, braucht `exact()`. Das Symptom ist tückisch,
+> weil der falsche Handler mit *Erfolg* antwortet.
+
 ### Verworfene UDP-Pakete: der Fehler, der sich beim Messen versteckte
 
 Ein Befund, der für einen Logikfehler keinen Sinn ergibt: Mit dem

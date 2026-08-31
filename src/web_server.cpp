@@ -856,8 +856,10 @@ static void registerHardwareRoutes()
      */
     static const size_t HWCONFIG_MAX_BODY = 6144;
 
+    // Exact, or this would also answer POST /api/hwconfig/reset - the first
+    // matching handler wins and the default matcher accepts any sub-path.
     server.on(
-        "/api/hwconfig", HTTP_POST,
+        AsyncURIMatcher::exact("/api/hwconfig"), HTTP_POST,
         [](AsyncWebServerRequest* request) {
             // Every reply is written here. The body handler below runs first
             // and must stay silent: whatever it sent would be replaced by the
@@ -1016,8 +1018,11 @@ static void registerOtaRoutes()
      * device. X-MD5 is still accepted for tooling that only produces MD5, but
      * SHA-256 takes precedence when both are present.
      */
+    // Exact: without it this handler also takes POST /api/ota/switch, and a
+    // request meant to change the boot slot is answered with "upload
+    // accepted" instead - the upload path then reboots without switching.
     server.on(
-        "/api/ota", HTTP_POST,
+        AsyncURIMatcher::exact("/api/ota"), HTTP_POST,
         [](AsyncWebServerRequest* request) {
             // Gate again: the body handler already refused to start Update
             // for a rejected request, so without this we would answer with a
