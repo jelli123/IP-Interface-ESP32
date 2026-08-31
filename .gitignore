@@ -20,3 +20,8 @@ docs/
 
 # Build- und Diagnoseprotokolle
 *.log
+
+# Aus dem Dashboard heruntergeladene Aufzeichnungen. Enthalten die Adressen,
+# SSIDs und Geraetenamen der Anlage, in der sie entstanden sind.
+sbip-log.txt
+sbip-monitor-*.csv

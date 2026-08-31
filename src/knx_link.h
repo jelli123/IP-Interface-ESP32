@@ -187,9 +187,22 @@ public:
      * @param groupAddress destination group address, 0 is rejected
      * @param payload      APDU payload, 1..14 octets
      * @param length       number of payload octets
+     * @param packed       put a single value of six bits or less into the APCI
+     *                     octet, which is the form ETS uses for DPT 1, 2 and 3
      * @return true if the frame was handed to at least one data link layer
      */
-    bool sendGroupValue(uint16_t groupAddress, const uint8_t* payload, uint8_t length);
+    bool sendGroupValue(uint16_t groupAddress, const uint8_t* payload,
+                        uint8_t length, bool packed = false);
+
+    /**
+     * Same telegram, but safe to ask for from a web handler: the frame is
+     * built and sent in loop(), not in the caller's task.
+     *
+     * @return false if a previous request has not been sent yet, or if the
+     *         arguments cannot produce a valid telegram
+     */
+    bool queueGroupValue(uint16_t groupAddress, const uint8_t* payload,
+                         uint8_t length, bool packed);
 
     const Stats& stats() const { return _stats; }
 
@@ -250,6 +263,12 @@ private:
 
     volatile bool _suspendRequest = false;
     volatile bool _suspended      = false;
+
+    volatile bool _sendPending = false;
+    uint16_t      _sendAddress = 0;
+    uint8_t       _sendData[14] = {};
+    uint8_t       _sendLength   = 0;
+    bool          _sendPacked   = false;
 
     uint32_t _lastBusLoadWindow = 0;
     uint32_t _framesInWindow    = 0;

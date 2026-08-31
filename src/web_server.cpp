@@ -1517,6 +1517,14 @@ String monitorStateJson()
     json += "}";
     return json;
 }
+
+int hexDigit(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
+}
 } // namespace
 
 static void registerMonitorRoutes()
@@ -1623,6 +1631,82 @@ static void registerMonitorRoutes()
         if (!mutationAllowed(request)) return;
         busMonitor.clear();
         request->send(200, "application/json", monitorStateJson());
+    });
+
+    /*
+     * Put a group telegram on the bus. The device knows no data point types -
+     * the filter table holds addresses, nothing else - so the value is taken
+     * as raw octets and interpreted by whoever receives it.
+     */
+    server.on("/api/knx/write", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        if (!request->hasParam("ga", true) || !request->hasParam("value", true))
+        {
+            request->send(400, "application/json",
+                          "{\"error\":\"parameter 'ga' or 'value' missing\"}");
+            return;
+        }
+
+        uint16_t address = parseGroupAddress(request->getParam("ga", true)->value());
+
+        if (address == 0)
+        {
+            request->send(400, "application/json",
+                          "{\"error\":\"0/0/0 is the broadcast address\"}");
+            return;
+        }
+
+        String  hex = request->getParam("value", true)->value();
+        uint8_t payload[14];
+        uint8_t length = 0;
+
+        for (unsigned i = 0; i < hex.length() && length < sizeof(payload); i++)
+        {
+            char c = hex[i];
+            if (c == ' ' || c == ',' || c == ':') continue;
+
+            int high = hexDigit(c);
+            int low  = (i + 1 < hex.length()) ? hexDigit(hex[i + 1]) : -1;
+
+            if (high < 0 || low < 0)
+            {
+                request->send(400, "application/json",
+                              "{\"error\":\"the value is not a pair of hex digits\"}");
+                return;
+            }
+
+            payload[length++] = (uint8_t)((high << 4) | low);
+            i++;
+        }
+
+        if (length == 0)
+        {
+            request->send(400, "application/json", "{\"error\":\"no value given\"}");
+            return;
+        }
+
+        bool packed = request->hasParam("short", true) &&
+                      request->getParam("short", true)->value() == "1";
+
+        if (packed && (length != 1 || payload[0] > 0x3F))
+        {
+            request->send(400, "application/json",
+                          "{\"error\":\"the short form holds one value of six bits\"}");
+            return;
+        }
+
+        if (!knxLink.queueGroupValue(address, payload, length, packed))
+        {
+            request->send(503, "application/json",
+                          "{\"error\":\"the previous telegram has not gone out yet\"}");
+            return;
+        }
+
+        sysLog.printf("KNX: sending %u/%u/%u on request\n",
+                      (address >> 11) & 0x1F, (address >> 8) & 0x07, address & 0xFF);
+
+        request->send(200, "application/json", "{\"status\":\"ok\"}");
     });
 
     /*

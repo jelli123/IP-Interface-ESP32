@@ -445,6 +445,16 @@ void KnxLink::loop()
         knx.progMode(value);
     }
 
+    if (_sendPending)
+    {
+        bool sent = sendGroupValue(_sendAddress, _sendData, _sendLength,
+                                   _sendPacked);
+        _sendPending = false;
+
+        if (!sent)
+            sysLog.println("KNX: the requested group telegram was refused");
+    }
+
     TpUartDataLinkLayer* tp = knxBau.getSecondaryDataLinkLayer();
     if (tp != nullptr)
     {
@@ -901,20 +911,30 @@ void KnxLink::restartIpLayer()
  * frameReceived(), which flags individualAddressDuplication() as soon as the
  * source address equals our own - which is exactly what we send here.
  */
-bool KnxLink::sendGroupValue(uint16_t groupAddress, const uint8_t* payload, uint8_t length)
+bool KnxLink::sendGroupValue(uint16_t groupAddress, const uint8_t* payload,
+                             uint8_t length, bool packed)
 {
     if (groupAddress == 0 || payload == nullptr || length == 0 || length > 14)
     {
         return false;
     }
 
-    // One octet for the APCI, then the payload. Values of 6 bit or less would
-    // normally be packed into the APCI octet; no time DPT is that small, so
-    // the unpacked form is always correct here.
-    CemiFrame frame((uint8_t)(length + 1));
+    if (packed && (length != 1 || payload[0] > 0x3F))
+    {
+        return false;
+    }
+
+    // One octet for the APCI, then the payload. A value of six bits or less
+    // may instead ride in the APCI octet itself - that is what ETS sends for
+    // a switch, and some devices only understand that form.
+    CemiFrame frame((uint8_t)(packed ? 1 : length + 1));
     APDU& apdu = frame.apdu();
     apdu.type(GroupValueWrite);
-    memcpy(apdu.data() + 1, payload, length);
+
+    if (packed)
+        apdu.data()[0] |= (uint8_t)(payload[0] & 0x3F);
+    else
+        memcpy(apdu.data() + 1, payload, length);
 
     // The frame buffer starts out zeroed, and a hop count of 0 means "do not
     // route" - routers would drop it. 6 is the KNX default.
@@ -941,4 +961,26 @@ bool KnxLink::sendGroupValue(uint16_t groupAddress, const uint8_t* payload, uint
     }
 
     return sent;
+}
+
+bool KnxLink::queueGroupValue(uint16_t groupAddress, const uint8_t* payload,
+                              uint8_t length, bool packed)
+{
+    if (groupAddress == 0 || payload == nullptr || length == 0 || length > 14)
+        return false;
+
+    if (packed && (length != 1 || payload[0] > 0x3F))
+        return false;
+
+    if (_sendPending)
+        return false;
+
+    _sendAddress = groupAddress;
+    _sendLength  = length;
+    _sendPacked  = packed;
+    memcpy(_sendData, payload, length);
+
+    // Last, so loop() never sees a half filled request.
+    _sendPending = true;
+    return true;
 }

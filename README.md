@@ -935,6 +935,33 @@ Die Spalte daneben zeigt den Abstand zum vorigen **angezeigten** Telegramm –
 für die Frage nach Wiederholungen und Stürmen die eigentlich interessante
 Zahl.
 
+### Ein Telegramm von Hand senden
+
+Unter den Filtern sitzt ein kleines Sendefeld: Gruppenadresse, Wert als
+Hex-Oktette, Knopf. Gedacht für die Gegenprobe – schaltet der Aktor, wenn das
+Telegramm nachweislich auf dem Bus liegt?
+
+**Datenpunkttypen kommen darin nicht vor, und das ist keine Bequemlichkeit.**
+Das Gerät kennt sie nicht: Sie stehen im ETS-Projekt, die geladene
+Filtertabelle enthält nur Adressen. Ein Feld „Prozent“ wäre also geraten. Der
+Wert geht als rohe Oktette hinaus, deuten muss ihn der Empfänger – `01` bzw.
+`00` zum Schalten, `80` für 50 %.
+
+Ein Haken wählt die **kurze Form**: Ein Wert von höchstens sechs Bit reist
+normalerweise in der APCI selbst, und genau so sendet die ETS beim Schalten
+und Dimmen. Manche Geräte verstehen nur diese Form. Das Feld schaltet sich von
+selbst ab, sobald der Wert nicht mehr hineinpasst.
+
+Der Auftrag wird **nicht** im Web-Handler ausgeführt. `queueGroupValue()` legt
+ihn ab, `KnxLink::loop()` baut und sendet den Rahmen im Haupttask – dieselbe
+Regel wie beim Hardware-Profil: Am KNX-Stack rührt nur der Task, dem er
+gehört. Kommt eine zweite Anfrage, bevor die erste heraus ist, antwortet der
+Endpunkt mit 503 statt zu überschreiben.
+
+Gesendet wird auf **beiden** Seiten, TP1 und Routing-Multicast, mit der eigenen
+physikalischen Adresse als Absender – so wie ein Koppler ein selbst erzeugtes
+Telegramm behandelt.
+
 Direkt danach kommen `statusLed.begin()` und `buttonService.begin()`: Beide
 brauchen das Profil für ihre Pins, und die Anzeige soll stehen, solange der
 laute Teil des Starts läuft. `ethInterface.begin()` läuft vor

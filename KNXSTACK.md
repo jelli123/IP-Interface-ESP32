@@ -39,11 +39,11 @@ E-Mail sind Platzhalter – vor dem Einreichen `git commit --amend --reset-autho
 | # | Kurzfassung | Art | Patch |
 |---|---|---|---|
 | 1 | Antwort geht an einen geschlossenen Tunnelkanal | Fehler | `0001` |
-| 2 | Zeiger auf ein totes Stack-Array | Fehler (UB) | `0002` |
+| 2 | Zeiger auf ein totes Stack-Array | undefiniertes Verhalten | `0002` |
 | 3 | `isTunnelingPA()` dereferenziert einen Nullzeiger | Absturz | `0003` |
 | 4 | `sendBytesUniCast()` meldet Erfolg nach einem Fehlschlag | Fehler | `0004` |
 | 5 | `propertyValueRead()` gibt uninitialisierten Heap heraus | Fehler | `0005` |
-| 6 | `_couplerType` ohne definierten Wert | Fehler (UB) | `0006` |
+| 6 | `_couplerType` ohne definierten Wert | undefiniertes Verhalten | `0006` |
 | 7 | Unprogrammiert unbrauchbar als reine Schnittstelle | Entwurf | – |
 | 8 | Tunnel-Quittungen werden verworfen | Lücke | – |
 | 9 | Busmonitor-Verbindung wird wortlos abgelehnt | Diagnose | – |

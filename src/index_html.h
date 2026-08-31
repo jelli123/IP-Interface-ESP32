@@ -520,6 +520,26 @@ small{color:var(--dim)}
     </div>
   </div>
 
+  <div class="grp">
+    <label class="hd">Telegramm senden</label>
+    <div class="fields wide">
+      <div><label>Gruppenadresse</label>
+        <input id="wGa" placeholder="1/2/3"></div>
+      <div><label>Wert (hex)</label>
+        <input id="wVal" placeholder="01" oninput="wSync()"></div>
+    </div>
+    <label class="chk"><input type="checkbox" id="wShort" checked>
+      Kurze Form (Wert in der APCI, wie ETS bei Schalten und Dimmen)</label>
+    <p><small>Das Gerät kennt keine Datenpunkttypen &ndash; die Filtertabelle
+    enthält nur Adressen. Der Wert geht als rohe Oktette hinaus, deuten muss
+    ihn der Empfänger. Ein Schaltbefehl ist 01 beziehungsweise 00, ein
+    Prozentwert 80 für 50 %.</small></p>
+    <div class="rowbtns" style="margin-top:12px">
+      <button onclick="wSend()">Senden</button>
+      <span id="wMsg"></span>
+    </div>
+  </div>
+
   <p><small id="monInfo" data-dyn></small></p>
   <div id="monBox"><table class="mon" id="monTbl"></table></div>
 
@@ -961,6 +981,18 @@ const EN = {
   'The stack hook is missing - see scripts/patch_knx.py.',
 'Bitte eine Trigger-Gruppenadresse angeben.':'Please enter a trigger group address.',
 'Aufzeichnung konnte nicht gestartet werden.':'Could not start the recording.',
+'Telegramm senden':'Send a telegram', 'Gruppenadresse':'Group address',
+'Wert (hex)':'Value (hex)', 'Senden':'Send',
+'Senden fehlgeschlagen.':'Could not send.',
+'Kurze Form (Wert in der APCI, wie ETS bei Schalten und Dimmen)':
+  'Short form (value inside the APCI, as ETS sends switching and dimming)',
+['Das Gerät kennt keine Datenpunkttypen – die Filtertabelle enthält nur '
++ 'Adressen. Der Wert geht als rohe Oktette hinaus, deuten muss ihn der '
++ 'Empfänger. Ein Schaltbefehl ist 01 beziehungsweise 00, ein Prozentwert 80 '
++ 'für 50 %.']:
+  'The device knows no data point types - the filter table holds addresses and '
++ 'nothing else. The value goes out as raw octets and is interpreted by '
++ 'whoever receives it. Switching is 01 or 00, a percentage 80 for 50%.',
 ['Der Ring liegt im PSRAM; ohne PSRAM bleibt der Monitor aus und es hilft nur '
 + 'der Gruppenmonitor der ETS. Angezeigt wird immer nur ein Ausschnitt – der '
 + 'Filter wirkt auf das Geladene, nicht auf die Aufzeichnung.']:
@@ -2302,6 +2334,40 @@ async function monClear(){
   monRows = [];
   monSel  = null;
   monRender();
+  monRefresh();
+}
+
+// The short form only exists for a single value of six bits.
+function wSync(){
+  const hex = $('wVal').value.replace(/[^0-9a-fA-F]/g,'');
+  const box = $('wShort');
+  const fits = hex.length === 2 && parseInt(hex,16) <= 0x3F;
+  box.disabled = !fits;
+  if(!fits) box.checked = false;
+}
+
+async function wSend(){
+  const msg = $('wMsg');
+  const body = new URLSearchParams({
+    ga:    $('wGa').value,
+    value: $('wVal').value,
+    short: $('wShort').checked ? '1' : '0'
+  });
+
+  msg.textContent = '';
+  const r = await fetch('/api/knx/write', {method:'POST', body:body});
+
+  if(!r.ok){
+    let text = t('Senden fehlgeschlagen.');
+    try { const j = await r.json(); if(j.error) text = j.error; } catch(e){}
+    msg.textContent = text;
+    msg.className = 'bad';
+    return;
+  }
+
+  msg.textContent = t('gesendet');
+  msg.className = 'ok';
+  setTimeout(() => { msg.textContent = ''; }, 3000);
   monRefresh();
 }
 
