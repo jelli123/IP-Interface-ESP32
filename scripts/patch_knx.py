@@ -1064,3 +1064,84 @@ def patch_udp_retry():
 
 
 patch_udp_retry()
+
+
+# --------------------------------------------------------------------------
+# 10. Reach devices outside our own line while unprogrammed
+# --------------------------------------------------------------------------
+#
+# Without an ETS download the device carries the default address 15.15.0, and
+# a coupler filters by line:
+#
+#     if (_couplerType == LineCoupler && srcIfIndex == kPrimaryIfIndex)
+#         if (ZS != ownSNA)
+#             return false;              // IGNORE_TOTALLY
+#
+# A request for 1.1.3 does not belong to 15.15.x, so it is thrown away and
+# reading device information over TP fails. Correct for a coupler, useless
+# for what this device is before it is programmed: a plain IP interface, which
+# has to pass everything through.
+#
+# Same switch as for group addresses (patch 2), same reasoning - it is on
+# whenever no filter table has been downloaded, and can be forced on.
+
+PHYS_MARKER = "// sbip: an unprogrammed device is an interface, not a coupler"
+
+PHYS_ANCHOR = (
+    "bool NetworkLayerCoupler::isRoutedIndividualAddress(uint16_t"
+    " individualAddress, uint8_t srcIfIndex)\n"
+    "{\n"
+)
+
+PHYS_NEW = (
+    "// sbip: set by RouterObject, see KnxLink::routeUnfiltered()\n"
+    "extern bool sbipRouteUnfiltered;\n"
+    "\n"
+    "bool NetworkLayerCoupler::isRoutedIndividualAddress(uint16_t"
+    " individualAddress, uint8_t srcIfIndex)\n"
+    "{\n"
+    "    " + PHYS_MARKER + "\n"
+    "    // With the built-in address 15.15.0 the line filter below drops\n"
+    "    // everything addressed to another line, so ETS cannot reach a single\n"
+    "    // device on TP.\n"
+    "    if (sbipRouteUnfiltered)\n"
+    "        return true;\n"
+    "\n"
+)
+
+
+def patch_physical_routing():
+    coupler = os.path.join(
+        env["PROJECT_LIBDEPS_DIR"],  # noqa: F821
+        env["PIOENV"],  # noqa: F821
+        "knx",
+        "src",
+        "knx",
+        "network_layer_coupler.cpp",
+    )
+
+    if not os.path.isfile(coupler):
+        return
+
+    with open(coupler, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if PHYS_MARKER in source:
+        return
+
+    if source.count(PHYS_ANCHOR) != 1:
+        sys.stderr.write(
+            "patch_knx.py: anchor no longer unique, an unprogrammed device "
+            "cannot reach anything outside line 15.15.x:\n  %s\n"
+            % PHYS_ANCHOR.strip().splitlines()[0]
+        )
+        return
+
+    with open(coupler, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source.replace(PHYS_ANCHOR, PHYS_NEW))
+
+    print("patch_knx.py: unfiltered physical routing applied to "
+          "network_layer_coupler.cpp")
+
+
+patch_physical_routing()

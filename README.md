@@ -1780,6 +1780,36 @@ projektiert hat, will sie normalerweise auch. Nur einschalten, wenn dieses Gerä
 die einzige Verbindung zwischen Linie und IP ist – zwei Koppler ohne Filter
 erzeugen Telegrammschleifen.
 
+### Einzelne Geräte am TP erreichen, solange nichts programmiert ist
+
+Derselbe Schalter gilt für physikalische Adressen, und zwar aus demselben
+Grund. Ohne ETS-Download trägt das Gerät seine Werksadresse **15.15.0**. Der
+Stack liest daraus die eigene Linie ab und wirft weg, was woanders hingehört:
+
+```cpp
+if (_couplerType == LineCoupler && srcIfIndex == kPrimaryIfIndex)
+    if (ZS != ownSNA)
+        return false;              // IGNORE_TOTALLY
+```
+
+Eine Anfrage an `1.1.3` gehört nicht zu `15.15.x` – also weg damit. Für einen
+Linienkoppler ist das genau richtig. Für ein Gerät, das noch gar nicht weiß, wo
+es steht, ist es fatal: Das Auslesen von Geräteinformationen über TP scheitert,
+ohne dass irgendwo ein Fehler auftaucht. Das Telegramm ist einfach nicht da.
+
+Der Patch setzt deshalb `sbipRouteUnfiltered` auch in
+`NetworkLayerCoupler::isRoutedIndividualAddress()` vor die Linienprüfung. Die
+Zustellung an das Gerät selbst hängt nicht daran – die entscheidet sich in
+`routeDataIndividual()` weiter oben am Vergleich mit der eigenen Adresse.
+
+Damit deckt der eine Schalter beide Fälle ab:
+
+| Zustand | Gruppentelegramme | physikalisch adressierte |
+|---|---|---|
+| noch kein ETS-Download | alles durch | alles durch |
+| ETS hat programmiert | Filtertabelle | Linienfilter des Kopplers |
+| Schalter eingeschaltet | alles durch | alles durch |
+
 ### „Mehr als ein Gerät im Programmiermodus"
 
 Beim Vergeben der physikalischen Adresse meldete die ETS das, obwohl nur
