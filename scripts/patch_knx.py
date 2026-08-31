@@ -564,26 +564,85 @@ DROP_ANCHOR = (
 DROP_KINDS = ("request", "confirmation", "indication")
 
 
+def print_address(expression):
+    """Three prints, because the stack has no formatting helper."""
+    return (
+        "        print(" + expression + " >> 12);\n"
+        '        print(".");\n'
+        "        print((" + expression + " >> 8) & 0x0F);\n"
+        '        print(".");\n'
+        "        print(" + expression + " & 0xFF);\n"
+    )
+
+
 def drop_block(kind):
     return (
         "    if (tun == nullptr)\n"
         "    {\n"
+        "#ifdef SBIP_KNX_TRACE\n"
         '        print("' + DROP_MARKER + kind + ' for ");\n'
-        "        print(frame.sourceAddress() >> 12);\n"
-        '        print(".");\n'
-        "        print((frame.sourceAddress() >> 8) & 0x0F);\n"
-        '        print(".");\n'
-        "        print(frame.sourceAddress() & 0xFF);\n"
+        + print_address("frame.sourceAddress()") +
         '        print(" -> ");\n'
-        "        print(frame.destinationAddress() >> 12);\n"
-        '        print(".");\n'
-        "        print((frame.destinationAddress() >> 8) & 0x0F);\n"
-        '        print(".");\n'
-        "        print(frame.destinationAddress() & 0xFF);\n"
+        + print_address("frame.destinationAddress()") +
         '        println(" - dropped");\n'
+        "#endif\n"
         "        return;\n"
         "    }\n"
     )
+
+
+# --------------------------------------------------------------------------
+# Why a reply never reaches the tunnel client
+# --------------------------------------------------------------------------
+#
+# Measured: a reply to a point-to-point request is generated (it appears as
+# TP;TX in the bus monitor) but never produces a Tunnel;TX line, so
+# sendFrameToTunnel() is not reached. The loop below is the only thing
+# between the two, and every one of its three conditions looks like it should
+# match. One of the values must therefore be different from what the log
+# suggests - so print them rather than reason about them.
+
+TRACE_MARKER = "sbip: mirror "
+
+TRACE_ANCHOR = (
+    "    KnxIpTunnelConnection* tun = nullptr;\n"
+    "\n"
+    "    for (int i = 0; i < KNX_TUNNELING; i++)\n"
+    "    {\n"
+    "        if (tunnels[i].ChannelId == 0 || tunnels[i].IndividualAddress =="
+    " frame.sourceAddress())\n"
+    "            continue;\n"
+)
+
+TRACE_NEW = (
+    "    KnxIpTunnelConnection* tun = nullptr;\n"
+    "\n"
+    "#ifdef SBIP_KNX_TRACE\n"
+    '    print("' + TRACE_MARKER + '");\n'
+    + print_address("frame.sourceAddress()") +
+    '    print(" -> ");\n'
+    + print_address("frame.destinationAddress()") +
+    '    println(frame.addressType() == AddressType::GroupAddress'
+    ' ? " (group)" : " (individual)");\n'
+    "\n"
+    "    for (int i = 0; i < KNX_TUNNELING; i++)\n"
+    "    {\n"
+    '        print("  slot ");\n'
+    "        print(i);\n"
+    '        print(" channel 0x");\n'
+    "        print(tunnels[i].ChannelId, 16);\n"
+    '        print(" address ");\n'
+    + print_address("tunnels[i].IndividualAddress") +
+    '        println(tunnels[i].IsConfig ? " config" : " data");\n'
+    "    }\n"
+    "#endif\n"
+    "\n"
+    "    for (int i = 0; i < KNX_TUNNELING; i++)\n"
+    "    {\n"
+    "        if (tunnels[i].ChannelId == 0 || tunnels[i].IndividualAddress =="
+    " frame.sourceAddress())\n"
+    "            continue;\n"
+)
 
 
 def with_drop_log(source):
@@ -596,6 +655,14 @@ def with_drop_log(source):
     return source
 
 
+def with_mirror_trace(source):
+    # Only in dataIndicationToTunnel - that is the one with this exact loop
+    # head, and the only one that carries a reply to a tunnel client.
+    if TRACE_MARKER in source or source.count(TRACE_ANCHOR) != 1:
+        return source
+    return source.replace(TRACE_ANCHOR, TRACE_NEW)
+
+
 def patch_tunnel_drop_log():
     """Runs on its own, so an already patched file still gets it."""
     if not os.path.isfile(TARGET):
@@ -604,15 +671,15 @@ def patch_tunnel_drop_log():
     with open(TARGET, "r", encoding="utf-8") as handle:
         source = handle.read()
 
-    patched = with_drop_log(source)
+    patched = with_mirror_trace(with_drop_log(source))
 
-    if patched is source:
+    if patched == source:
         return
 
     with open(TARGET, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(patched)
 
-    print("patch_knx.py: dropped-frame reason exposed in ip_data_link_layer.cpp")
+    print("patch_knx.py: KNX trace points added to ip_data_link_layer.cpp")
 
 
 if patch_monitor():

@@ -1982,6 +1982,58 @@ Broadcasts sind nicht betroffen – `IndividualAddressRead` wird zuverlässig
 beantwortet. Es trifft nur Punkt-zu-Punkt-Verkehr an die eigene Adresse, also
 genau das, was ein Applikationsdownload braucht.
 
+### Den KNX-Stack mitlesen: `*_trace`
+
+Der Stack entscheidet vieles im Stillen – an welchen Tunnel ein Rahmen geht,
+warum einer verworfen wird, auf welche Seite ein Koppler leitet. Das mit
+Wegwerf-Patches zu verfolgen hieß, die Bibliothek jedes Mal neu zu patchen und
+die Instrumentierung danach wieder zu verlieren.
+
+Deshalb stehen die Messpunkte fest in
+[scripts/patch_knx.py](scripts/patch_knx.py), umschlossen von
+`#ifdef SBIP_KNX_TRACE`. Im normalen Build kosten sie nichts – nachgemessen
+928 Byte Unterschied, alles davon Zeichenketten im Trace-Build.
+
+**Windows (PowerShell)**
+
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e esp32dev_trace
+```
+
+**Linux**
+
+```bash
+pio run -e esp32dev_trace
+```
+
+Das Ergebnis liegt in `.pio/build/esp32dev_trace/firmware.bin` und lässt sich
+wie jede andere Firmware über das Dashboard einspielen. Die Ausgaben laufen
+durch das normale Protokoll, sind also dort lesbar.
+
+> Der erste Build einer `*_trace`-Umgebung dauert einige Minuten: PlatformIO
+> legt einen eigenen Bibliotheksbaum an und patcht ihn neu.
+
+Was dabei sichtbar wird:
+
+```
+sbip: mirror 1.1.0 -> 1.1.4 (individual)
+  slot 0 channel 0x1 address 1.1.4 data
+  slot 1 channel 0x0 address 1.1.5 config
+sbip: no tunnel to take the indication for 1.1.4 -> 1.1.0 - dropped
+```
+
+Der erste Block nennt die Entscheidungsgrundlage beim Weiterreichen an einen
+Tunnel: Absender, Empfänger, Adressart und den Zustand jedes Kanals. Die
+zweite Zeile sagt, welche der drei Zustellwege aufgegeben hat – *request*,
+*confirmation* oder *indication*. Die drei auseinanderzuhalten ist wesentlich:
+Eine fehlende Bestätigung bremst die ETS schon vor dem Verbindungsaufbau, eine
+fehlende Antwort erst danach.
+
+> `no tunnel ... indication ...` allein ist **harmlos**. Diese Meldung
+> entsteht beim Weiterreichen eines *eingehenden* Telegramms an die übrigen
+> Tunnel; den Absender selbst überspringt der Stack absichtlich, und bei nur
+> einer offenen Verbindung bleibt dann niemand übrig.
+
 ### Fremde Produktdatenbank verwenden
 
 Statt eine eigene Produktdatenbank zu erstellen, kann sich die Firmware als
