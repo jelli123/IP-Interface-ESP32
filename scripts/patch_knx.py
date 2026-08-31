@@ -1,4 +1,4 @@
-"""Patches six spots in the KNX stack.
+﻿"""Patches six spots in the KNX stack.
 
 1. Tunnel routing for cEMI management responses
 -----------------------------------------------
@@ -38,10 +38,67 @@ Both patched here rather than in a fork so that `lib_deps` can keep tracking
 upstream. Remove once upstream carries them.
 """
 
+import hashlib
 import os
+import shutil
 import sys
 
 Import("env")  # noqa: F821  (injected by SCons)
+
+
+def check_patch_stamp():
+    """
+    Refuse to build against a library patched by a different version of this
+    script.
+
+    Every patch below finds its anchor once and replaces it. Afterwards the
+    anchor is gone, so a *changed* patch silently does nothing and the build
+    keeps using the old instrumentation - which cost a full round of testing
+    against a firmware that did not contain the fix under test.
+
+    Comparing a hash of this file against a stamp next to the library catches
+    that. The library is removed so the next run starts from a clean copy;
+    doing it in-place would not help, because PlatformIO has already resolved
+    the dependency for this build.
+    """
+    knx_dir = os.path.join(
+        env["PROJECT_LIBDEPS_DIR"],  # noqa: F821
+        env["PIOENV"],  # noqa: F821
+        "knx",
+    )
+
+    if not os.path.isdir(knx_dir):
+        return
+
+    # __file__ does not exist in a SCons script, so take the known location.
+    script = os.path.join(env["PROJECT_DIR"], "scripts", "patch_knx.py")  # noqa: F821
+
+    if not os.path.isfile(script):
+        return
+
+    with open(script, "rb") as handle:
+        digest = hashlib.sha256(handle.read()).hexdigest()
+
+    stamp = os.path.join(knx_dir, ".sbip-patch-stamp")
+
+    if os.path.isfile(stamp):
+        with open(stamp, "r", encoding="utf-8") as handle:
+            if handle.read().strip() == digest:
+                return
+
+        shutil.rmtree(knx_dir, ignore_errors=True)
+        sys.stderr.write(
+            "\npatch_knx.py: the KNX library was patched by an older version "
+            "of this script.\nIt has been removed - run the build again and "
+            "PlatformIO will fetch and patch a fresh copy.\n\n"
+        )
+        env.Exit(1)  # noqa: F821
+
+    with open(stamp, "w", encoding="utf-8") as handle:
+        handle.write(digest)
+
+
+check_patch_stamp()
 
 TARGET = os.path.join(
     env["PROJECT_LIBDEPS_DIR"],  # noqa: F821

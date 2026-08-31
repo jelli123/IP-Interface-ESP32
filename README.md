@@ -1982,6 +1982,46 @@ Broadcasts sind nicht betroffen – `IndividualAddressRead` wird zuverlässig
 beantwortet. Es trifft nur Punkt-zu-Punkt-Verkehr an die eigene Adresse, also
 genau das, was ein Applikationsdownload braucht.
 
+### Ein geänderter Patch greift nicht von selbst
+
+Jeder Patch sucht seinen Anker einmal und ersetzt ihn. Danach ist der Anker
+weg – eine **geänderte** Fassung desselben Patches findet also nichts mehr und
+tut stillschweigend gar nichts. Die Bibliothek bleibt auf dem Stand, den sie
+beim ersten Bauen bekommen hat.
+
+Das hat eine komplette Testrunde gekostet: Geprüft wurde eine Firmware, die
+den zu prüfenden Fix gar nicht enthielt – erkennbar nur daran, dass im
+Protokoll noch die alten Diagnosemeldungen standen.
+
+Deshalb legt das Skript neben der Bibliothek einen **Stempel** mit seinem
+eigenen SHA-256 ab. Weicht er ab, wird die Bibliothek entfernt und der Build
+mit einem Hinweis abgebrochen:
+
+```
+patch_knx.py: the KNX library was patched by an older version of this script.
+It has been removed - run the build again and PlatformIO will fetch and patch
+a fresh copy.
+```
+
+Der nächste Lauf holt eine unberührte Kopie und patcht sie vollständig. Von
+Hand geht dasselbe:
+
+**Windows (PowerShell)**
+
+```powershell
+Remove-Item -Recurse -Force .pio\libdeps\esp32s3
+```
+
+**Linux**
+
+```bash
+rm -rf .pio/libdeps/esp32s3
+```
+
+> Wer einen Patch ändert, muss also nichts weiter tun als zweimal bauen. Wer
+> einen Fehler sucht, sollte umgekehrt misstrauisch werden, wenn das Protokoll
+> Meldungen zeigt, die es im aktuellen Quelltext nicht mehr gibt.
+
 ### Wenn ein Endpunkt den anderen verschluckt
 
 *Partition wechseln* meldete im Protokoll `OTA: upload accepted, rebooting
