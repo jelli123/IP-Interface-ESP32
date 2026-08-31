@@ -735,33 +735,31 @@ patch_loopback()
 
 
 # --------------------------------------------------------------------------
-# 8. Ask the IP layer which addresses belong to a tunnel
+# 8. Ask the IP layer which addresses belong to a tunnel  -  NOT APPLIED
 # --------------------------------------------------------------------------
 #
+# Kept as a record, deliberately switched off at the bottom of this block.
+#
 # Patch 4 stopped isTunnelingPA() from dereferencing a wild pointer by having
-# it answer "no". The comment there called that "only an optimisation". It is
-# not - it is the switch that decides whether a reply addressed to a tunnel
-# client goes out onto the TP line or into the tunnel:
-#
-#     if (getEntityIndex() == 1 && addrType == IndividualAddress)
-#         if (isTunnelingPA(destinationAddr))
-#             sendTheFrame = false;
-#
-# Measured with ETS connected through a tunnel as 1.1.4, asking the device
-# (1.1.0) for its device descriptor:
+# it answer "no", which sends a reply for a tunnel client onto the TP line:
 #
 #     IP;RX;1.1.4;1.1.0;DeviceDescriptorRead
 #     TP;TX;1.1.0;1.1.4;DeviceDescriptorResponse   <- onto the bus
 #
-# The same exchange over routing, where the source is outside our own line,
-# is answered correctly. So this only bites once the tunnel address sits in
-# the same line as the device - which is the normal case after ETS has given
-# the device its address.
+# Answering truthfully instead makes sendTelegram() skip the TP line, on the
+# assumption that the mirror into the tunnel further down would carry it. It
+# does not - measured, the reply then appears nowhere at all:
 #
-# DataLinkLayer::_ipParameters is never assigned on the TP layer, so the
-# property is the wrong source anyway. IpDataLinkLayer::isTunnelAddress()
-# knows the connections that are actually open, and the cEMI server holds a
-# pointer to that layer.
+#     IP;RX;1.1.4;1.1.0;DeviceDescriptorRead
+#     (nothing)
+#
+# So the mirror is broken independently of this, and closing the TP path only
+# removes the one route that happened to work: on this installation a second
+# interface on the line picked the frame up and carried it back to ETS. Until
+# the mirror is understood, the wrong path is better than no path.
+#
+# Do not re-enable without checking that a reply to a tunnel client actually
+# produces a "Tunnel;TX" line in the bus monitor.
 
 TUNPA_MARKER = "// sbip: ask the IP layer, which knows the open connections"
 
@@ -839,4 +837,5 @@ def patch_tunnel_pa():
     print("patch_knx.py: tunnel address lookup restored")
 
 
-patch_tunnel_pa()
+# Switched off, see the block above.
+# patch_tunnel_pa()

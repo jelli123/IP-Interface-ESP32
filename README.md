@@ -1962,9 +1962,25 @@ wie das Gerät** – also genau dann, wenn die ETS mit der Projektierung fertig
 ist. Vorher (`0.0.1` gegen `1.1.0`) führt derselbe Code die Antwort korrekt
 über die IP-Seite.
 
-Der achte Patch holt die Auskunft dort, wo sie stimmt:
-`IpDataLinkLayer::isTunnelAddress()` kennt die tatsächlich offenen
-Verbindungen, und der cEMI-Server hält einen Zeiger auf diese Schicht.
+**Der naheliegende Fix hilft trotzdem nicht.** Lässt man `isTunnelingPA()`
+wahrheitsgemäß antworten – die Auskunft dazu liegt in
+`IpDataLinkLayer::isTunnelAddress()`, erreichbar über den cEMI-Server –, dann
+unterbleibt der Versand auf TP, und die Antwort taucht **nirgends** mehr auf:
+weder `TP;TX` noch `Tunnel;TX`. Die Spiegelung in den Tunnel am Ende von
+`sendTelegram()` funktioniert also unabhängig davon nicht.
+
+Solange das nicht geklärt ist, bleibt dieser achte Patch **abgeschaltet** –
+er steht auskommentiert in [scripts/patch_knx.py](scripts/patch_knx.py). In
+dieser Anlage nimmt ein zweites Interface auf der Linie den Rahmen vom Bus
+auf und trägt ihn zur ETS; der falsche Weg ist hier besser als gar keiner.
+
+> **Vor dem Wiedereinschalten prüfen:** Erzeugt eine Antwort an einen
+> Tunnel-Client eine `Tunnel;TX`-Zeile im Busmonitor? Erst wenn ja, ist der
+> Patch ein Fortschritt.
+
+Broadcasts sind nicht betroffen – `IndividualAddressRead` wird zuverlässig
+beantwortet. Es trifft nur Punkt-zu-Punkt-Verkehr an die eigene Adresse, also
+genau das, was ein Applikationsdownload braucht.
 
 ### Fremde Produktdatenbank verwenden
 
