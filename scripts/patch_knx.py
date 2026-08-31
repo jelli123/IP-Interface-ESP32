@@ -534,14 +534,75 @@ def patch_monitor_tunnel_tx():
             'supported, the ETS bus monitor cannot work over this device");\n',
         )
 
+    # A reply that finds no tunnel is dropped without a word, which is
+    # indistinguishable from never having been generated. Same treatment.
+    patched = with_drop_log(patched)
+
     with open(TARGET, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(patched)
 
     print("patch_knx.py: tunnel transmit hook applied to ip_data_link_layer.cpp")
 
 
+DROP_MARKER = "sbip: no tunnel for "
+
+DROP_ANCHOR = (
+    "    if (tun == nullptr)\n"
+    "    {\n"
+    "#ifdef KNX_LOG_TUNNELING\n"
+    '        print("Found no Tunnel for IA: ");\n'
+    "        println(frame.destinationAddress(), 16);\n"
+    "#endif\n"
+    "        return;\n"
+    "    }\n"
+)
+
+DROP_NEW = (
+    "    if (tun == nullptr)\n"
+    "    {\n"
+    '        print("' + DROP_MARKER + '");\n'
+    "        print(frame.destinationAddress() >> 12);\n"
+    '        print(".");\n'
+    "        print((frame.destinationAddress() >> 8) & 0x0F);\n"
+    '        print(".");\n'
+    "        print(frame.destinationAddress() & 0xFF);\n"
+    '        println(" - the frame is dropped");\n'
+    "        return;\n"
+    "    }\n"
+)
+
+
+def with_drop_log(source):
+    # Three call sites share this block - dataRequestToTunnel,
+    # dataConfirmationToTunnel and dataIndicationToTunnel. All three drop the
+    # frame, so all three get the same line; the address in it says which.
+    if DROP_MARKER in source or DROP_ANCHOR not in source:
+        return source
+    return source.replace(DROP_ANCHOR, DROP_NEW)
+
+
+def patch_tunnel_drop_log():
+    """Runs on its own, so an already patched file still gets it."""
+    if not os.path.isfile(TARGET):
+        return
+
+    with open(TARGET, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    patched = with_drop_log(source)
+
+    if patched is source:
+        return
+
+    with open(TARGET, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(patched)
+
+    print("patch_knx.py: dropped-frame reason exposed in ip_data_link_layer.cpp")
+
+
 if patch_monitor():
     patch_monitor_tunnel_tx()
+    patch_tunnel_drop_log()
     env.Append(CPPDEFINES=["SBIP_MONITOR_HOOK"])  # noqa: F821
 
 
