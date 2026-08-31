@@ -906,3 +906,104 @@ def patch_tunnel_pa():
 
 # Switched off, see the block above.
 # patch_tunnel_pa()
+
+
+# --------------------------------------------------------------------------
+# 9. Retry a UDP frame the WiFi stack refused
+# --------------------------------------------------------------------------
+#
+# Found by an observation that makes no sense for a logic error: with the
+# trace build the ETS can write the individual address and download the
+# application, without it the same operations fail. Tracing slows the send
+# path down, and that is the whole difference.
+#
+# Esp32Platform::sendBytesUniCast() reported a failed endPacket() and then
+# returned true regardless:
+#
+#     if (_udp.endPacket() == 0)
+#         println("sendBytesUniCast endPacket fail");
+#     ...
+#     return true;
+#
+# So a frame the WiFi driver refused - its transmit buffers run dry when
+# telegrams follow each other closely - was silently gone, and no caller
+# could react. The message does appear in the logs of this project, right
+# after the radio comes up and, less visibly, in the middle of a download.
+#
+# Retrying is enough. The pause stays below the TP-UART's acknowledge window
+# (1.4 ms) because this runs on the main task, next to knx.loop() - and it
+# only ever happens on the failing path.
+
+UDP_MARKER = "// sbip: the WiFi transmit buffers run dry under a burst"
+
+UDP_ANCHOR = (
+    "    if (_udp.beginPacket(ucastaddr, port) == 1)\n"
+    "    {\n"
+    "        _udp.write(buffer, len);\n"
+    "\n"
+    "        if (_udp.endPacket() == 0)\n"
+    '            println("sendBytesUniCast endPacket fail");\n'
+    "    }\n"
+    "    else\n"
+    '        println("sendBytesUniCast beginPacket fail");\n'
+    "\n"
+    "    return true;\n"
+)
+
+UDP_NEW = (
+    "    " + UDP_MARKER + "\n"
+    "    // and endPacket() then fails. Returning true regardless lost the\n"
+    "    // frame without anyone noticing - a tunnel client just never got\n"
+    "    // its answer.\n"
+    "    for (uint8_t sbipTry = 0; sbipTry < 3; sbipTry++)\n"
+    "    {\n"
+    "        if (sbipTry > 0)\n"
+    "            delayMicroseconds(400);\n"
+    "\n"
+    "        if (_udp.beginPacket(ucastaddr, port) != 1)\n"
+    "            continue;\n"
+    "\n"
+    "        _udp.write(buffer, len);\n"
+    "\n"
+    "        if (_udp.endPacket() != 0)\n"
+    "            return true;\n"
+    "    }\n"
+    "\n"
+    '    println("sbip: a unicast frame was refused three times and is lost");\n'
+    "    return false;\n"
+)
+
+
+def patch_udp_retry():
+    platform_c = os.path.join(
+        env["PROJECT_LIBDEPS_DIR"],  # noqa: F821
+        env["PIOENV"],  # noqa: F821
+        "knx",
+        "src",
+        "esp32_platform.cpp",
+    )
+
+    if not os.path.isfile(platform_c):
+        return
+
+    with open(platform_c, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if UDP_MARKER in source:
+        return
+
+    if source.count(UDP_ANCHOR) != 1:
+        sys.stderr.write(
+            "patch_knx.py: anchor no longer unique, a UDP frame the WiFi "
+            "driver refuses stays lost - tunnel clients will miss answers "
+            "under load:\n  %s\n" % UDP_ANCHOR.strip().splitlines()[0]
+        )
+        return
+
+    with open(platform_c, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source.replace(UDP_ANCHOR, UDP_NEW))
+
+    print("patch_knx.py: UDP unicast retry applied to esp32_platform.cpp")
+
+
+patch_udp_retry()

@@ -1982,6 +1982,58 @@ Broadcasts sind nicht betroffen – `IndividualAddressRead` wird zuverlässig
 beantwortet. Es trifft nur Punkt-zu-Punkt-Verkehr an die eigene Adresse, also
 genau das, was ein Applikationsdownload braucht.
 
+### Verworfene UDP-Pakete: der Fehler, der sich beim Messen versteckte
+
+Ein Befund, der für einen Logikfehler keinen Sinn ergibt: Mit dem
+`*_trace`-Build gelangen Adressvergabe und Applikationsdownload, mit dem
+normalen Build scheiterten dieselben Vorgänge. Der Unterschied zwischen
+beiden ist nur Zeit – der Trace bremst den Sendeweg.
+
+Die Ursache stand die ganze Zeit im Protokoll:
+
+```
+sendBytesUniCast endPacket fail
+```
+
+`Esp32Platform::sendBytesUniCast()` meldete den Fehlschlag und gab trotzdem
+Erfolg zurück:
+
+```cpp
+if (_udp.endPacket() == 0)
+    println("sendBytesUniCast endPacket fail");
+...
+return true;                 // auch nach dem Fehlschlag
+```
+
+Wenn die Sendepuffer des WLAN-Treibers bei dicht aufeinanderfolgenden
+Telegrammen volllaufen, weist er das Paket ab. Es war damit verloren, ohne
+dass ein Aufrufer reagieren konnte – ein Tunnel-Client bekam seine Antwort
+einfach nie. Beim Herunterladen einer Applikation folgen Telegramme dicht
+aufeinander, deshalb traf es genau diesen Fall.
+
+Der neunte Patch wiederholt den Versuch:
+
+```cpp
+for (uint8_t sbipTry = 0; sbipTry < 3; sbipTry++)
+{
+    if (sbipTry > 0) delayMicroseconds(400);
+    if (_udp.beginPacket(ucastaddr, port) != 1) continue;
+    _udp.write(buffer, len);
+    if (_udp.endPacket() != 0) return true;
+}
+println("sbip: a unicast frame was refused three times and is lost");
+return false;
+```
+
+Die Pause bleibt unter dem Quittungsfenster des TP-UART (1,4 ms), weil das
+auf dem Haupttask neben `knx.loop()` läuft – und sie fällt nur auf dem
+Fehlerpfad an. Der Rückgabewert ist jetzt ehrlich, wodurch auch die Prüfung
+in `sendFrameToTunnel()` erstmals etwas bewirkt.
+
+> **Lehre:** Ein Fehler, der mit eingeschalteter Diagnose verschwindet, ist
+> ein Zeitproblem. Und eine Funktion, die einen Fehler meldet und danach
+> Erfolg zurückgibt, verhindert jede Reaktion darauf.
+
 ### Den KNX-Stack mitlesen: `*_trace`
 
 Der Stack entscheidet vieles im Stillen – an welchen Tunnel ein Rahmen geht,
