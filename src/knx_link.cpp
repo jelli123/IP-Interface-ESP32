@@ -685,6 +685,10 @@ uint8_t KnxLink::tunnelAddresses(uint16_t* out, uint8_t max) const
 
 String KnxLink::friendlyName() const
 {
+    // The name is projected by ETS. Without a download there is nothing to
+    // read, and the stack answers such a read with an uninitialised buffer.
+    if (!knx.configured()) return String();
+
     // Lives in the IP parameter object, not the device object - the name is
     // part of the KNXnet/IP device DIB, not of the KNX device description.
     uint8_t  count  = 30; // PID_FRIENDLY_NAME is a fixed 30 octet string
@@ -694,6 +698,10 @@ String KnxLink::friendlyName() const
     knxBau.propertyValueRead(OT_IP_PARAMETER, 1, PID_FRIENDLY_NAME, count, 1,
                              &data, length);
     if (data == nullptr) return String();
+
+    // BauSystemB::propertyValueRead() reports the requested size even when it
+    // read nothing, so only "count" says how many bytes were really written.
+    if (length > count) length = count;
 
     String name;
     for (uint32_t i = 0; i < length; i++)

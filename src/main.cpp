@@ -172,8 +172,8 @@ void setup()
 
     {
         String knxName = knxLink.friendlyName();
-        sysLog.printf("KNX: discovery name \"%s\"\n",
-                      knxName.length() ? knxName.c_str() : "(empty)");
+        if (knxName.length())
+            sysLog.printf("KNX: discovery name \"%s\"\n", knxName.c_str());
     }
 
     /*

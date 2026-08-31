@@ -1,0 +1,55 @@
+From 1eaee559663aa83b1fead73b703323e0a8f9da18 Mon Sep 17 00:00:00 2001
+From: Selfbus IP interface <noreply@example.invalid>
+Date: Tue, 1 Sep 2026 00:27:27 +0200
+Subject: [PATCH] Give _couplerType a defined value
+
+NetworkLayerCoupler::_couplerType has no initialiser and is not in
+the constructor's initialiser list. evaluateCouplerType() assigns
+it only for an address ending in .0; the else branch is a
+commented-out sketch of the TP1 bridge/repeater case and leaves
+the member alone.
+
+So the first call on a device whose stored address is not x.y.0
+reads an indeterminate value, and a later call after ETS has
+written such an address keeps the previous one. routeDataIndividual()
+then acts on a coupler type the device does not have, or returns
+at its "unknown coupler type, should not happen" branch - which
+drops every point-to-point frame without a word. Broadcasts keep
+working, so ETS finds the device but cannot talk to it.
+
+This does not implement the missing bridge/repeater logic, it only
+makes the value defined.
+---
+ src/knx/network_layer_coupler.cpp | 3 +++
+ src/knx/network_layer_coupler.h   | 2 +-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/knx/network_layer_coupler.cpp b/src/knx/network_layer_coupler.cpp
+index 6583e83..8bb56ec 100644
+--- a/src/knx/network_layer_coupler.cpp
++++ b/src/knx/network_layer_coupler.cpp
+@@ -62,6 +62,9 @@ void NetworkLayerCoupler::evaluateCouplerType()
+     else
+     {
+         // Device is not a router, check if TP1 bridge or TP1 repeater
++        // Neither is implemented yet, but leaving the member untouched
++        // would keep a stale coupler type from an earlier address.
++        _couplerType = TP1Repeater;
+         /*
+               if (PID_L2_COUPLER_TYPE.BIT0 == 0)
+               {
+diff --git a/src/knx/network_layer_coupler.h b/src/knx/network_layer_coupler.h
+index 75f1694..3b02853 100644
+--- a/src/knx/network_layer_coupler.h
++++ b/src/knx/network_layer_coupler.h
+@@ -75,6 +75,6 @@ class NetworkLayerCoupler : public NetworkLayer
+         RouterObject* _rtObjPrimary {nullptr};
+         RouterObject* _rtObjSecondary {nullptr};
+ 
+-        CouplerType _couplerType;
++        CouplerType _couplerType = TP1Repeater;
+         uint16_t _currentAddress;
+ };
+-- 
+2.53.0.windows.1
+

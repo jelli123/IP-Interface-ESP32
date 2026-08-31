@@ -1,0 +1,56 @@
+From 1a315a9faa334d6723e77a627acf23dbbc3a6aef Mon Sep 17 00:00:00 2001
+From: Selfbus IP interface <noreply@example.invalid>
+Date: Tue, 1 Sep 2026 00:27:24 +0200
+Subject: [PATCH] Stop isTunnelingPA() from dereferencing a null pointer
+
+DataLinkLayer::_ipParameters is declared but never assigned.
+The setter that would assign it, DataLinkLayer::ipParameterObject(),
+is declared in the header and has no definition and no caller
+anywhere in the library. IpDataLinkLayer declares a member of the
+same name - a reference, not a pointer - which shadows the base
+member, so the base class never sees a valid object.
+
+isTunnelingPA() dereferences it as soon as a unicast frame is
+forwarded with KNX_TUNNELING enabled. On ESP32 that is a
+LoadProhibited exception inside InterfaceObject::property().
+
+This only stops the crash. Answering "not a tunnel address"
+disables an optimisation, nothing more: the frame goes to TP1 as
+it would without KNX_TUNNELING. Wiring the base member up - or
+removing it together with the dead setter and making the check
+virtual - is the real fix and is a decision for the maintainer.
+---
+ src/knx/data_link_layer.cpp | 4 ++++
+ src/knx/data_link_layer.h   | 2 +-
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/knx/data_link_layer.cpp b/src/knx/data_link_layer.cpp
+index f2a88c6..fe1334c 100644
+--- a/src/knx/data_link_layer.cpp
++++ b/src/knx/data_link_layer.cpp
+@@ -281,6 +281,10 @@ uint8_t* DataLinkLayer::frameData(CemiFrame& frame)
+ #ifdef KNX_TUNNELING
+ bool DataLinkLayer::isTunnelingPA(uint16_t pa)
+ {
++    // Never assigned: the setter ipParameterObject() has no definition.
++    if (_ipParameters == nullptr)
++        return false;
++
+     uint8_t numAddresses = 0;
+     uint16_t* addresses = _ipParameters->additionalIndivualAddresses(numAddresses);
+ 
+diff --git a/src/knx/data_link_layer.h b/src/knx/data_link_layer.h
+index 380b12c..b32aaf0 100644
+--- a/src/knx/data_link_layer.h
++++ b/src/knx/data_link_layer.h
+@@ -72,6 +72,6 @@ class DataLinkLayer
+ #ifdef KNX_TUNNELING
+         bool isTunnelingPA(uint16_t pa);
+         bool isRoutedPA(uint16_t pa);
+-        IpParameterObject* _ipParameters;
++        IpParameterObject* _ipParameters = nullptr;
+ #endif
+ };
+-- 
+2.53.0.windows.1
+

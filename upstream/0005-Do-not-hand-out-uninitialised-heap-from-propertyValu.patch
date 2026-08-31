@@ -1,0 +1,44 @@
+From 85c27427cb4b249223f5dac0cb099c8e91a9763d Mon Sep 17 00:00:00 2001
+From: Selfbus IP interface <noreply@example.invalid>
+Date: Tue, 1 Sep 2026 00:27:26 +0200
+Subject: [PATCH] Do not hand out uninitialised heap from propertyValueRead()
+
+BauSystemB::propertyValueRead() allocates the buffer for the
+requested number of elements and reports that size in `length`,
+whatever readProperty() actually wrote. readProperty() sets
+elementCount to 0 when the property does not exist, and
+Property::read() returns 0 when the requested range is not
+available - in both cases the buffer is never written.
+
+A caller that trusts `length` then reads uninitialised heap. In
+our case a read of PID_FRIENDLY_NAME on an unprogrammed device
+returned the remains of an unrelated string, which the firmware
+duly published over its web API.
+
+elementCount already carries the answer; this reports the size
+that belongs to it.
+---
+ src/knx/bau_systemB.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/knx/bau_systemB.cpp b/src/knx/bau_systemB.cpp
+index b727148..b07d7b8 100644
+--- a/src/knx/bau_systemB.cpp
++++ b/src/knx/bau_systemB.cpp
+@@ -744,6 +744,13 @@ void BauSystemB::propertyValueRead(ObjectType objectType, uint8_t objectInstance
+ 
+         *data = new uint8_t [size];
+         obj->readProperty((PropertyID)propertyId, startIndex, elementCount, *data);
++
++        // readProperty() reports what it really wrote. Keeping the requested
++        // size here would hand the caller uninitialised heap memory.
++        if (elementCount == 0)
++            size = 0;
++        else if (startIndex > 0)
++            size = elementSize * elementCount;
+     }
+     else
+     {
+-- 
+2.53.0.windows.1
+

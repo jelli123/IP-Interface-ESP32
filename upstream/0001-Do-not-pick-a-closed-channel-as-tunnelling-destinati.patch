@@ -1,0 +1,47 @@
+From 285c4e8561280f02431c12512460aede7576fb33 Mon Sep 17 00:00:00 2001
+From: Selfbus IP interface <noreply@example.invalid>
+Date: Tue, 1 Sep 2026 00:27:21 +0200
+Subject: [PATCH] Do not pick a closed channel as tunnelling destination
+
+dataRequestToTunnel() and dataConfirmationToTunnel() search the
+tunnel table by individual address without looking at ChannelId.
+A slot that was never used, or that Reset() has just cleared,
+holds IndividualAddress == 0, and so does a cEMI frame whose
+source address has not been filled in yet. The search then
+returns a closed connection and the answer is sent to
+IpAddress 0, port 0.
+
+The group address branch a few lines above already tests
+ChannelId != 0; this makes the two unicast searches agree with
+it.
+---
+ src/knx/ip_data_link_layer.cpp | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/knx/ip_data_link_layer.cpp b/src/knx/ip_data_link_layer.cpp
+index 461350c..6a5d078 100644
+--- a/src/knx/ip_data_link_layer.cpp
++++ b/src/knx/ip_data_link_layer.cpp
+@@ -75,6 +75,9 @@ void IpDataLinkLayer::dataRequestToTunnel(CemiFrame& frame)
+ 
+     for (int i = 0; i < KNX_TUNNELING; i++)
+     {
++        if (tunnels[i].ChannelId == 0)
++            continue;
++
+         if (tunnels[i].IndividualAddress == frame.sourceAddress())
+             continue;
+ 
+@@ -128,6 +131,9 @@ void IpDataLinkLayer::dataConfirmationToTunnel(CemiFrame& frame)
+ 
+     for (int i = 0; i < KNX_TUNNELING; i++)
+     {
++        if (tunnels[i].ChannelId == 0)
++            continue;
++
+         if (tunnels[i].IndividualAddress == frame.destinationAddress())
+             continue;
+ 
+-- 
+2.53.0.windows.1
+

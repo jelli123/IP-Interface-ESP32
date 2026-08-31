@@ -2818,6 +2818,19 @@ Selfbus-Baukasten durchaus der Fall ist. Dann eine zweite URL neben
 
 ---
 
+## Was am KNX-Stack geändert wird
+
+Die Bibliothek wird beim Bauen gepatcht. Ein Teil davon ist auf dieses Produkt
+zugeschnitten, ein anderer sind Fehler, die jeden treffen, der den Stack als
+KNXnet/IP-Schnittstelle betreibt.
+
+[KNXSTACK.md](KNXSTACK.md) trennt beides, hält die Belege fest und beschreibt
+neun Befunde in einer Form, aus der sich ohne weitere Arbeit Issues machen
+lassen. Für sechs davon liegen fertige, gegen den unveränderten Master geprüfte
+Patches in [upstream/](upstream/).
+
+---
+
 ## Lizenz und verwendete Komponenten
 
 Diese Firmware steht unter der **GPL-3.0**

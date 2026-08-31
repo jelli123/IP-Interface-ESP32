@@ -1,0 +1,36 @@
+From 00d7c90ce9278d0d9c81102433fdcf03ded65b14 Mon Sep 17 00:00:00 2001
+From: Selfbus IP interface <noreply@example.invalid>
+Date: Tue, 1 Sep 2026 00:27:22 +0200
+Subject: [PATCH] Fix use-after-scope of the default tunnel address buffer
+
+loopHandleConnectRequest() builds the default tunnel addresses
+in addrbuffer, a local array inside the else branch, and lets
+`addresses` point at it. addrbuffer goes out of scope at the end
+of that branch, but `addresses` is read much further down:
+
+    popWord(tunPa, addresses + (tunIdx * 2));
+
+The values have just been written into the property, so the
+property's own storage is the correct thing to point at - the
+same storage the if branch above already uses.
+---
+ src/knx/ip_data_link_layer.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/knx/ip_data_link_layer.cpp b/src/knx/ip_data_link_layer.cpp
+index 461350c..333372d 100644
+--- a/src/knx/ip_data_link_layer.cpp
++++ b/src/knx/ip_data_link_layer.cpp
+@@ -668,6 +668,9 @@ void IpDataLinkLayer::loopHandleConnectRequest(uint8_t* buffer, uint16_t length,
+ 
+         uint8_t count = KNX_TUNNELING;
+         _ipParameters.writeProperty(PID_ADDITIONAL_INDIVIDUAL_ADDRESSES, 1, addrbuffer, count);
++
++        // addrbuffer dies with this block; the values are in the property now.
++        addresses = _ipParameters.propertyData(PID_ADDITIONAL_INDIVIDUAL_ADDRESSES);
+ #ifdef KNX_LOG_TUNNELING
+         println("no Tunnel-PAs configured, using own subnet");
+ #endif
+-- 
+2.53.0.windows.1
+
