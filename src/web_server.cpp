@@ -488,6 +488,17 @@ static void registerWifiRoutes()
                           ? request->getParam("password", true)->value()
                           : String("");
 
+        ssid.trim();
+
+        // An empty name would be stored and then rejected at boot, leaving the
+        // device in the fallback AP with no hint why.
+        if (ssid.length() == 0 || ssid.length() > 32)
+        {
+            request->send(400, "application/json",
+                          "{\"error\":\"the network name must hold 1 to 32 characters\"}");
+            return;
+        }
+
         request->send(200, "application/json", "{\"status\":\"ok\"}");
         netManager.applyCredentials(ssid, pass);
     });

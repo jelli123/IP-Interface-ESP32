@@ -1268,6 +1268,12 @@ Bootloader-Rollback fängt ein defektes Image auf. Siehe
 4. Dashboard unter `http://sbip.local` oder der DHCP-Adresse.
 5. In der ETS als KNXnet/IP-Schnittstelle programmieren.
 
+**Verborgene Netze.** Das Namensfeld ist ein Eingabefeld mit Vorschlagsliste,
+kein reines Auswahlfeld. Ein Netz, das seinen Namen nicht aussendet, steht in
+keiner Suche – tippen Sie ihn dort von Hand ein. Groß- und Kleinschreibung
+zählt. Sonst ändert sich nichts: `WiFi.begin()` fragt aktiv nach dem Namen und
+findet auch einen Zugangspunkt, der schweigt.
+
 **AP erzwingen:** Taster halten, der auf *WLAN Grundeinstellung* zugeordnet
 ist – in der Vorgabe der Boot-Taster, ab 2 s. Siehe *Taster und LEDs*.
 

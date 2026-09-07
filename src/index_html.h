@@ -613,14 +613,19 @@ small{color:var(--dim)}
 
 <dialog id="wifiDlg">
   <h2>WLAN einrichten</h2>
-  <select id="ssidSel"><option>Netzwerke suchen...</option></select>
+  <input id="ssidIn" list="ssidList" placeholder="Netzwerkname (SSID)"
+         autocomplete="off" autocapitalize="off" spellcheck="false">
+  <datalist id="ssidList"></datalist>
   <input type="password" id="pw" placeholder="Passwort" autocomplete="off">
+  <p><small id="scanMsg" data-dyn></small></p>
   <div class="actions">
     <button onclick="connect()">Verbinden</button>
     <button class="sec" onclick="scan()">Neu suchen</button>
     <button class="sec" onclick="wifiDlg.close()">Abbrechen</button>
   </div>
-  <p><small>Nach dem Verbinden startet das Gerät neu.</small></p>
+  <p><small>Ein verborgenes Netz sendet seinen Namen nicht und steht deshalb
+  in keiner Suche. Tippen Sie ihn von Hand ein, genau auf Groß- und
+  Kleinschreibung achten. Nach dem Verbinden startet das Gerät neu.</small></p>
 </dialog>
 
 <dialog id="filterDlg">
@@ -1321,7 +1326,6 @@ const EN = {
 'z.B. 0/0/1 \u2013 leer = aus':'e.g. 0/0/1 \u2013 empty = off',
 '64 Hex-Zeichen \u2013 leer = ungeprüft':
   '64 hex characters \u2013 empty = unverified',
-'Netzwerke suchen...':'Searching for networks...',
 
 'Fehler':'Error', 'nicht programmiert':'not programmed', 'aktiv':'active',
 'aus':'off', 'Programmiermodus starten':'Start programming mode',
@@ -1395,7 +1399,20 @@ const EN = {
 'fehlgeschlagen':'failed', 'Übertragung abgebrochen':'transfer aborted',
 'abgelehnt':'rejected', 'Suche läuft...':'Scanning...',
 'Kein Netz gefunden':'No network found',
+'Netzwerkname (SSID)':'Network name (SSID)',
+'Netze gefunden, verborgene sind nicht dabei':
+  'networks found, hidden ones are not among them',
+['Ein verborgenes Netz sendet seinen Namen nicht und steht deshalb in keiner '
++ 'Suche. Tippen Sie ihn von Hand ein, genau auf Groß- und Kleinschreibung '
++ 'achten. Nach dem Verbinden startet das Gerät neu.']:
+  'A hidden network does not announce its name and therefore appears in no '
++ 'scan. Type it by hand, taking care of upper and lower case. The device '
++ 'restarts once it has the credentials.',
 'Zeitüberschreitung':'Timed out', 'Version %s verfügbar':'version %s available',
+
+'Bitte einen Netzwerknamen angeben.':'Please enter a network name.',
+'Zugangsdaten konnten nicht gespeichert werden.':
+  'Could not save the credentials.',
 
 'Zeit konnte nicht gesetzt werden.':'Could not set the time.',
 'Bitte Datum und Uhrzeit eingeben.':'Please enter a date and a time.',
@@ -3194,29 +3211,49 @@ function openWifi(){
     alert(t('Das Gerät läuft über Ethernet. WLAN ist nicht aktiv.'));
     return;
   }
+  // Im AP-Modus steht in s.ssid der Name des eigenen Zugangspunktes.
+  if(last && last.wifi_connected && last.ssid) $('ssidIn').value = last.ssid;
   wifiDlg.showModal(); scan();
 }
 
 async function scan(){
-  const sel = $('ssidSel');
-  sel.innerHTML = '<option>' + t('Suche läuft...') + '</option>';
+  const list = $('ssidList'), msg = $('scanMsg');
+  list.innerHTML = '';
+  msg.textContent = t('Suche läuft...');
   await fetch('/api/wifi/scan?start=1');
   for(let i=0;i<20;i++){
     await new Promise(r=>setTimeout(r,900));
     const r = await (await fetch('/api/wifi/scan')).json();
     if(Array.isArray(r)){
-      sel.innerHTML = r.length
-        ? r.map(n=>`<option value="${n.ssid}">${n.ssid} (${n.rssi} dBm)</option>`).join('')
-        : '<option>' + t('Kein Netz gefunden') + '</option>';
+      list.innerHTML = r.map(n=>
+        `<option value="${esc(n.ssid)}">${n.rssi} dBm</option>`).join('');
+      msg.textContent = r.length
+        ? r.length + ' ' + t('Netze gefunden, verborgene sind nicht dabei')
+        : t('Kein Netz gefunden');
       return;
     }
   }
-  sel.innerHTML = '<option>' + t('Zeitüberschreitung') + '</option>';
+  msg.textContent = t('Zeitüberschreitung');
 }
 
 async function connect(){
-  const body = new URLSearchParams({ssid:$('ssidSel').value, password:$('pw').value});
-  await fetch('/api/wifi/connect', {method:'POST', body});
+  const ssid = $('ssidIn').value.trim();
+
+  if(!ssid){
+    alert(t('Bitte einen Netzwerknamen angeben.'));
+    return;
+  }
+
+  const body = new URLSearchParams({ssid:ssid, password:$('pw').value});
+  const r = await fetch('/api/wifi/connect', {method:'POST', body});
+
+  if(!r.ok){
+    let msg = t('Zugangsdaten konnten nicht gespeichert werden.');
+    try { const j = await r.json(); if(j.error) msg = j.error; } catch(e){}
+    alert(msg);
+    return;
+  }
+
   wifiDlg.close();
   alert(t('Zugangsdaten gespeichert. Das Gerät startet neu.'));
 }
