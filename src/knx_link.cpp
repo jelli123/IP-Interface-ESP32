@@ -279,14 +279,23 @@ static KnxLink* s_instance = nullptr;
 /** Sliding window for the bus load figure, in milliseconds. */
 static const uint32_t BUS_LOAD_WINDOW_MS = 1000;
 
+/** TP1 line rate. Not SBIP_KNX_BAUDRATE - that is the UART to the LPC1115. */
+static const uint32_t TP1_BITS_PER_SEC = 9600;
+
 /**
- * Frames per second that count as 100 % bus load.
+ * Line time of one frame, in bit times.
  *
- * TP1 runs at 9600 bit/s. A minimal L_Data frame is 9 octets plus ACK, and
- * every octet costs 13 bit times including the two fill bits, so roughly
- * 50 frames/s saturate the line. This is an indicator, not a measurement.
+ * Every octet costs 13 bit times (start, eight data, parity, stop and the two
+ * bit gap), then 15 bit times pass before the acknowledge, the acknowledge is
+ * one more octet, and 50 bit times of inter-frame gap have to elapse before
+ * anything else may start. So a 9 octet frame holds the line for 195 bit
+ * times - about 20 ms - and a 23 octet one for 377, nearly twice as long.
+ * That difference is exactly why counting frames does not measure bus load.
  */
-static const uint32_t BUS_LOAD_FRAMES_PER_SEC = 50;
+static inline uint32_t frameBitTimes(uint32_t octets)
+{
+    return octets * 13u + 78u;
+}
 
 /*
  * Tell ETS what this device claims to be.
@@ -493,21 +502,44 @@ void KnxLink::superviseTpLink()
     }
 }
 
+void KnxLink::noteBusFrame(const uint8_t* cemi, uint16_t length)
+{
+    if (cemi == nullptr || length < 3) return;
+
+    // Message code and additional info do not travel on TP1; the checksum
+    // octet does. From the control field on, a standard frame is as long as
+    // the cEMI remainder, an extended one keeps its second control octet.
+    uint16_t ctrl = (uint16_t)(2 + cemi[1]);
+    if (length <= ctrl) return;
+
+    uint32_t octets = (uint32_t)(length - ctrl);
+    if ((cemi[ctrl] & 0x80) == 0) octets++;
+
+    _busBitsInWindow += frameBitTimes(octets);
+}
+
 void KnxLink::updateBusLoad()
-{    uint32_t now = millis();
-    if ((uint32_t)(now - _lastBusLoadWindow) < BUS_LOAD_WINDOW_MS)
+{
+    uint32_t now     = millis();
+    uint32_t elapsed = now - _lastBusLoadWindow;
+
+    if (elapsed < BUS_LOAD_WINDOW_MS)
     {
         return;
     }
     _lastBusLoadWindow = now;
 
-    uint32_t permille = (_framesInWindow * 1000) / BUS_LOAD_FRAMES_PER_SEC;
+    uint32_t bits    = _busBitsInWindow;
+    _busBitsInWindow = 0;
+
+    uint32_t capacity = (TP1_BITS_PER_SEC * elapsed) / 1000u;
+    uint32_t permille = capacity ? (bits * 1000u) / capacity : 0;
+
     _stats.busLoadPermille = (permille > 1000) ? 1000 : (uint16_t)permille;
     if (_stats.busLoadPermille > _stats.busLoadPeak)
     {
         _stats.busLoadPeak = _stats.busLoadPermille;
     }
-    _framesInWindow = 0;
 }
 
 void KnxLink::resetPeak()
@@ -609,8 +641,12 @@ void KnxLink::resume()
 
 /*
  * info carries the net index in the upper bits and the direction in bit 0.
- * Bau091A registers the IP layer as net 1 (primary) and the TP layer as
- * net 2 (secondary).
+ * The index comes straight from NetworkLayerEntity::getEntityIndex(), so it
+ * is 0 for the primary (IP) layer and 1 for the secondary (TP) one - the same
+ * numbering the bus monitor uses. It used to be read the other way round
+ * here, which put the TP counters on the IP row and made the bus load figure
+ * a count of KNXnet/IP packets. A tunnel transfer produces some six of those
+ * per telegram, so the bar sat at 100 % while the line was half idle.
  */
 void KnxLink::onActivity(uint8_t info)
 {
@@ -618,21 +654,17 @@ void KnxLink::onActivity(uint8_t info)
     uint8_t net  = info >> KNX_ACTIVITYCALLBACK_NET;
     bool    send = ((info >> KNX_ACTIVITYCALLBACK_DIR) & 0x01) == KNX_ACTIVITYCALLBACK_DIR_SEND;
 
-    if (net == 1)
+    // TP1 is accounted for in noteBusFrame(), which knows how long each frame
+    // held the line. Here there is no length to work with.
+    if (net != 0) return;
+
+    if (send)
     {
-        if (send)
-        {
-            _stats.ipTxFrames++;
-        }
-        else
-        {
-            _stats.ipRxFrames++;
-        }
+        _stats.ipTxFrames++;
     }
     else
     {
-        // Every TP1 frame, in either direction, occupies the line.
-        _framesInWindow++;
+        _stats.ipRxFrames++;
     }
 #else
     (void)info;

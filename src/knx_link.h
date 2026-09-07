@@ -32,6 +32,17 @@ public:
     };
 
     /**
+     * Account one frame that crossed the TP1 line, in either direction.
+     *
+     * Called from the bus monitor hook, which is the only place that has both
+     * the side and the length. The stack's activity callback carries neither
+     * the octet count nor an honest net index, and a frame counter alone
+     * cannot express bus load: a telegram carrying 13 octets of payload
+     * occupies the line twice as long as an acknowledged switch command.
+     */
+    void noteBusFrame(const uint8_t* cemi, uint16_t length);
+
+    /**
      * Bring up the UART and the KNX stack.
      *
      * @return true if the TP-UART answered the initial reset
@@ -271,7 +282,7 @@ private:
     bool          _sendPacked   = false;
 
     uint32_t _lastBusLoadWindow = 0;
-    uint32_t _framesInWindow    = 0;
+    uint32_t _busBitsInWindow   = 0;
     uint32_t _lastLinkCheck     = 0;
     uint32_t _busPeakAt         = 0;
 

@@ -8,6 +8,7 @@
 #include <esp_heap_caps.h>
 
 #include "hw_config.h"
+#include "knx_link.h"
 #include "log_buffer.h"
 
 BusMonitor busMonitor;
@@ -30,6 +31,19 @@ inline uint16_t ctrlOffset(const uint8_t* cemi)
 
 void BusMonitor::begin()
 {
+#ifdef SBIP_MONITOR_HOOK
+    /*
+     * Before the ring and regardless of it. Only the recording needs PSRAM;
+     * the loop watch and the bus load figure are fed from the same hook and
+     * have to work on a board without it.
+     */
+    sbipMonitorHook = &BusMonitor::hook;
+#else
+    // The build got here without patch_knx.py managing its anchors, so the
+    // stack will never call us. Say so once instead of showing an empty list.
+    sysLog.println("Monitor: stack hook missing, no telegrams will be captured");
+#endif
+
     /*
      * PSRAM only, deliberately. The internal heap has some 200 KiB free at
      * this point - taking a slice of that would trade a diagnostic aid
@@ -58,20 +72,17 @@ void BusMonitor::begin()
 
     _capacity = frames;
 
-#ifdef SBIP_MONITOR_HOOK
-    sbipMonitorHook = &BusMonitor::hook;
     sysLog.printf("Monitor: %u frames in PSRAM (%u KiB)\n",
                   (unsigned)_capacity,
                   (unsigned)(_capacity * sizeof(Entry) / 1024));
-#else
-    // The build got here without patch_knx.py managing its anchors, so the
-    // stack will never call us. Say so once instead of showing an empty list.
-    sysLog.println("Monitor: stack hook missing, no telegrams will be captured");
-#endif
 }
 
 void BusMonitor::hook(uint8_t side, bool outgoing, const uint8_t* cemi, uint16_t length)
 {
+    // The only place that has the side and the frame length together, so this
+    // is where the bus load figure gets its input.
+    if (side == SIDE_TP) knxLink.noteBusFrame(cemi, length);
+
     busMonitor.watchForLoop(side, outgoing, cemi, length);
     busMonitor.capture(side, outgoing, cemi, length);
 }
