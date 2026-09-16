@@ -59,6 +59,9 @@ public:
      * DHCP. Ignored in access point mode, where the device owns its own
      * address anyway.
      *
+     * All three in host byte order, the way KnxLink::etsIpConfig() reads them
+     * from the properties - 192.168.1.10 is 0xC0A8010A.
+     *
      * @return true if the interface accepted the configuration
      */
     bool applyStaticIp(uint32_t ip, uint32_t mask, uint32_t gw);

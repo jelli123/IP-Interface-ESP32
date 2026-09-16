@@ -620,13 +620,18 @@ bool NetManager::applyStaticIp(uint32_t ip, uint32_t mask, uint32_t gw)
 {
     if (_apMode) return false;
 
-    IPAddress address(ip);
-    IPAddress netmask(mask);
-    IPAddress gateway(gw);
+    // Octet by octet: IPAddress(uint32_t) takes the value in network byte
+    // order, so handing it a host order word turns 192.168.1.10 into
+    // 10.1.168.192 - an address no DHCP server ever offered, with a mask of
+    // 0.255.255.255. Multicast still works on such an interface, unicast does
+    // not.
+    IPAddress address(ip >> 24, ip >> 16, ip >> 8, ip);
+    IPAddress netmask(mask >> 24, mask >> 16, mask >> 8, mask);
+    IPAddress gateway(gw >> 24, gw >> 16, gw >> 8, gw);
 
     // No DNS from ETS - keep the gateway, which is right in most networks and
     // harmless where it is not: the device only resolves the update host.
-    bool ok = _ethMode ? ethInterface.configure(ip, mask, gw)
+    bool ok = _ethMode ? ethInterface.configure(address, netmask, gateway)
                        : WiFi.config(address, gateway, netmask, gateway);
 
     if (!ok)

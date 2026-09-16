@@ -66,7 +66,7 @@ public:
      *
      * @return true if the interface accepted the configuration
      */
-    bool configure(uint32_t ip, uint32_t mask, uint32_t gw);
+    bool configure(const IPAddress& ip, const IPAddress& mask, const IPAddress& gw);
 
     String   ipString() const;
     String   macString() const;

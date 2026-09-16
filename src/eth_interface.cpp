@@ -258,9 +258,9 @@ void EthInterface::macAddress(uint8_t* out) const
     ETH.macAddress(out);
 }
 
-bool EthInterface::configure(uint32_t ip, uint32_t mask, uint32_t gw)
+bool EthInterface::configure(const IPAddress& ip, const IPAddress& mask, const IPAddress& gw)
 {
-    return ETH.config(IPAddress(ip), IPAddress(gw), IPAddress(mask), IPAddress(gw));
+    return ETH.config(ip, gw, mask, gw);
 }
 
 String   EthInterface::ipString() const   { return ETH.localIP().toString(); }
@@ -287,7 +287,7 @@ uint32_t EthInterface::ipAddress() const  { return 0; }
 uint32_t EthInterface::subnetMask() const { return 0; }
 uint32_t EthInterface::gateway() const    { return 0; }
 void     EthInterface::macAddress(uint8_t* out) const { memset(out, 0, 6); }
-bool     EthInterface::configure(uint32_t, uint32_t, uint32_t) { return false; }
+bool     EthInterface::configure(const IPAddress&, const IPAddress&, const IPAddress&) { return false; }
 String   EthInterface::ipString() const   { return String("0.0.0.0"); }
 String   EthInterface::macString() const  { return String(""); }
 String   EthInterface::dnsString() const  { return String("0.0.0.0"); }
