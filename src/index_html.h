@@ -546,6 +546,7 @@ small{color:var(--dim)}
   <div class="actions">
     <button class="sec" onclick="monLoad(0)">Ältere laden</button>
     <button class="sec" onclick="monLoad(1)">Neueste laden</button>
+    <button class="sec" id="monCopy" onclick="monCopy()">In die Zwischenablage</button>
     <button class="sec" onclick="monDownload()">Als CSV speichern</button>
     <button class="sec" onclick="monClose()">Schließen</button>
   </div>
@@ -1384,7 +1385,7 @@ const EN = {
 + '- what arrives at the bottom pushes lines off the top. Top loads the whole '
 + 'buffer. Copying takes the selection, or everything shown.',
 'Aktualisieren':'Refresh', 'Leeren':'Clear', 'internes RAM':'internal RAM',
-'Kopiert':'Copied',
+'Kopiert':'Copied', 'Kopieren fehlgeschlagen':'Copy failed',
 'Herunterladen':'Download',
 'noch keine vergeben':'none assigned yet',
 'Image-Standard':'image defaults',
@@ -2028,9 +2029,7 @@ async function clearLog(){
  * http nicht gibt - genau wie bei crypto.subtle. Deshalb der Umweg ueber ein
  * kurzzeitiges textarea, das in allen Browsern auch ohne HTTPS funktioniert.
  */
-async function copyLog(){
-  const sel = String(window.getSelection());
-  const text = sel.trim() ? sel : $('logText').textContent;
+async function copyText(text){
   let ok = false;
 
   if(window.isSecureContext && navigator.clipboard){
@@ -2046,6 +2045,12 @@ async function copyLog(){
     try { ok = document.execCommand('copy'); } catch(e){}
     ta.remove();
   }
+  return ok;
+}
+
+async function copyLog(){
+  const sel = String(window.getSelection());
+  const ok = await copyText(sel.trim() ? sel : $('logText').textContent);
 
   // Das Piktogramm quittiert selbst - eine Beschriftung wuerde es ersetzen.
   const btn = $('logCopy');
@@ -2408,15 +2413,28 @@ async function monTick(){
 /* Ausgangspunkt ist das Geholte, nicht der Ring: was der Browser zeigt, ist
  * auch das, was in der Datei steht - sonst passen Filter und Datei nicht
  * zusammen. */
-function monDownload(){
-  const sep = ';';
+function monText(sep){
   const head = ['ms','Seite','Richtung','Quelle','Ziel','Prio','Wdh','Hop',
                 'Dienst','Daten','Wert'].join(sep);
   const body = monRows.map(r => [r.ms, SIDE_TXT[r.t], r.o ? 'TX' : 'RX',
       r.src || '', r.dst || '', r.p || '', r.r || 0, r.h === undefined ? '' : r.h,
       r.a || '', r.d || r.raw || '', monValue(r)].join(sep)).join('\n');
+  return head + '\n' + body;
+}
 
-  const blob = new Blob([head + '\n' + body], {type:'text/csv;charset=utf-8'});
+/* Tabulatoren statt Semikolon: so landet jede Spalte beim Einfuegen in einer
+ * Tabellenkalkulation in ihrer eigenen Zelle, ohne Importdialog. */
+async function monCopy(){
+  const ok = await copyText(monText('\t'));
+  // Nur den Wert des Textknotens tauschen: applyLang() merkt sich darin den
+  // deutschen Ursprung, ein neuer Knoten wuerde ihn verlieren.
+  const n = $('monCopy').firstChild;
+  n.nodeValue = t(ok ? 'Kopiert' : 'Kopieren fehlgeschlagen');
+  setTimeout(() => { n.nodeValue = t('In die Zwischenablage'); }, 1500);
+}
+
+function monDownload(){
+  const blob = new Blob([monText(';')], {type:'text/csv;charset=utf-8'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'sbip-monitor-'
