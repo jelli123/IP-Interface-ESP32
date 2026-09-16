@@ -552,8 +552,8 @@ small{color:var(--dim)}
   </div>
   <p><small>Der Ring liegt im PSRAM; ohne PSRAM bleibt der Monitor aus und
   es hilft nur der Gruppenmonitor der ETS. Angezeigt wird immer nur ein
-  Ausschnitt &ndash; der Filter wirkt auf das Geladene, nicht auf die
-  Aufzeichnung.</small></p>
+  Ausschnitt. Kopiert und gespeichert wird die markierten Zeilen, sonst die
+  ganze Aufzeichnung &ndash; beides mit dem eingestellten Filter.</small></p>
   <p><small>Farben: die linke Kante nennt die Seite (gr&uuml;n TP, blau IP),
   die get&ouml;nte Zeile das Senden. Ein Klick auf eine Zeile hebt alles zur
   selben Gruppenadresse hervor, ein zweiter hebt es wieder auf.</small></p>
@@ -1000,11 +1000,13 @@ const EN = {
 + 'nothing else. The value goes out as raw octets and is interpreted by '
 + 'whoever receives it. Switching is 01 or 00, a percentage 80 for 50%.',
 ['Der Ring liegt im PSRAM; ohne PSRAM bleibt der Monitor aus und es hilft nur '
-+ 'der Gruppenmonitor der ETS. Angezeigt wird immer nur ein Ausschnitt – der '
-+ 'Filter wirkt auf das Geladene, nicht auf die Aufzeichnung.']:
++ 'der Gruppenmonitor der ETS. Angezeigt wird immer nur ein Ausschnitt. Kopiert '
++ 'und gespeichert wird die markierten Zeilen, sonst die ganze Aufzeichnung – '
++ 'beides mit dem eingestellten Filter.']:
   'The ring lives in PSRAM; without it the monitor stays off and only the ETS '
-+ 'group monitor is left. The list always shows a window of the ring - the '
-+ 'filter works on what was loaded, not on the recording.',
++ 'group monitor is left. The list always shows a window of the ring. Copy and '
++ 'save take the selected rows, otherwise the whole recording - both with the '
++ 'filter applied.',
 ['Farben: die linke Kante nennt die Seite (grün TP, blau IP), die getönte '
 + 'Zeile das Senden. Ein Klick auf eine Zeile hebt alles zur selben '
 + 'Gruppenadresse hervor, ein zweiter hebt es wieder auf.']:
@@ -1386,6 +1388,7 @@ const EN = {
 + 'buffer. Copying takes the selection, or everything shown.',
 'Aktualisieren':'Refresh', 'Leeren':'Clear', 'internes RAM':'internal RAM',
 'Kopiert':'Copied', 'Kopieren fehlgeschlagen':'Copy failed',
+'lade Aufzeichnung...':'loading recording...', 'Bereit - erneut klicken':'Ready - click again',
 'Herunterladen':'Download',
 'noch keine vergeben':'none assigned yet',
 'Image-Standard':'image defaults',
@@ -2040,7 +2043,9 @@ async function copyText(text){
     ta.value = text;
     ta.style.position = 'fixed';
     ta.style.opacity = '0';
-    document.body.appendChild(ta);
+    // In den offenen Dialog: showModal() macht alles ausserhalb inert, und
+    // ein inertes textarea laesst sich nicht markieren.
+    (document.querySelector('dialog[open]') || document.body).appendChild(ta);
     ta.select();
     try { ok = document.execCommand('copy'); } catch(e){}
     ta.remove();
@@ -2156,17 +2161,26 @@ async function monLoad(newest){
   monRender(newest ? 'end' : 'start');
 }
 
-function monRender(scroll){
-  const fSide = $('fSide').value, fDir = $('fDir').value, fKind = $('fKind').value;  const fSrc = $('fSrc').value.trim(), fDst = $('fDst').value.trim();
+function monFilter(list){
+  const fSide = $('fSide').value, fDir = $('fDir').value, fKind = $('fKind').value;
+  const fSrc = $('fSrc').value.trim(), fDst = $('fDst').value.trim();
   const fSvc = $('fSvc').value.trim().toLowerCase();
 
-  const rows = monRows.filter(r =>
+  return list.filter(r =>
        (fSide === '' || String(r.t) === fSide)
     && (fDir  === '' || String(r.o) === fDir)
     && (fKind === '' || String(r.g === undefined ? '' : r.g) === fKind)
     && (!fSrc || (r.src || '').indexOf(fSrc) >= 0)
     && (!fDst || (r.dst || '').indexOf(fDst) >= 0)
     && (!fSvc || (r.a  || '').toLowerCase().indexOf(fSvc) >= 0));
+}
+
+/* Was die Tabelle gerade zeigt, in Zeilenfolge - fuer die Markierung. */
+let monShown = [];
+
+function monRender(scroll){
+  const rows = monFilter(monRows);
+  monShown = rows;
 
   const head = '<tr><th>' + t('Zeit') + '</th><th>&Delta;</th><th>' + t('Seite')
     + '</th><th></th><th>' + t('Quelle') + '</th><th>' + t('Ziel') + '</th><th>'
@@ -2410,37 +2424,109 @@ async function monTick(){
   monTimer = setTimeout(monTick, 1500);
 }
 
-/* Ausgangspunkt ist das Geholte, nicht der Ring: was der Browser zeigt, ist
- * auch das, was in der Datei steht - sonst passen Filter und Datei nicht
- * zusammen. */
-function monText(sep){
+/* Spalten fuer Datei und Zwischenablage; ohne Liste das gerade Geladene. */
+function monText(sep, list){
   const head = ['ms','Seite','Richtung','Quelle','Ziel','Prio','Wdh','Hop',
                 'Dienst','Daten','Wert'].join(sep);
-  const body = monRows.map(r => [r.ms, SIDE_TXT[r.t], r.o ? 'TX' : 'RX',
+  const body = (list || monRows).map(r => [r.ms, SIDE_TXT[r.t], r.o ? 'TX' : 'RX',
       r.src || '', r.dst || '', r.p || '', r.r || 0, r.h === undefined ? '' : r.h,
       r.a || '', r.d || r.raw || '', monValue(r)].join(sep)).join('\n');
   return head + '\n' + body;
 }
 
-/* Tabulatoren statt Semikolon: so landet jede Spalte beim Einfuegen in einer
- * Tabellenkalkulation in ihrer eigenen Zelle, ohne Importdialog. */
-async function monCopy(){
-  const ok = await copyText(monText('\t'));
+/* Die ganze Aufzeichnung, nicht nur das Geladene: in Happen von 500, dem
+ * Deckel der Firmware je Abruf. Der Filter gilt auch hier - kopiert wird,
+ * was man mit diesem Filter beim Durchblaettern saehe. */
+async function monFetchAll(){
+  const s = await monRefresh();
+  if(!s || !s.available) return null;
+
+  const all = [];
+  let from = s.oldest;
+
+  while(from < s.written){
+    let part;
+    try { part = await (await fetch('/api/monitor/frames?max=500&from=' + from)).json(); }
+    catch(e){ return null; }
+    if(!part.length) break;
+    all.push(...part);
+    from = part[part.length - 1].s + 1;
+  }
+  return monFilter(all);
+}
+
+/* Gesetzt, wenn das Kopieren nach dem Laden am Browser scheiterte. */
+let monCopyReady = null;
+
+function monCopyLabel(text, hold){
   // Nur den Wert des Textknotens tauschen: applyLang() merkt sich darin den
   // deutschen Ursprung, ein neuer Knoten wuerde ihn verlieren.
   const n = $('monCopy').firstChild;
-  n.nodeValue = t(ok ? 'Kopiert' : 'Kopieren fehlgeschlagen');
+  n.nodeValue = t(text);
+  if(hold) return;
   setTimeout(() => { n.nodeValue = t('In die Zwischenablage'); }, 1500);
 }
 
-function monDownload(){
-  const blob = new Blob([monText(';')], {type:'text/csv;charset=utf-8'});
+/* Tabulatoren statt Semikolon: so landet jede Spalte beim Einfuegen in einer
+ * Tabellenkalkulation in ihrer eigenen Zelle, ohne Importdialog.
+ *
+ * Ohne HTTPS bleibt nur execCommand('copy'), und das verlangt einen frischen
+ * Klick. Dauert das Laden zu lange, lehnt der Browser ab - dann liegt der
+ * Text bereit, und der zweite Klick kopiert ihn ohne weiteres Warten. */
+async function monCopy(){
+  if(monCopyReady !== null){
+    const text = monCopyReady;
+    monCopyReady = null;
+    monCopyLabel(await copyText(text) ? 'Kopiert' : 'Kopieren fehlgeschlagen');
+    return;
+  }
+
+  // Dieselben Spalten wie in der Datei, nicht der Tabellentext des Browsers.
+  const picked = monSelectedRows();
+  if(picked){
+    monCopyLabel(await copyText(monText('\t', picked)) ? 'Kopiert' : 'Kopieren fehlgeschlagen');
+    return;
+  }
+
+  monCopyLabel('lade Aufzeichnung...', true);
+  const rows = await monFetchAll();
+  if(rows === null){ monCopyLabel('Kopieren fehlgeschlagen'); return; }
+
+  const text = monText('\t', rows);
+  if(await copyText(text)){ monCopyLabel('Kopiert'); return; }
+
+  monCopyReady = text;
+  monCopyLabel('Bereit - erneut klicken', true);
+}
+
+/* Die Telegramme der Zeilen, die die Markierung beruehrt, oder null ohne
+ * Markierung in der Tabelle. Ganze Zeilen, auch wenn nur ein Teil markiert
+ * ist - eine CSV mit halben Datensaetzen waere nicht zu gebrauchen. */
+function monSelectedRows(){
+  const sel = window.getSelection();
+  if(!sel || sel.isCollapsed || !sel.rangeCount) return null;
+  if(!$('monBox').contains(sel.getRangeAt(0).commonAncestorContainer)) return null;
+
+  const trs = $('monTbl').rows;             // [0] ist der Kopf
+  const out = [];
+  for(let i = 1; i < trs.length; i++){
+    if(sel.containsNode(trs[i], true) && monShown[i - 1]) out.push(monShown[i - 1]);
+  }
+  return out.length ? out : null;
+}
+
+async function monDownload(){
+  const rows = monSelectedRows() || await monFetchAll();
+  if(rows === null) return;
+
+  const blob = new Blob([monText(';', rows)], {type:'text/csv;charset=utf-8'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'sbip-monitor-'
     + new Date().toISOString().slice(0,19).replace(/[-:]/g,'').replace('T','-') + '.csv';
   a.click();
-  URL.revokeObjectURL(a.href);
+  // Nicht sofort: nach einem await startet der Download erst im naechsten Takt.
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 
 async function showParts(){
