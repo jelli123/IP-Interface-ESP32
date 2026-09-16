@@ -1328,3 +1328,123 @@ def patch_tunnel_ack():
 
 
 patch_tunnel_ack()
+
+
+# --------------------------------------------------------------------------
+# Mandatory properties a mask 091A download writes
+# --------------------------------------------------------------------------
+#
+# The load procedure of mask 091A (knx_master.xml, merged with the IPR/S 3.1.1
+# application) writes PID_COUPL_SERV_CONTROL in the router object and
+# PID_ROUTING_BUSY_WAIT_TIME in the KNXnet/IP parameter object. The stack has
+# neither for this mask, so the device answers the write with zero elements
+# and the download stops.
+#
+# PID 57: RouterObject creates it only for coupler model 2.0, but 06 Profiles
+# A.3.3 lists it for mask 091A as well (read level 3, write level 0). Default
+# per 03_05_01 4.5.8: EN_SNA_READ (bit 3) set, everything else off.
+#
+# PID 78: mandatory for every KNXnet/IP router (03_08_03 2.5.28), default
+# 100 ms, range 20..100 ms. Stored only; the routing busy handling of the stack
+# keeps its own timing.
+#
+# Neither may take part in the NVM image. Memory::readMemory() restores the
+# interface objects as one byte stream with no per-object length, so a new
+# write-enabled DataProperty shifts everything behind it: a device programmed
+# by an older firmware then reads element counts out of the neighbouring
+# bytes, DataProperty::restore() allocates for them and the boot aborts before
+# setup() finishes. Both properties are held in RAM only - nothing evaluates
+# them, and the defaults come back after a restart.
+
+VOLATILE_MARKER = "// sbip: DataProperty that stays out of the NVM image"
+
+VOLATILE_CLASS = (
+    "\n"
+    + VOLATILE_MARKER + "\n"
+    "class VolatileDataProperty : public DataProperty\n"
+    "{\n"
+    "    public:\n"
+    "        using DataProperty::DataProperty;\n"
+    "        uint8_t* save(uint8_t* buffer) override { return buffer; }\n"
+    "        const uint8_t* restore(const uint8_t* buffer) override { return buffer; }\n"
+    "        uint16_t saveSize() override { return 0; }\n"
+    "};\n"
+)
+
+DATAPROP_H = os.path.join(
+    env["PROJECT_LIBDEPS_DIR"],  # noqa: F821
+    env["PIOENV"],  # noqa: F821
+    "knx", "src", "knx", "data_property.h",
+)
+
+COUPL_MARKER = "// sbip: PID_COUPL_SERV_CONTROL for coupler model 1.x (mask 091A)"
+
+COUPL_ANCHOR = (
+    "        new DataProperty( PID_SUB_LCGRPCONFIG, true, PDT_BITSET8, 1, "
+    "ReadLv3 | WriteLv0, (uint8_t) (LCGRPCONFIG::GROUP_6FFFROUTE | "
+    "LCGRPCONFIG::GROUP_7000UNLOCK | LCGRPCONFIG::GROUP_REPEAT)), "
+    "// Secondary: data group\n"
+)
+
+COUPL_EXTRA = (
+    "        " + COUPL_MARKER + "\n"
+    "        new VolatileDataProperty( PID_COUPLER_SERVICES_CONTROL, true, PDT_GENERIC_01, 1,"
+    " ReadLv3 | WriteLv0, (uint8_t) 0x08),\n"
+)
+
+BUSY_MARKER = "// sbip: PID_ROUTING_BUSY_WAIT_TIME, mandatory for KNXnet/IP routers"
+
+BUSY_ANCHOR = (
+    "        new DataProperty(PID_TTL, true, PDT_UNSIGNED_CHAR, 1, "
+    "ReadLv3 | WriteLv3, (uint8_t)16),\n"
+)
+
+BUSY_EXTRA = (
+    "        " + BUSY_MARKER + "\n"
+    "        new VolatileDataProperty(PID_ROUTING_BUSY_WAIT_TIME, true, PDT_UNSIGNED_INT, 1,"
+    " ReadLv3 | WriteLv3, (uint16_t)100),\n"
+)
+
+
+def insert_after(path, marker, anchor, extra, what):
+    if not os.path.isfile(path):
+        return
+
+    with open(path, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if marker in source:
+        return
+
+    if source.count(anchor) != 1:
+        sys.stderr.write(
+            "patch_knx.py: anchor for %s not found, a mask 091A download "
+            "will stop at this property\n" % what
+        )
+        return
+
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source.replace(anchor, anchor + extra))
+
+    print("patch_knx.py: %s added to %s" % (what, os.path.basename(path)))
+
+
+def append_volatile_class():
+    if not os.path.isfile(DATAPROP_H):
+        return
+
+    with open(DATAPROP_H, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if VOLATILE_MARKER in source:
+        return
+
+    with open(DATAPROP_H, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source + VOLATILE_CLASS)
+
+    print("patch_knx.py: VolatileDataProperty added to data_property.h")
+
+
+append_volatile_class()
+insert_after(ROUTER, COUPL_MARKER, COUPL_ANCHOR, COUPL_EXTRA, "PID_COUPL_SERV_CONTROL")
+insert_after(IPPARAM, BUSY_MARKER, BUSY_ANCHOR, BUSY_EXTRA, "PID_ROUTING_BUSY_WAIT_TIME")

@@ -47,6 +47,7 @@ E-Mail sind Platzhalter – vor dem Einreichen `git commit --amend --reset-autho
 | 7 | Unprogrammiert unbrauchbar als reine Schnittstelle | Entwurf | – |
 | 8 | Tunnel-Quittungen werden verworfen | Lücke | – |
 | 9 | Busmonitor-Verbindung wird wortlos abgelehnt | Diagnose | – |
+| 10 | Pflicht-Properties für Maske 091A fehlen | Lücke | – |
 
 ---
 
@@ -352,11 +353,53 @@ aus – das `?` ist fest verdrahtet, obwohl der Aufrufer den Index kennt.
 
 ---
 
+## 10 – Pflicht-Properties für Maske 091A fehlen
+
+**Dateien:** `src/knx/router_object.cpp`, `src/knx/ip_parameter_object.cpp`
+
+Die Ladeprozedur der Maske 091A (`knx_master.xml`) schreibt
+`PID_COUPL_SERV_CONTROL` (57) im Router-Objekt und die IP-Router-Applikation
+`PID_ROUTING_BUSY_WAIT_TIME` (78) im KNXnet/IP-Parameterobjekt. Beide fehlen:
+
+- `RouterObject::initialize()` legt PID 57 nur für Koppler-Modell 2.0 an,
+  `Bau091A` nutzt aber Modell 1.x. Laut 06 Profiles A.3.3 gehört die Property
+  auch zu Maske 091A (Lesen Stufe 3, Schreiben Stufe 0). In `bau091A.cpp` steht
+  sie bereits als ToDo.
+- `IpParameterObject` kennt PID 78 nicht, obwohl 03_08_03 2.5.28 sie für jeden
+  KNXnet/IP-Router verlangt (Vorgabe 100 ms, 20 bis 100 ms).
+
+Das Gerät beantwortet den Schreibzugriff mit null Elementen, der Download bricht
+ab:
+
+```
+PropertyValueWrite    0139100110
+PropertyValueResponse 01390001
+```
+
+`patch_knx.py` legt beide als reine Datenproperties an – PID 57 mit
+`EN_SNA_READ` gesetzt (Vorgabe nach 03_05_01 4.5.8), PID 78 mit 100 ms.
+Ausgewertet werden sie noch nicht.
+
+Beim Nachrüsten ist Vorsicht geboten: Jede zusätzliche beschreibbare Property
+verändert das Speicherabbild im Flash. `Memory::readMemory()` liest die
+Interface-Objekte als einen Bytestrom ohne Länge je Objekt und prüft nur
+`DeviceObject::apiVersion`, Hersteller, Hardwaretyp und Version. Ein Gerät, das
+mit dem alten Stand programmiert wurde, liest nach einem Update ab der neuen
+Property verschobene Bytes. `DataProperty::restore()` übernimmt daraus
+Elementzahlen, reserviert Speicher dafür, und das Gerät startet nicht mehr.
+
+Ein Upstream-Patch sollte deshalb `apiVersion` erhöhen. Dann verwirft der Stack
+den alten Flashinhalt, und das Gerät muss neu programmiert werden, statt beim
+Start abzustürzen.
+
+---
+
 ## Was hier bleibt und nicht nach oben gehört
 
 | Änderung in `patch_knx.py` | Warum sie projektspezifisch ist |
 |---|---|
 | Herstellerproperties 204/209 im `IpParameterObject` | Nachbildung des ABB IPR/S 3.1.1; die Ladeprozedur dieses Produkts schreibt sie |
+| PID 57 und 78 als `VolatileDataProperty` (nur im RAM) | Hält das Flash-Abbild programmierter Geräte gültig, ohne `apiVersion` zu erhöhen; upstream gehören sie gespeichert, siehe Punkt 10 |
 | Busmonitor-Haken in `data_link_layer.cpp` | Dient allein der Aufzeichnung im Dashboard dieser Firmware |
 | Schleifenerkennung für Routing-Indications | Reaktion auf eine konkrete Anlage mit einem zweiten Interface auf derselben Linie |
 | `sbipRouteUnfiltered` in `router_object.cpp` | Bewusste Abweichung von der Norm, siehe [README](README.md) |
