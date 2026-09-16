@@ -55,6 +55,17 @@ static const char*  KEY_NAME = "devname";
  */
 static const uint32_t SWITCH_GRACE_MS = 60000UL;
 
+/**
+ * How long a lost Ethernet link has to stay back before it counts as back.
+ *
+ * A W5500 whose cable was pulled at the far end can report a link for a
+ * moment: the open cable picks up enough noise for the PHY to see pulses,
+ * and the receive path logs "invalid frame length" at the same time. With a
+ * fixed ETS address hasIP() never drops, so that moment alone reads as
+ * "ready" - and used to cancel the WiFi fallback two seconds in.
+ */
+static const uint32_t ETH_STABLE_MS = 15000UL;
+
 /** Host names have no room for much else. NAME_MAX is taken by limits.h. */
 static const size_t DEVICE_NAME_MAX = 31;
 
@@ -441,9 +452,25 @@ void NetManager::superviseFailover()
 
     if (ethReady == _ethMode)
     {
+        if (_switchSince == 0) return;
+
+        // Running on Ethernet, the link is back: believe it only once it has
+        // held. In the other direction any drop resets the count at once,
+        // because restarting away from a working WiFi is the costly mistake.
+        if (_ethMode)
+        {
+            if (_agreeSince == 0) _agreeSince = millis();
+            if ((uint32_t)(millis() - _agreeSince) < ETH_STABLE_MS) return;
+        }
+
         _switchSince = 0;
+        _agreeSince  = 0;
+        sysLog.printf("Network: %s, staying\n",
+                      _ethMode ? "Ethernet is stable again" : "Ethernet went away again");
         return;
     }
+
+    _agreeSince = 0;
 
     // Restarting without stored credentials lands in the provisioning AP, and
     // an open access point appearing because somebody pulled a cable is not

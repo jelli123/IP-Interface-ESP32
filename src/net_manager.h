@@ -170,6 +170,7 @@ private:
     uint32_t _downSince      = 0;
     uint32_t _lastKick       = 0;
     uint32_t _switchSince    = 0; //!< mode and reality have disagreed since
+    uint32_t _agreeSince     = 0; //!< ...and have agreed again since
 };
 
 extern NetManager netManager;
