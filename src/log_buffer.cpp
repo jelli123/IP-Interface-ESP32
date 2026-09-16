@@ -48,6 +48,53 @@ static const size_t IDF_LINE_MAX = 256;
 
 static vprintf_like_t s_previousHook = nullptr;
 
+/*
+ * A driver in trouble repeats itself. The W5500 MAC reports a bad frame twice
+ * per received packet, some ten times a second, and those two lines alone
+ * push everything else out of the 3 KiB reset-proof ring within seconds -
+ * exactly the lines that would explain why the device restarted.
+ *
+ * So the ring keeps the first occurrence and a count instead. The console
+ * still gets every line. Two slots, because the noisy drivers tend to
+ * alternate between an error and its follow-up.
+ */
+static const uint32_t REPEAT_WINDOW_MS  = 10000UL; //!< older than this counts as new
+static const uint32_t REPEAT_SUMMARY_MS = 30000UL; //!< report a running flood this often
+static const size_t   REPEAT_SLOTS      = 2;
+
+static portMUX_TYPE s_repeatLock = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t     s_recentHash[REPEAT_SLOTS];
+static uint32_t     s_recentAt[REPEAT_SLOTS];
+static uint32_t     s_suppressed   = 0;
+static uint32_t     s_summaryAt    = 0;
+
+/*
+ * FNV-1a over the line, leaving out the "(3967591)" uptime the IDF puts in
+ * front - otherwise no two lines would ever match.
+ */
+static uint32_t lineHash(const char* line, size_t len)
+{
+    uint32_t hash    = 2166136261u;
+    bool     inStamp = false;
+    bool     stamped = false;
+
+    for (size_t i = 0; i < len; i++)
+    {
+        char c = line[i];
+
+        if (!stamped && c == '(') { inStamp = true; continue; }
+        if (inStamp)
+        {
+            if (c == ')') { inStamp = false; stamped = true; }
+            continue;
+        }
+
+        hash = (hash ^ (uint8_t)c) * 16777619u;
+    }
+
+    return hash;
+}
+
 void LogBuffer::begin()
 {
     if (_buf != nullptr)
@@ -275,16 +322,87 @@ int LogBuffer::idfHook(const char* format, va_list args)
 
     if (written > 0)
     {
-        size_t len = (size_t)written;
+        size_t   len  = (size_t)written;
         if (len >= sizeof(line)) len = sizeof(line) - 1;
-        sysLog.store(line, len);
+
+        uint32_t hash = lineHash(line, len);
+        uint32_t now  = millis();
+        bool     repeat = false;
+        uint32_t report = 0;
+
+        portENTER_CRITICAL(&s_repeatLock);
+
+        for (size_t i = 0; i < REPEAT_SLOTS; i++)
+        {
+            if (s_recentAt[i] != 0 && s_recentHash[i] == hash &&
+                (uint32_t)(now - s_recentAt[i]) < REPEAT_WINDOW_MS)
+            {
+                s_recentAt[i] = now;
+                repeat        = true;
+                break;
+            }
+        }
+
+        if (repeat)
+        {
+            if (s_suppressed == 0) s_summaryAt = now;
+            s_suppressed++;
+
+            if ((uint32_t)(now - s_summaryAt) >= REPEAT_SUMMARY_MS)
+            {
+                report       = s_suppressed;
+                s_suppressed = 0;
+                s_summaryAt  = now;
+            }
+        }
+        else
+        {
+            report       = s_suppressed;
+            s_suppressed = 0;
+
+            s_recentHash[1] = s_recentHash[0];
+            s_recentAt[1]   = s_recentAt[0];
+            s_recentHash[0] = hash;
+            s_recentAt[0]   = (now != 0) ? now : 1;
+        }
+
+        portEXIT_CRITICAL(&s_repeatLock);
+
+        if (report > 0) storeRepeatCount(report);
+        if (!repeat) sysLog.store(line, len);
     }
 
     return (s_previousHook != nullptr) ? s_previousHook(format, args) : 0;
 }
 
+void LogBuffer::storeRepeatCount(uint32_t count)
+{
+    char   note[64];
+    size_t len = (size_t)snprintf(note, sizeof(note),
+                                  "(%u repeated ESP-IDF lines not kept)\n",
+                                  (unsigned)count);
+    sysLog.store(note, len);
+}
+
+/*
+ * A flood that simply stops is followed by our own lines rather than by
+ * another IDF one, so the count has to be settled from here as well.
+ */
+void LogBuffer::flushRepeats()
+{
+    if (s_suppressed == 0) return; // unlocked peek, the lock below decides
+
+    portENTER_CRITICAL(&s_repeatLock);
+    uint32_t report = s_suppressed;
+    s_suppressed    = 0;
+    portEXIT_CRITICAL(&s_repeatLock);
+
+    if (report > 0) storeRepeatCount(report);
+}
+
 size_t LogBuffer::write(uint8_t value)
 {
+    if (_atLineStart) flushRepeats();
     char c = (char)value;
     store(&c, 1);
     return Serial.write(value);
@@ -292,6 +410,7 @@ size_t LogBuffer::write(uint8_t value)
 
 size_t LogBuffer::write(const uint8_t* data, size_t len)
 {
+    if (_atLineStart) flushRepeats();
     store((const char*)data, len);
     return Serial.write(data, len);
 }

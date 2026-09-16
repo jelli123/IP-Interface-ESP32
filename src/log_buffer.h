@@ -107,6 +107,10 @@ public:
 
 private:
     void store(const char* data, size_t len);
+
+    /** Settle the count of ESP-IDF lines held back as repeats, if any. */
+    static void flushRepeats();
+    static void storeRepeatCount(uint32_t count);
     void appendRaw(const char* data, size_t len);
 
     static size_t makeStamp(char* out, size_t max);
