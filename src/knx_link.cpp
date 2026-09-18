@@ -20,6 +20,7 @@
 #include "knx_link.h"
 
 #include "log_buffer.h"
+#include "net_manager.h"
 KnxLink knxLink;
 
 /*
@@ -74,6 +75,7 @@ static void reportRoutingLoop(uint32_t fromIp, uint16_t source, bool ownIp)
 static Preferences  knxPrefs;
 static const char*  KNX_NS       = "sbip-knx";
 static const char*  KEY_ROUTEALL = "routeall";
+static const char*  KEY_KEEPIA   = "keepia";  //!< set by a master reset without IA
 
 /*
  * Platform with a runtime-selectable network interface.
@@ -174,6 +176,11 @@ public:
     {
         if (_knxMemory == nullptr || _knxPartition == nullptr) return;
 
+        // A master reset asked for an empty image. Sticky until the restart:
+        // anything that writes the memory before then would otherwise put
+        // the old configuration straight back.
+        if (_wipe) memset(_knxMemory, 0xFF, _knxSize);
+
         uint8_t header[HEADER_SIZE] = {0};
         memcpy(header, MAGIC, sizeof(MAGIC));
         header[8]  = (uint8_t)(_knxSize & 0xFF);
@@ -225,6 +232,20 @@ public:
                                      : Esp32Platform::currentDefaultGateway();
     }
 
+    /*
+     * Deferred, so what the stack sends just before - the A_Restart response
+     * to a master reset above all - still leaves the device. Esp32Platform
+     * restarts on the spot, and ETS then waits in vain for the answer.
+     */
+    void restart() override
+    {
+        sysLog.println("KNX: restart requested by the stack");
+        netManager.scheduleReboot();
+    }
+
+    /** Store an empty image from now on, see commitToEeprom(). */
+    void wipeOnCommit() { _wipe = true; }
+
     void macAddress(uint8_t* addr) override
     {
         if (ethInterface.active())
@@ -246,6 +267,7 @@ private:
     const esp_partition_t* _knxPartition = nullptr;
     uint8_t*               _knxMemory    = nullptr;
     uint32_t               _knxSize      = 0;
+    bool                   _wipe         = false;
 };
 
 constexpr const char SbipPlatform::MAGIC[8];
@@ -275,6 +297,37 @@ public:
     InterfaceObject* interfaceObject(ObjectType type, uint16_t instance)
     {
         return getInterfaceObject(type, instance);
+    }
+
+protected:
+    /*
+     * A_Restart as master reset. The stack calls masterReset() on each object,
+     * all of which are empty, and then writes the unchanged memory back - so
+     * the device stayed programmed. Factory reset now stores an empty image,
+     * the state readMemory() treats as never programmed, exactly what the
+     * dashboard's "clear KNX configuration" does.
+     *
+     * Only the knxcfg partition is touched. WiFi, Ethernet, the hardware
+     * profile and the routing switch live in NVS and are not ETS's business.
+     *
+     * "Without IA" keeps the individual address. The image cannot hold it
+     * alone, so it waits in NVS and KnxLink::begin() puts it back.
+     */
+    void doMasterReset(EraseCode eraseCode, uint8_t channel) override
+    {
+        Bau091A::doMasterReset(eraseCode, channel);
+
+        if (eraseCode != FactoryReset && eraseCode != FactoryResetWithoutIA) return;
+
+        if (eraseCode == FactoryResetWithoutIA && knxPrefs.begin(KNX_NS, false))
+        {
+            knxPrefs.putUShort(KEY_KEEPIA, deviceObject().individualAddress());
+            knxPrefs.end();
+        }
+
+        sysLog.printf("KNX: master reset (%s), ETS configuration erased\n",
+                      eraseCode == FactoryReset ? "factory" : "factory, keeping the address");
+        knxPlatform.wipeOnCommit();
     }
 };
 
@@ -398,6 +451,23 @@ bool KnxLink::begin()
     knx.start();
 
     _savedAddress = knx.individualAddress();
+
+    // After a master reset without IA. Not counted as saved, so
+    // persistAddress() writes it to the empty image once it has settled.
+    if (knxPrefs.begin(KNX_NS, false))
+    {
+        if (knxPrefs.isKey(KEY_KEEPIA))
+        {
+            uint16_t kept = knxPrefs.getUShort(KEY_KEEPIA, 0xFFFF);
+            knxPrefs.remove(KEY_KEEPIA);
+            knxBau.deviceObject().individualAddress(kept);
+
+            sysLog.printf("KNX: individual address %u.%u.%u kept over the master reset\n",
+                          (unsigned)(kept >> 12), (unsigned)((kept >> 8) & 0x0F),
+                          (unsigned)(kept & 0xFF));
+        }
+        knxPrefs.end();
+    }
 
     // Only meaningful once the stack has restored its load states.
     applyRouting();
