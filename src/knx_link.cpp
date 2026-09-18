@@ -583,11 +583,16 @@ void KnxLink::superviseRouting()
  * ETS sends none - the new address worked until the next power cycle, then
  * the old one was back.
  *
- * Saved once the address has held for two seconds, which lets ETS repeat
- * its write without a flash write each time. Not while a table is being
- * loaded: writeMemory() stores the whole image, and a half-written filter
- * table has no business in flash. ETS ends a download with a restart
- * anyway, which saves the address along with it.
+ * Only once ETS is done with it. writeMemory() erases and rewrites the whole
+ * knxcfg image, several sectors, and the flash cache is off meanwhile - the
+ * main task stands still for a few hundred milliseconds and frames to us go
+ * unacknowledged. Two seconds after the write, as first tried, lands right
+ * in the check that follows it, and ETS reported a timeout. So: ten seconds
+ * of an unchanged address, and never in programming mode - that path ends
+ * with a restart, which saves the address by itself.
+ *
+ * Not while a table is being loaded either: a half-written filter table has
+ * no business in flash.
  */
 void KnxLink::persistAddress()
 {
@@ -606,7 +611,7 @@ void KnxLink::persistAddress()
         return;
     }
 
-    if ((uint32_t)(millis() - _pendingSince) < 2000)
+    if ((uint32_t)(millis() - _pendingSince) < 10000 || knx.progMode())
     {
         return;
     }

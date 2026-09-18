@@ -1538,3 +1538,143 @@ def patch_monitor_unaddressed():
 
 if MONITOR_OK:
     patch_monitor_unaddressed()
+
+
+# --------------------------------------------------------------------------
+# 14. One line for the restored configuration instead of a column of numbers
+# --------------------------------------------------------------------------
+#
+# Memory::readMemory() prints a hex dump of the header, then for every saved
+# object its offset in the image - with the sign the wrong way round, as
+# "flashStart - buffer" - on a line of its own, followed by a line holding a
+# single dot. Twenty lines of the boot log that say nothing a reader can use.
+#
+# Replaced by one line with the size of each part, in the order the stack
+# registered them: for mask 091A the device object, the cEMI server object,
+# the IP parameters and the facade, then the application program and the
+# filter table. The warnings for an image that does not match stay as they
+# are. writeMemory() loses its two counting lines for the same reason.
+
+MEMLOG_C = os.path.join(
+    env["PROJECT_LIBDEPS_DIR"],  # noqa: F821
+    env["PIOENV"],  # noqa: F821
+    "knx",
+    "src",
+    "knx",
+    "memory.cpp",
+)
+
+MEMLOG_MARKER = "// sbip: restored sizes on one line, see scripts/patch_knx.py"
+
+MEMLOG_EDITS = (
+    (
+        '    println("readMemory");\n\n',
+        "",
+    ),
+    (
+        '    printHex("RESTORED ", flashStart, _metadataSize);\n\n',
+        "",
+    ),
+    (
+        '    println("restoring data from flash...");\n'
+        '    print("saverestores ");\n'
+        "    println(_saveCount);\n"
+        "\n"
+        "    for (int i = 0; i < _saveCount; i++)\n"
+        "    {\n"
+        "        println(flashStart - buffer);\n"
+        '        println(".");\n'
+        "        buffer = _saveRestores[i]->restore(buffer);\n"
+        "    }\n"
+        "\n"
+        '    println("restored saveRestores");\n',
+        "    " + MEMLOG_MARKER + "\n"
+        '    print("KNX: configuration restored - objects");\n'
+        "\n"
+        "    for (int i = 0; i < _saveCount; i++)\n"
+        "    {\n"
+        "        const uint8_t* start = buffer;\n"
+        "        buffer = _saveRestores[i]->restore(buffer);\n"
+        '        print(i ? "+" : " ");\n'
+        "        print((unsigned int)(buffer - start));\n"
+        "    }\n"
+        "\n"
+        '    print(" B");\n',
+    ),
+    (
+        '        println("TableObjects are referring to an older firmware version'
+        ' and are not loaded");\n',
+        '        println(", tables not loaded:");\n'
+        '        println("TableObjects are referring to an older firmware version'
+        ' and are not loaded");\n',
+    ),
+    (
+        '    print("tableObjs ");\n'
+        "    println(_tableObjCount);\n"
+        "\n"
+        "    for (int i = 0; i < _tableObjCount; i++)\n"
+        "    {\n"
+        "        println(flashStart - buffer);\n"
+        '        println(".");\n'
+        "        buffer = _tableObjects[i]->restore(buffer);\n"
+        "        uint16_t memorySize = 0;\n"
+        "        buffer = popWord(memorySize, buffer);\n"
+        "        println(memorySize);\n",
+        '    print(", tables");\n'
+        "\n"
+        "    for (int i = 0; i < _tableObjCount; i++)\n"
+        "    {\n"
+        "        buffer = _tableObjects[i]->restore(buffer);\n"
+        "        uint16_t memorySize = 0;\n"
+        "        buffer = popWord(memorySize, buffer);\n"
+        '        print(i ? "+" : " ");\n'
+        "        print((unsigned int)memorySize);\n",
+    ),
+    (
+        '    println("restored Tableobjects");\n',
+        '    println(" B");\n',
+    ),
+    (
+        '    print("save saveRestores ");\n'
+        "    println(_saveCount);\n"
+        "\n",
+        "",
+    ),
+    (
+        '    print("save tableobjs ");\n'
+        "    println(_tableObjCount);\n"
+        "\n",
+        "",
+    ),
+)
+
+
+def patch_memory_log():
+    if not os.path.isfile(MEMLOG_C):
+        return
+
+    with open(MEMLOG_C, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if MEMLOG_MARKER in source:
+        return
+
+    for anchor, _ in MEMLOG_EDITS:
+        if source.count(anchor) != 1:
+            sys.stderr.write(
+                "patch_knx.py: anchor no longer unique, the boot log keeps "
+                "the stack's column of offsets:\n  %s\n"
+                % anchor.strip().splitlines()[0]
+            )
+            return
+
+    for anchor, replacement in MEMLOG_EDITS:
+        source = source.replace(anchor, replacement)
+
+    with open(MEMLOG_C, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source)
+
+    print("patch_knx.py: restore log condensed in memory.cpp")
+
+
+patch_memory_log()
