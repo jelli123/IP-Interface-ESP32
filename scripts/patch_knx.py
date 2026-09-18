@@ -739,7 +739,9 @@ def patch_tunnel_drop_log():
     print("patch_knx.py: KNX trace points added to ip_data_link_layer.cpp")
 
 
-if patch_monitor():
+MONITOR_OK = patch_monitor()
+
+if MONITOR_OK:
     patch_monitor_tunnel_tx()
     patch_tunnel_drop_log()
     env.Append(CPPDEFINES=["SBIP_MONITOR_HOOK"])  # noqa: F821
@@ -1448,3 +1450,91 @@ def append_volatile_class():
 append_volatile_class()
 insert_after(ROUTER, COUPL_MARKER, COUPL_ANCHOR, COUPL_EXTRA, "PID_COUPL_SERV_CONTROL")
 insert_after(IPPARAM, BUSY_MARKER, BUSY_ANCHOR, BUSY_EXTRA, "PID_ROUTING_BUSY_WAIT_TIME")
+
+
+# --------------------------------------------------------------------------
+# 13. Show the bus monitor what the coupler does not acknowledge
+# --------------------------------------------------------------------------
+#
+# Symptom: once ETS has programmed the coupler, the bus monitor misses most
+# of the line - a line scan shows our requests but hardly any of the traffic
+# between the devices, while the same scan unprogrammed shows everything.
+#
+# Cause: TpUartDataLinkLayer asks isAckRequired() after the seventh byte and
+# passes a frame on only when the answer was yes. Bau091A answers yes for a
+# group address in the filter table and for an individual address on the
+# other side; unprogrammed, sbipRouteUnfiltered makes both say yes to
+# everything. The rest is counted as ignored and dropped before it reaches
+# frameReceived(), where the hook of patch 6 sits.
+#
+# Fix: hand those frames to the hook as well, and nothing else - they are
+# still neither acknowledged nor routed. The echo of our own frame is left
+# out, sendTelegram() has already recorded it as TX. The bus load figure,
+# fed from the same hook, now counts the whole line too.
+
+TPRX_C = os.path.join(
+    env["PROJECT_LIBDEPS_DIR"],  # noqa: F821
+    env["PIOENV"],  # noqa: F821
+    "knx",
+    "src",
+    "knx",
+    "tpuart_data_link_layer.cpp",
+)
+
+TPRX_MARKER = "// sbip: bus monitor, frames the coupler does not acknowledge"
+
+TPRX_ANCHOR_DECL = "void TpUartDataLinkLayer::processRxFrame(TpFrame* tpFrame)\n"
+
+TPRX_DECL = (
+    TPRX_MARKER + "\n"
+    "extern void (*sbipMonitorHook)(uint8_t side, bool outgoing,\n"
+    "                               const uint8_t* cemi, uint16_t length);\n"
+    "\n"
+)
+
+TPRX_ANCHOR = (
+    "        if (!(tpFrame->flags() & TP_FRAME_FLAG_ECHO))\n"
+    "            rxFrameReceived(tpFrame);\n"
+    "    }\n"
+)
+
+TPRX_NEW = TPRX_ANCHOR + (
+    "    else if (sbipMonitorHook && !(tpFrame->flags() & TP_FRAME_FLAG_ECHO))\n"
+    "    {\n"
+    "        // sbip: seen on the line, not for us - recorded, not routed.\n"
+    "        uint8_t* cemi = tpFrame->cemiData();\n"
+    "        sbipMonitorHook(_networkLayerEntity.getEntityIndex(), false,\n"
+    "                        cemi, tpFrame->cemiSize());\n"
+    "        free(cemi);\n"
+    "    }\n"
+)
+
+
+def patch_monitor_unaddressed():
+    if not os.path.isfile(TPRX_C):
+        return
+
+    with open(TPRX_C, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if TPRX_MARKER in source:
+        return
+
+    if source.count(TPRX_ANCHOR_DECL) != 1 or source.count(TPRX_ANCHOR) != 1:
+        sys.stderr.write(
+            "patch_knx.py: anchor no longer unique, the bus monitor shows only "
+            "what the coupler acknowledges once it is programmed\n"
+        )
+        return
+
+    source = source.replace(TPRX_ANCHOR_DECL, TPRX_DECL + TPRX_ANCHOR_DECL)
+    source = source.replace(TPRX_ANCHOR, TPRX_NEW)
+
+    with open(TPRX_C, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source)
+
+    print("patch_knx.py: unacknowledged TP frames passed to the bus monitor")
+
+
+if MONITOR_OK:
+    patch_monitor_unaddressed()

@@ -747,6 +747,21 @@ Monitor seine Eingabe, nicht den Build. Welcher der beiden Fälle vorliegt,
 sagt das Define `SBIP_MONITOR_HOOK`, das derselbe Patch setzt – das Dashboard
 schreibt dann „Stack-Hook fehlt“ statt eine leere Liste zu zeigen.
 
+### Auch was der Koppler nicht quittiert
+
+Ein programmierter Koppler nimmt vom Bus nur, was er quittiert: Gruppenadressen
+aus der Filtertabelle und Einzeladressen der anderen Seite. Das entscheidet
+`isAckRequired()` nach dem siebten Byte, und der TP-UART-Treiber des Stacks
+verwirft alles andere, bevor es `frameReceived()` erreicht. Unprogrammiert
+fiel das nicht auf, weil dort alles weitergeleitet und damit quittiert wird;
+nach dem ETS-Download fehlte im Monitor plötzlich der größte Teil der Linie,
+bei einem Linienscan etwa die Antworten der Geräte untereinander.
+
+Patch 13 reicht diese Telegramme in `processRxFrame()` an denselben Hook
+weiter – nur an ihn: Sie bleiben unquittiert und ungeroutet. Das Echo des
+eigenen Sendens bleibt draußen, das hat `sendTelegram()` schon als TX
+eingetragen. Nebenbei zählt die Buslast damit wieder die ganze Linie.
+
 ### Der Aufzeichnungspfad darf nichts tun
 
 `capture()` läuft im Haupttask, mitten in `knx.loop()`, direkt neben der

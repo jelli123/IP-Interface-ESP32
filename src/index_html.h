@@ -544,7 +544,7 @@ small{color:var(--dim)}
   <div id="monBox"><table class="mon" id="monTbl"></table></div>
 
   <div class="actions">
-    <button class="sec" onclick="monLoad(0)">Ältere laden</button>
+    <button class="sec" onclick="monLoad(0)">Älteste laden</button>
     <button class="sec" onclick="monLoad(1)">Neueste laden</button>
     <button class="sec" id="monCopy" onclick="monCopy()">In die Zwischenablage</button>
     <button class="sec" onclick="monDownload()">Als CSV speichern</button>
@@ -957,7 +957,7 @@ const EN = {
 'Trigger-Gruppenadresse':'Trigger group address',
 'Bei vollem Puffer anhalten statt zu überschreiben':
   'Stop when the buffer is full instead of overwriting',
-'Ältere laden':'Load older', 'Neueste laden':'Load newest',
+'Älteste laden':'Load oldest', 'Neueste laden':'Load newest',
 'Als CSV speichern':'Save as CSV',
 'Zeit':'Time', 'Quelle':'Source', 'Ziel':'Destination', 'Prio':'Prio',
 'Dienst':'Service', 'Daten':'Data', 'Wert':'Value', 'Bits':'Bits',
@@ -2081,8 +2081,10 @@ function downloadLog(){
  * entscheidet allein die Seitenauswahl im Geraet.
  * ------------------------------------------------------------------------- */
 
-const MON_WIN = 400; //!< Telegramme je Abruf
+const MON_WIN  = 400;  //!< Telegramme je Abruf
+const MON_KEEP = 1600; //!< so viele bleiben beim Blaettern geladen
 let monRows = [], monState = null, monFollow = false, monTimer = null;
+let monBusy = false, monGen = 0;
 
 // Seite 2 ist die Uebergabe durch einen Tunnel-Client - weder IP noch TP,
 // siehe bus_monitor.h.
@@ -2094,6 +2096,7 @@ function openMon(){
   monDlg.showModal();
   monModeChanged();
   monSetFollow(false);
+  $('monBox').onscroll = monScrolled;
   monRefresh().then(() => monLoad(1));
 }
 
@@ -2139,26 +2142,100 @@ async function monRefresh(){
   return s;
 }
 
-/** @param newest 1 = ans Ende springen, 0 = einen Ausschnitt weiter zurueck. */
+/** @param newest 1 = ans Ende springen, 0 = an den Anfang der Aufzeichnung. */
 async function monLoad(newest){
+  if(!newest) monSetFollow(false);
+
   const s = await monRefresh();
   if(!s || !s.available) return;
 
-  let from = null;
-  if(!newest){
-    const first = monRows.length ? monRows[0].s : s.written;
-    from = Math.max(s.oldest, first - MON_WIN);
-
-    // Nichts mehr nachzuladen - der Blick soll trotzdem an den Anfang.
-    if(first <= s.oldest){ monRender('start'); return; }
-  }
-
-  const url = '/api/monitor/frames?max=' + MON_WIN + (from === null ? '' : '&from=' + from);
-  try { monRows = await (await fetch(url)).json(); }
+  // Ein Nachladen beim Blaettern, das jetzt noch zurueckkommt, gehoert zum
+  // alten Ausschnitt und darf nicht in den neuen gemischt werden.
+  const gen = ++monGen;
+  const url = '/api/monitor/frames?max=' + MON_WIN + (newest ? '' : '&from=' + s.oldest);
+  let rows;
+  try { rows = await (await fetch(url)).json(); }
   catch(e){ return; }
+  if(gen !== monGen) return;
 
-  // Wer zurueckblaettert, will den Anfang des Geholten sehen, nicht das Ende.
+  monRows = rows;
   monRender(newest ? 'end' : 'start');
+}
+
+/*
+ * Beim Blaettern an den Rand nachladen, wie im Log: oben Aelteres davor,
+ * unten Neueres dahinter. Das Fenster bleibt auf MON_KEEP begrenzt, am
+ * anderen Ende wird entsprechend abgeschnitten. Die Zeile, die gerade oben
+ * im Bild steht, bleibt dabei an ihrem Platz.
+ */
+async function monScrolled(){
+  const box = $('monBox'), s = monState;
+  if(monBusy || !s || !monRows.length) return;
+
+  const margin = box.clientHeight * 0.5;
+  const nearTop = box.scrollTop < margin;
+  const nearEnd = box.scrollHeight - box.scrollTop - box.clientHeight < margin;
+
+  const first = monRows[0].s, next = monRows[monRows.length - 1].s + 1;
+  let from, max, older;
+
+  if(nearTop && first > s.oldest){
+    from = Math.max(s.oldest, first - MON_WIN);
+    max = first - from;
+    older = true;
+  }
+  else if(nearEnd && next < s.written){
+    from = next;
+    max = MON_WIN;
+    older = false;
+  }
+  else return;
+
+  // Wer zuruecklaeuft, will nicht bei der naechsten Runde ans Ende gerissen werden.
+  if(older) monSetFollow(false);
+
+  monBusy = true;
+  const gen = monGen;
+  try {
+    const rows = await (await fetch('/api/monitor/frames?max=' + max + '&from=' + from)).json();
+    if(gen !== monGen || !rows.length) return;
+
+    // Was der Ring inzwischen ueberschrieben hat, kommt nicht mehr lueckenlos.
+    const fresh = older ? rows.filter(r => r.s < first) : rows.filter(r => r.s >= next);
+    if(!fresh.length) return;
+
+    const anchor = monAnchor();
+    monRows = older ? fresh.concat(monRows) : monRows.concat(fresh);
+    if(monRows.length > MON_KEEP){
+      monRows = older ? monRows.slice(0, MON_KEEP) : monRows.slice(monRows.length - MON_KEEP);
+    }
+    monRender();
+    monRestore(anchor);
+  }
+  catch(e){}
+  finally {
+    monBusy = false;
+    monRefresh();
+  }
+}
+
+/** Die oberste sichtbare Zeile und ihr Abstand zur Oberkante. */
+function monAnchor(){
+  const top = $('monBox').getBoundingClientRect().top;
+  for(const tr of $('monTbl').rows){
+    if(!tr.dataset.s) continue;
+    const r = tr.getBoundingClientRect();
+    if(r.bottom > top) return {s: tr.dataset.s, off: r.top - top};
+  }
+  return null;
+}
+
+function monRestore(a){
+  if(!a) return;
+  const tr = $('monTbl').querySelector('tr[data-s="' + a.s + '"]');
+  if(!tr) return;
+  const box = $('monBox');
+  box.scrollTop += tr.getBoundingClientRect().top - box.getBoundingClientRect().top - a.off;
 }
 
 function monFilter(list){
@@ -2193,7 +2270,7 @@ function monRender(scroll){
     previous = r.ms;
     const cls = (r.o ? 'tx' : 'rx') + ' ' + SIDE_CLS[r.t]
               + (monSel && r.dst === monSel ? ' mark' : '');
-    return '<tr class="' + cls + '" onclick="monPick(\'' + esc(r.dst || '') + '\')">'
+    return '<tr class="' + cls + '" data-s="' + r.s + '" onclick="monPick(\'' + esc(r.dst || '') + '\')">'
       + '<td>' + monTime(r.ms) + '</td>'
       + '<td class="dim">' + gap + '</td>'
       + '<td>' + SIDE_TXT[r.t] + '</td>'
