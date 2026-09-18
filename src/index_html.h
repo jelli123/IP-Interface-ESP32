@@ -155,6 +155,7 @@ table.mon tr.mark td{background:rgba(94,168,255,.20)}
 table.mon td.val{color:var(--fg)}
 table.mon td.dim{color:var(--dim)}
 table.mon tr.con td{color:var(--dim)}
+table.mon tr.prior td{font-style:italic}
 .fields.wide>div{flex:1 1 130px}
 table.rows{width:100%;border-collapse:collapse;margin:6px 0 4px}table.rows td{padding:2px 3px}
 table.rows tr.hd th{padding:2px 4px 5px;text-align:left;font-size:11px;
@@ -954,6 +955,7 @@ const EN = {
 'Dienst enthält':'Service contains', 'alle':'all',
 'empfangen':'received', 'gesendet':'sent',
 'ohne Bestätigungen':'without confirmations',
+'vor Neustart':'before restart',
 'Bestätigung':'confirmation', 'Bestätigung, fehlgeschlagen':'confirmation, failed',
 'TP und IP':'TP and IP', 'nur TP':'TP only', 'nur IP':'IP only',
 'Start':'Start', 'Stopp':'Stop', 'sofort':'right away',
@@ -2279,15 +2281,18 @@ function monRender(scroll){
     + t('Prio') + '</th><th>' + t('Dienst') + '</th><th>' + t('Bits')
     + '</th><th>' + t('Daten') + '</th><th>' + t('Wert') + '</th></tr>';
 
-  let previous = null;
+  let previous = null, prevB = false;
   const body = rows.map(r => {
-    const gap = previous === null ? '' : (r.ms - previous) + ' ms';
+    // Ueber den Neustart hinweg gibt es keinen Abstand, die Uhren sind andere.
+    const gap = previous === null || !!r.b !== prevB ? '' : (r.ms - previous) + ' ms';
     previous = r.ms;
+    prevB = !!r.b;
     const cls = (r.o ? 'tx' : 'rx') + ' ' + SIDE_CLS[r.t]
               + (monSel && r.dst === monSel ? ' mark' : '')
-              + (r.c ? ' con' : '');
+              + (r.c ? ' con' : '')
+              + (r.b ? ' prior' : '');
     return '<tr class="' + cls + '" data-s="' + r.s + '" onclick="monPick(\'' + esc(r.dst || '') + '\')">'
-      + '<td>' + monTime(r.ms) + '</td>'
+      + '<td>' + monTime(r) + '</td>'
       + '<td class="dim">' + gap + '</td>'
       + '<td>' + SIDE_TXT[r.t] + '</td>'
       + '<td>' + (r.o ? '&rarr;' : '&larr;') + '</td>'
@@ -2409,7 +2414,17 @@ function monValue(r){
  * Aufzeichnungspfad nichts zu suchen hat. Steht die Uhr, rechnet der Browser
  * daraus die Tageszeit; sonst bleibt die Betriebszeit stehen.
  */
-function monTime(ms){
+/* Zeile vor dem letzten Neustart: aus dem RTC-Speicher mitgebracht, ihre ms
+ * zaehlen die Laufzeit des alten Betriebs - daher "e" statt der Umrechnung. */
+function monTime(r){
+  const ms = r.ms;
+  if(r.b){
+    const mark = '\u21ba ';
+    if(!r.e) return mark + t('vor Neustart');
+    const d = new Date(r.e);
+    return mark + d.toTimeString().slice(0,8) + '.'
+         + String(d.getMilliseconds()).padStart(3,'0');
+  }
   if(monState && monState.epoch_ms){
     const d = new Date(monState.epoch_ms - (monState.now_ms - ms));
     return d.toTimeString().slice(0,8) + '.'

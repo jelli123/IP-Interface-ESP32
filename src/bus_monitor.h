@@ -40,6 +40,12 @@ public:
         SIDE_TUNNEL = 2
     };
 
+    /**
+     * Set in Entry::side for a frame carried over from before the last
+     * restart, see carryOver(). Its ms count the old run's uptime.
+     */
+    static const uint8_t SIDE_PRIOR = 0x80;
+
     enum Sides : uint8_t
     {
         WATCH_IP     = 1 << SIDE_IP,
@@ -121,6 +127,12 @@ public:
     uint32_t missed() const { return _missed; }
 
     /**
+     * Wall clock minus uptime of the run before the restart, in ms, for the
+     * carried over frames. 0 when that run had no valid clock.
+     */
+    uint64_t priorEpochBase() const { return _priorEpochBase; }
+
+    /**
      * Begin recording, or wait for the trigger before counting from it.
      *
      * Keeps what is already in the ring: stopping and resuming has to be
@@ -148,6 +160,12 @@ private:
     static void hook(uint8_t side, bool outgoing, const uint8_t* cemi, uint16_t length);
     void capture(uint8_t side, bool outgoing, const uint8_t* cemi, uint16_t length);
 
+    /** Keep the frame in the RTC memory tail, whatever the recording does. */
+    void remember(uint8_t side, bool outgoing, const uint8_t* cemi, uint16_t length);
+
+    /** Put the tail of the previous run at the start of the ring. */
+    void carryOver();
+
     /** Does this raw cEMI frame fire the configured trigger? */
     bool fires(const uint8_t* cemi, uint16_t length) const;
 
@@ -170,6 +188,7 @@ private:
     uint32_t _count    = 0;
     uint32_t _written  = 0;
     uint32_t _missed   = 0;
+    uint64_t _priorEpochBase = 0;
 
     volatile State _state = ST_OFF;
     uint8_t  _sides         = WATCH_IP | WATCH_TP | WATCH_TUNNEL;

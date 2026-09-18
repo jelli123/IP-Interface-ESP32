@@ -5,11 +5,14 @@
 #include "bus_monitor.h"
 
 #include <Arduino.h>
+#include <esp_attr.h>
 #include <esp_heap_caps.h>
+#include <sys/time.h>
 
 #include "hw_config.h"
 #include "knx_link.h"
 #include "log_buffer.h"
+#include "time_service.h"
 
 BusMonitor busMonitor;
 
@@ -21,6 +24,36 @@ namespace
 {
 /** Below this the ring is not worth the PSRAM block. */
 const uint32_t MIN_FRAMES = 200;
+
+/*
+ * The last frames before a restart, in RTC memory.
+ *
+ * The ring lives in PSRAM and is allocated anew on every boot, so whatever
+ * led up to a restart - an A_Restart from ETS, a crash in the middle of a
+ * download - was gone exactly when it mattered. RTC memory keeps its content
+ * over a software reset, a panic and a watchdog, as it does for the log.
+ * It is small: 64 frames of up to 28 bytes, 2.3 KiB next to the log's 3.
+ * Every frame goes in, whether or not the monitor is recording.
+ */
+const uint32_t TAIL_MAGIC  = 0x53424D54; // "SBMT"
+const uint8_t  TAIL_FRAMES = 64;
+const uint8_t  TAIL_RAW    = 28;
+
+struct TailEntry
+{
+    uint32_t ms;
+    uint8_t  side;
+    uint8_t  outgoing;
+    uint8_t  stored;
+    uint8_t  length;
+    uint8_t  raw[TAIL_RAW];
+};
+
+RTC_NOINIT_ATTR uint32_t  s_tailMagic;
+RTC_NOINIT_ATTR uint32_t  s_tailHead;
+RTC_NOINIT_ATTR uint32_t  s_tailCount;
+RTC_NOINIT_ATTR uint64_t  s_tailEpochBase;
+RTC_NOINIT_ATTR TailEntry s_tail[TAIL_FRAMES];
 
 /** Offset of CTRL1 within a cEMI frame: message code, then the add-info. */
 inline uint16_t ctrlOffset(const uint8_t* cemi)
@@ -75,6 +108,83 @@ void BusMonitor::begin()
     sysLog.printf("Monitor: %u frames in PSRAM (%u KiB)\n",
                   (unsigned)_capacity,
                   (unsigned)(_capacity * sizeof(Entry) / 1024));
+
+    carryOver();
+}
+
+void BusMonitor::carryOver()
+{
+    bool valid = s_tailMagic == TAIL_MAGIC && s_tailHead < TAIL_FRAMES &&
+                 s_tailCount <= TAIL_FRAMES;
+
+    uint32_t n     = valid ? s_tailCount : 0;
+    uint32_t first = valid ? (s_tailHead + TAIL_FRAMES - n) % TAIL_FRAMES : 0;
+
+    if (n > 0 && _ring != nullptr)
+    {
+        _priorEpochBase = s_tailEpochBase;
+
+        for (uint32_t i = 0; i < n && i < _capacity; i++)
+        {
+            const TailEntry& t    = s_tail[(first + i) % TAIL_FRAMES];
+            Entry&           slot = _ring[_head];
+
+            slot.ms       = t.ms;
+            slot.side     = (uint8_t)((t.side & 0x03) | SIDE_PRIOR);
+            slot.outgoing = t.outgoing;
+            slot.stored   = (t.stored > TAIL_RAW) ? TAIL_RAW : t.stored;
+            slot.length   = t.length;
+            memcpy(slot.raw, t.raw, slot.stored);
+
+            _head = (_head + 1) % _capacity;
+            _count++;
+            _written++;
+        }
+
+        sysLog.printf("Monitor: %u frame(s) carried over from before the restart\n",
+                      (unsigned)n);
+    }
+
+    // Start over: the next boot is to see this run, not the last one.
+    s_tailMagic = TAIL_MAGIC;
+    s_tailHead  = 0;
+    s_tailCount = 0;
+}
+
+void BusMonitor::remember(uint8_t side, bool outgoing, const uint8_t* cemi,
+                          uint16_t length)
+{
+    if (s_tailMagic != TAIL_MAGIC || s_tailHead >= TAIL_FRAMES)
+    {
+        s_tailMagic = TAIL_MAGIC;
+        s_tailHead  = 0;
+        s_tailCount = 0;
+    }
+
+    TailEntry& t = s_tail[s_tailHead];
+    t.ms       = millis();
+    t.side     = side;
+    t.outgoing = outgoing ? 1 : 0;
+    t.stored   = (length > TAIL_RAW) ? TAIL_RAW : (uint8_t)length;
+    t.length   = (length > 255) ? 255 : (uint8_t)length;
+    memcpy(t.raw, cemi, t.stored);
+
+    s_tailHead = (s_tailHead + 1) % TAIL_FRAMES;
+    if (s_tailCount < TAIL_FRAMES) s_tailCount++;
+
+    // Once per frame rather than once per boot: the clock may only become
+    // valid minutes after the start, when NTP has answered.
+    if (TimeService::clockValid())
+    {
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+        s_tailEpochBase = (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)(tv.tv_usec / 1000) -
+                          millis();
+    }
+    else
+    {
+        s_tailEpochBase = 0;
+    }
 }
 
 void BusMonitor::hook(uint8_t side, bool outgoing, const uint8_t* cemi, uint16_t length)
@@ -84,6 +194,7 @@ void BusMonitor::hook(uint8_t side, bool outgoing, const uint8_t* cemi, uint16_t
     if (side == SIDE_TP) knxLink.noteBusFrame(cemi, length);
 
     busMonitor.watchForLoop(side, outgoing, cemi, length);
+    if (cemi != nullptr && length >= 3) busMonitor.remember(side, outgoing, cemi, length);
     busMonitor.capture(side, outgoing, cemi, length);
 }
 

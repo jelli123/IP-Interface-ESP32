@@ -1403,10 +1403,22 @@ int monitorEntryJson(char* out, size_t max, uint32_t seq,
     const uint8_t* cemi = entry.raw;
     uint16_t       ctrl = (uint16_t)(2 + cemi[1]);
 
-    char head[64];
-    snprintf(head, sizeof(head), "%s{\"s\":%lu,\"ms\":%lu,\"t\":%u,\"o\":%u",
+    // A frame from before the last restart: "b" marks it, and "e" gives its
+    // time of day, since its ms count the uptime of a run that has ended.
+    bool     prior = (entry.side & BusMonitor::SIDE_PRIOR) != 0;
+    uint64_t base  = busMonitor.priorEpochBase();
+    char     when[40] = "";
+
+    if (prior)
+    {
+        snprintf(when, sizeof(when), base ? ",\"b\":1,\"e\":%llu" : ",\"b\":1",
+                 (unsigned long long)(base + entry.ms));
+    }
+
+    char head[112];
+    snprintf(head, sizeof(head), "%s{\"s\":%lu,\"ms\":%lu,\"t\":%u,\"o\":%u%s",
              first ? "" : ",", (unsigned long)seq, (unsigned long)entry.ms,
-             (unsigned)entry.side, (unsigned)entry.outgoing);
+             (unsigned)(entry.side & 0x03), (unsigned)entry.outgoing, when);
 
     // Anything that is not a full L_Data header still belongs in the list -
     // silently dropping a frame is worse than showing it raw. Management
