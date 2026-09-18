@@ -1472,14 +1472,23 @@ int monitorEntryJson(char* out, size_t max, uint32_t seq,
         }
     }
 
+    /*
+     * An L_Data.con is the answer to a tunnel client's own frame and carries
+     * that frame's addresses and TPDU. Without saying so, every telegram ETS
+     * or sb-project puts on the bus shows up twice on the tunnel side. The
+     * lowest CTRL1 bit tells whether the frame made it: 1 = error.
+     */
+    unsigned confirm = (cemi[0] == 0x2E) ? ((ctrl1 & 0x01) ? 2u : 1u) : 0u;
+
     return snprintf(out, max,
                     "%s,\"src\":\"%s\",\"dst\":\"%s\",\"g\":%u,\"p\":\"%s\","
-                    "\"r\":%u,\"h\":%u,\"x\":%u,\"n\":%u,\"a\":\"%s\",\"d\":\"%s\"}",
+                    "\"r\":%u,\"h\":%u,\"x\":%u,\"n\":%u,\"c\":%u,"
+                    "\"a\":\"%s\",\"d\":\"%s\"}",
                     head, source, target, group ? 1u : 0u, priorityName(ctrl1),
                     (ctrl1 & 0x20) ? 0u : 1u,          // bit clear means repeated
                     (ctrl2 >> 4) & 0x07,
                     (ctrl1 & 0x80) ? 0u : 1u,          // bit clear means extended
-                    (unsigned)count, name, data);
+                    (unsigned)count, confirm, name, data);
 }
 
 String monitorStateJson()

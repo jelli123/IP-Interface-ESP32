@@ -154,6 +154,7 @@ table.mon tbody tr:hover td{background:rgba(255,255,255,.06)}
 table.mon tr.mark td{background:rgba(94,168,255,.20)}
 table.mon td.val{color:var(--fg)}
 table.mon td.dim{color:var(--dim)}
+table.mon tr.con td{color:var(--dim)}
 .fields.wide>div{flex:1 1 130px}
 table.rows{width:100%;border-collapse:collapse;margin:6px 0 4px}table.rows td{padding:2px 3px}
 table.rows tr.hd th{padding:2px 4px 5px;text-align:left;font-size:11px;
@@ -504,6 +505,7 @@ small{color:var(--dim)}
           <option value="">alle</option>
           <option value="0">empfangen</option>
           <option value="1">gesendet</option>
+          <option value="nc">ohne Bestätigungen</option>
         </select></div>
       <div><label>Adressart</label>
         <select id="fKind" onchange="monRender()">
@@ -951,6 +953,8 @@ const EN = {
 'Quelle enthält':'Source contains', 'Ziel enthält':'Destination contains',
 'Dienst enthält':'Service contains', 'alle':'all',
 'empfangen':'received', 'gesendet':'sent',
+'ohne Bestätigungen':'without confirmations',
+'Bestätigung':'confirmation', 'Bestätigung, fehlgeschlagen':'confirmation, failed',
 'TP und IP':'TP and IP', 'nur TP':'TP only', 'nur IP':'IP only',
 'Start':'Start', 'Stopp':'Stop', 'sofort':'right away',
 'bei Gruppenadresse':'on a group address',
@@ -2245,11 +2249,22 @@ function monFilter(list){
 
   return list.filter(r =>
        (fSide === '' || String(r.t) === fSide)
-    && (fDir  === '' || String(r.o) === fDir)
+    && (fDir  === '' || (fDir === 'nc' ? !r.c : String(r.o) === fDir))
     && (fKind === '' || String(r.g === undefined ? '' : r.g) === fKind)
     && (!fSrc || (r.src || '').indexOf(fSrc) >= 0)
     && (!fDst || (r.dst || '').indexOf(fDst) >= 0)
     && (!fSvc || (r.a  || '').toLowerCase().indexOf(fSvc) >= 0));
+}
+
+/*
+ * Dienst mit dem Hinweis auf eine L_Data.con. Die Bestaetigung an einen
+ * Tunnel-Client traegt Adressen und Dienst des bestaetigten Telegramms und
+ * saehe ohne ihn aus wie dasselbe Telegramm ein zweites Mal.
+ */
+function monSvc(r){
+  const a = r.a || (r.raw ? t('unlesbar') : '');
+  if(!r.c) return a;
+  return a + ' (' + t(r.c === 2 ? 'Bestätigung, fehlgeschlagen' : 'Bestätigung') + ')';
 }
 
 /* Was die Tabelle gerade zeigt, in Zeilenfolge - fuer die Markierung. */
@@ -2269,7 +2284,8 @@ function monRender(scroll){
     const gap = previous === null ? '' : (r.ms - previous) + ' ms';
     previous = r.ms;
     const cls = (r.o ? 'tx' : 'rx') + ' ' + SIDE_CLS[r.t]
-              + (monSel && r.dst === monSel ? ' mark' : '');
+              + (monSel && r.dst === monSel ? ' mark' : '')
+              + (r.c ? ' con' : '');
     return '<tr class="' + cls + '" data-s="' + r.s + '" onclick="monPick(\'' + esc(r.dst || '') + '\')">'
       + '<td>' + monTime(r.ms) + '</td>'
       + '<td class="dim">' + gap + '</td>'
@@ -2278,7 +2294,7 @@ function monRender(scroll){
       + '<td>' + esc(r.src || '') + '</td>'
       + '<td>' + esc(r.dst || '') + '</td>'
       + '<td class="dim">' + esc(r.p || '') + '</td>'
-      + '<td>' + esc(r.a || (r.raw ? t('unlesbar') : '')) + '</td>'
+      + '<td>' + esc(monSvc(r)) + '</td>'
       + '<td class="dim">' + monBits(r) + '</td>'
       + '<td class="w dim">' + esc(r.d || r.raw || '') + '</td>'
       + '<td class="val w">' + esc(monValue(r)) + '</td></tr>';
@@ -2507,7 +2523,7 @@ function monText(sep, list){
                 'Dienst','Daten','Wert'].join(sep);
   const body = (list || monRows).map(r => [r.ms, SIDE_TXT[r.t], r.o ? 'TX' : 'RX',
       r.src || '', r.dst || '', r.p || '', r.r || 0, r.h === undefined ? '' : r.h,
-      r.a || '', r.d || r.raw || '', monValue(r)].join(sep)).join('\n');
+      monSvc(r), r.d || r.raw || '', monValue(r)].join(sep)).join('\n');
   return head + '\n' + body;
 }
 
