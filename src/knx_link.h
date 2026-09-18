@@ -43,6 +43,15 @@ public:
     void noteBusFrame(const uint8_t* cemi, uint16_t length);
 
     /**
+     * A frame a tunnel client handed over, from the bus monitor hook. Only
+     * looked at while a restart waits for the client to hang up.
+     */
+    void noteTunnelFrame(const uint8_t* cemi, uint16_t length);
+
+    /** The stack wants to restart; see superviseRestart(). */
+    void requestStackRestart();
+
+    /**
      * Bring up the UART and the KNX stack.
      *
      * @return true if the TP-UART answered the initial reset
@@ -266,6 +275,7 @@ private:
     /** Say so when the address makes the coupler logic drop everything. */
     void warnAboutCouplerAddress();
     void persistAddress();
+    void superviseRestart();
 
     Stats _stats = {};
     char  _selfTest[48] = "pending";
@@ -292,6 +302,10 @@ private:
     uint16_t _savedAddress      = 0xFFFF;  //!< what the flash holds
     uint16_t _pendingAddress    = 0xFFFF;  //!< changed, waiting to settle
     uint32_t _pendingSince      = 0;
+
+    volatile bool _restartPending    = false;
+    volatile bool _restartHungUp     = false;
+    uint32_t      _restartSince      = 0;
     bool     _routeAllOverride  = false;
     bool     _wasConfigured     = false;
 };

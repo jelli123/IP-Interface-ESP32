@@ -1367,6 +1367,12 @@ const char* serviceName(const uint8_t* tpdu, uint8_t tpduLen, bool group,
 
     uint16_t apci = (uint16_t)(((t & 0x03) << 8) | tpdu[1]);
 
+    // Restart carries its type and the response flag in the APCI's low bits.
+    if ((apci & 0x3C0) == 0x380)
+    {
+        return (apci & 0x020) ? "A_Restart_Response" : "A_Restart";
+    }
+
     /*
      * The three group services carry a value of up to six bits inside the
      * APCI itself, so only the top four bits are the code. Matching the whole

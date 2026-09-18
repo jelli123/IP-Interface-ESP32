@@ -234,13 +234,12 @@ public:
 
     /*
      * Deferred, so what the stack sends just before - the A_Restart response
-     * to a master reset above all - still leaves the device. Esp32Platform
-     * restarts on the spot, and ETS then waits in vain for the answer.
+     * to a master reset above all - still leaves the device, and the client
+     * can still close its connection. See KnxLink::superviseRestart().
      */
     void restart() override
     {
-        sysLog.println("KNX: restart requested by the stack");
-        netManager.scheduleReboot();
+        knxLink.requestStackRestart();
     }
 
     /** Store an empty image from now on, see commitToEeprom(). */
@@ -564,6 +563,7 @@ void KnxLink::loop()
     updateBusLoad();
     superviseTpLink();
     superviseRouting();
+    superviseRestart();
 }
 
 /*
@@ -587,6 +587,62 @@ void KnxLink::superviseTpLink()
         sysLog.println("TP link down - re-running the TP-UART reset handshake");
         tp->reset();
     }
+}
+
+void KnxLink::requestStackRestart()
+{
+    if (_restartPending) return;
+
+    _restartHungUp  = false;
+    _restartSince   = millis();
+    _restartPending = true;
+
+    sysLog.println("KNX: restart requested by the stack, waiting for the client to disconnect");
+}
+
+void KnxLink::noteTunnelFrame(const uint8_t* cemi, uint16_t length)
+{
+    if (!_restartPending || cemi == nullptr) return;
+
+    uint16_t ctrl = (uint16_t)(2 + cemi[1]);
+    if (length < ctrl + 7u) return;
+
+    uint16_t destination = (uint16_t)((cemi[ctrl + 4] << 8) | cemi[ctrl + 5]);
+    bool     individual  = (cemi[ctrl + 1] & 0x80) == 0;
+
+    // T_Disconnect to us: the client is done and expects nothing more.
+    if (individual && cemi[ctrl + 7] == 0x81 && destination == knx.individualAddress())
+    {
+        _restartHungUp = true;
+    }
+}
+
+/*
+ * When the stack's restart actually happens.
+ *
+ * Measured with sb-project (Calimero): the A_Restart response of a master
+ * reset arrived and was acknowledged, then Calimero closed the transport
+ * connection - by which time the device, restarting two seconds after the
+ * request, was gone. The T_Disconnect went unacknowledged in the tunnel,
+ * Calimero dropped the link with "maximum send attempts" and the tool
+ * reported the reset as failed.
+ *
+ * So wait for the client's T_Disconnect, then give the tunnel the two
+ * seconds of NetManager's reboot to acknowledge it. A client that never
+ * hangs up is covered by the 6 s after which a KNX transport connection
+ * times out anyway.
+ */
+void KnxLink::superviseRestart()
+{
+    if (!_restartPending) return;
+
+    bool timedOut = (uint32_t)(millis() - _restartSince) > 6000;
+    if (!_restartHungUp && !timedOut) return;
+
+    _restartPending = false;
+    sysLog.println(_restartHungUp ? "KNX: client disconnected, restarting"
+                                  : "KNX: no disconnect from the client, restarting anyway");
+    netManager.scheduleReboot();
 }
 
 void KnxLink::noteBusFrame(const uint8_t* cemi, uint16_t length)

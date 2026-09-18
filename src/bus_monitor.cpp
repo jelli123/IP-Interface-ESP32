@@ -192,6 +192,7 @@ void BusMonitor::hook(uint8_t side, bool outgoing, const uint8_t* cemi, uint16_t
     // The only place that has the side and the frame length together, so this
     // is where the bus load figure gets its input.
     if (side == SIDE_TP) knxLink.noteBusFrame(cemi, length);
+    if (side == SIDE_TUNNEL && !outgoing) knxLink.noteTunnelFrame(cemi, length);
 
     busMonitor.watchForLoop(side, outgoing, cemi, length);
     if (cemi != nullptr && length >= 3) busMonitor.remember(side, outgoing, cemi, length);
