@@ -39,6 +39,14 @@ extern bool sbipRouteUnfiltered;
  */
 void (*sbipLoopHook)(uint32_t fromIp, uint16_t source, bool ownIp) = nullptr;
 
+/*
+ * Asked by the TP data link layer whether a frame it sends or confirms came
+ * from a tunnel client, see patch 16 in scripts/patch_knx.py. Only the IP
+ * layer knows the tunnel addresses; the copy the TP layer was meant to have
+ * is never assigned. Left unset, the stack confirms at once as upstream does.
+ */
+bool (*sbipTunnelSourceHook)(uint16_t address) = nullptr;
+
 static void reportRoutingLoop(uint32_t fromIp, uint16_t source, bool ownIp)
 {
     static uint32_t lastAt = 0;
@@ -273,6 +281,12 @@ public:
 static SbipBau        knxBau(knxPlatform);
 KnxFacade<Esp32Platform, Bau091A> knx(knxBau);
 
+static bool isTunnelSource(uint16_t address)
+{
+    IpDataLinkLayer* ip = knxBau.getPrimaryDataLinkLayer();
+    return ip != nullptr && ip->isTunnelAddress(address);
+}
+
 /** Pointer used by the static activity trampoline. */
 static KnxLink* s_instance = nullptr;
 
@@ -346,6 +360,7 @@ bool KnxLink::begin()
     s_instance = this;
 
     sbipLoopHook = &reportRoutingLoop;
+    sbipTunnelSourceHook = &isTunnelSource;
 
     applyIdentity();
 

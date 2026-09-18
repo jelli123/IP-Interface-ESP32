@@ -1678,3 +1678,195 @@ def patch_memory_log():
 
 
 patch_memory_log()
+
+
+# --------------------------------------------------------------------------
+# 15. Answer an extended search in programming mode
+# --------------------------------------------------------------------------
+#
+# ETS locates a KNX IP device in programming mode with a
+# SEARCH_REQUEST_EXTENDED carrying the "programming mode" search parameter,
+# and only then writes the individual address. platformio.ini switches Core
+# v2 on for that. The handler asks the global facade whether programming mode
+# is on - and there is no global facade here, KNX_NO_AUTOMATIC_GLOBAL_INSTANCE
+# is set because knx_link.cpp builds its own. The device object the layer
+# already holds knows the same thing.
+
+SRPPROG_MARKER = "// sbip: no global knx instance, ask the device object"
+
+SRPPROG_ANCHOR = (
+    '        println("srpByProgMode");\n'
+    "\n"
+    "        if (!knx.progMode())\n"
+    "            return;\n"
+)
+
+SRPPROG_NEW = (
+    "        " + SRPPROG_MARKER + "\n"
+    "        if (!_deviceObject.progMode())\n"
+    "            return;\n"
+)
+
+
+def patch_search_prog_mode():
+    with open(TARGET, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if SRPPROG_MARKER in source:
+        return
+
+    if source.count(SRPPROG_ANCHOR) != 1:
+        sys.stderr.write(
+            "patch_knx.py: anchor no longer unique, an extended search in "
+            "programming mode will not build:\n  %s\n"
+            % SRPPROG_ANCHOR.strip().splitlines()[0]
+        )
+        return
+
+    with open(TARGET, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source.replace(SRPPROG_ANCHOR, SRPPROG_NEW))
+
+    print("patch_knx.py: programming mode search parameter fixed in "
+          "ip_data_link_layer.cpp")
+
+
+patch_search_prog_mode()
+
+
+# --------------------------------------------------------------------------
+# 16. Confirm a tunnel client's frame once TP1 has sent it
+# --------------------------------------------------------------------------
+#
+# Symptom: an ETS line scan filled the TP-UART transmit queue within seconds
+# - 735 frames in five seconds in the bus monitor, "Ignore frame because
+# transmit queue is full!" 138 times - and whatever was dropped there, ETS
+# still counted as sent.
+#
+# Cause: dataRequestFromTunnel() sends the L_Data.con first thing, before
+# the frame has even been queued. A tunnel client paces itself by that
+# confirmation, so ETS got the go-ahead for the next frame at IP speed while
+# TP1 manages some fifty a second. The TP-UART's real confirmation arrived
+# later in dataConReceived() and was thrown away, since the frame came from
+# a tunnel and not from the local stack.
+#
+# Fix: a frame that goes onto TP1 is confirmed from dataConReceived(), with
+# the outcome the TP-UART reported - negatively when the queue was full,
+# which makes ETS repeat it instead of losing it. A frame that stays off the
+# bus is confirmed at once as before.
+#
+# Only the IP layer knows the tunnel addresses (DataLinkLayer::_ipParameters
+# stays null, see patch 4), so the TP layer asks the firmware through
+# sbipTunnelSourceHook, defined in src/knx_link.cpp. Unset, both places fall
+# back to the upstream behaviour.
+
+TUNCON_MARKER = "// sbip: confirmation hook, defined in src/knx_link.cpp"
+
+TUNCON_ANCHOR_DECL = "void DataLinkLayer::dataRequestFromTunnel(CemiFrame& frame)\n"
+
+TUNCON_DECL = (
+    TUNCON_MARKER + "\n"
+    "extern bool (*sbipTunnelSourceHook)(uint16_t address);\n"
+    "\n"
+)
+
+TUNCON_ANCHOR_REQ = (
+    "void DataLinkLayer::dataRequestFromTunnel(CemiFrame& frame)\n"
+    "{\n"
+    "    _cemiServer->dataConfirmationToTunnel(frame);\n"
+)
+
+TUNCON_NEW_REQ = (
+    "void DataLinkLayer::dataRequestFromTunnel(CemiFrame& frame)\n"
+    "{\n"
+    "    // sbip: decided before local delivery, which may change our address\n"
+    "    bool sbipToBus = true;\n"
+    "\n"
+    "#ifdef KNX_TUNNELING\n"
+    "    if (frame.addressType() == AddressType::IndividualAddress &&\n"
+    "            (frame.destinationAddress() == _deviceObject.individualAddress() ||\n"
+    "             isRoutedPA(frame.destinationAddress()) ||\n"
+    "             isTunnelingPA(frame.destinationAddress())))\n"
+    "        sbipToBus = false;\n"
+    "#endif\n"
+    "\n"
+    "    // sbip: a frame for TP1 is confirmed by dataConReceived() once the\n"
+    "    // TP-UART has sent it - the client paces itself by that.\n"
+    "    if (!sbipToBus || sbipTunnelSourceHook == nullptr ||\n"
+    "            mediumType() != DptMedium::KNX_TP1 ||\n"
+    "            !sbipTunnelSourceHook(frame.sourceAddress()))\n"
+    "        _cemiServer->dataConfirmationToTunnel(frame);\n"
+)
+
+TUNCON_ANCHOR_OPTI = (
+    "    if (frame.addressType() == AddressType::IndividualAddress)\n"
+    "    {\n"
+    "        if (frame.destinationAddress() == _deviceObject.individualAddress())\n"
+    "            return;\n"
+    "\n"
+    "        if (isRoutedPA(frame.destinationAddress()))\n"
+    "            return;\n"
+    "\n"
+    "        if (isTunnelingPA(frame.destinationAddress()))\n"
+    "            return;\n"
+    "    }\n"
+)
+
+TUNCON_NEW_OPTI = (
+    "    // sbip: the same decision as above, taken once\n"
+    "    if (!sbipToBus)\n"
+    "        return;\n"
+)
+
+TUNCON_ANCHOR_CON = (
+    "    // if the confirmation was caused by a tunnel request then\n"
+    "    // do not send it to the local stack\n"
+)
+
+TUNCON_NEW_CON = (
+    "    // sbip: the confirmation dataRequestFromTunnel() held back\n"
+    "    if (sbipTunnelSourceHook != nullptr &&\n"
+    "            mediumType() == DptMedium::KNX_TP1 &&\n"
+    "            sbipTunnelSourceHook(source))\n"
+    "    {\n"
+    "        _cemiServer->dataConfirmationToTunnel(frame);\n"
+    "        frame.messageCode(backupMsgCode);\n"
+    "        return;\n"
+    "    }\n"
+    "\n"
+) + TUNCON_ANCHOR_CON
+
+TUNCON_EDITS = (
+    (TUNCON_ANCHOR_REQ, TUNCON_NEW_REQ),
+    (TUNCON_ANCHOR_OPTI, TUNCON_NEW_OPTI),
+    (TUNCON_ANCHOR_CON, TUNCON_NEW_CON),
+    (TUNCON_ANCHOR_DECL, TUNCON_DECL + TUNCON_ANCHOR_DECL),
+)
+
+
+def patch_tunnel_confirm():
+    with open(DLL_C, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if TUNCON_MARKER in source:
+        return
+
+    for anchor, _ in TUNCON_EDITS:
+        if source.count(anchor) != 1:
+            sys.stderr.write(
+                "patch_knx.py: anchor no longer unique, a tunnel client is "
+                "confirmed before its frame reaches TP1:\n  %s\n"
+                % anchor.strip().splitlines()[0]
+            )
+            return
+
+    for anchor, replacement in TUNCON_EDITS:
+        source = source.replace(anchor, replacement)
+
+    with open(DLL_C, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source)
+
+    print("patch_knx.py: tunnel confirmation deferred to TP1 in "
+          "data_link_layer.cpp")
+
+
+patch_tunnel_confirm()
