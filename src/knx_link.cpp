@@ -382,6 +382,8 @@ bool KnxLink::begin()
     knx.readMemory();
     knx.start();
 
+    _savedAddress = knx.individualAddress();
+
     // Only meaningful once the stack has restored its load states.
     applyRouting();
 
@@ -569,6 +571,58 @@ void KnxLink::superviseRouting()
     }
 
     warnAboutCouplerAddress();
+    persistAddress();
+}
+
+/*
+ * Keep an individual address that ETS wrote without a restart after it.
+ *
+ * Both A_IndividualAddress_Write and A_IndividualAddress_SerialNumber_Write
+ * set the address in the device object and nothing else; the stack writes
+ * its memory to flash only on A_Restart. After the serial number variant
+ * ETS sends none - the new address worked until the next power cycle, then
+ * the old one was back.
+ *
+ * Saved once the address has held for two seconds, which lets ETS repeat
+ * its write without a flash write each time. Not while a table is being
+ * loaded: writeMemory() stores the whole image, and a half-written filter
+ * table has no business in flash. ETS ends a download with a restart
+ * anyway, which saves the address along with it.
+ */
+void KnxLink::persistAddress()
+{
+    uint16_t address = knx.individualAddress();
+
+    if (address == _savedAddress)
+    {
+        _pendingAddress = address;
+        return;
+    }
+
+    if (address != _pendingAddress)
+    {
+        _pendingAddress = address;
+        _pendingSince   = millis();
+        return;
+    }
+
+    if ((uint32_t)(millis() - _pendingSince) < 2000)
+    {
+        return;
+    }
+
+    RouterObject* router = (RouterObject*)knxBau.interfaceObject(OT_ROUTER, 1);
+    if (router != nullptr && router->loadState() == LS_LOADING)
+    {
+        return;
+    }
+
+    knx.writeMemory();
+    _savedAddress = address;
+
+    sysLog.printf("KNX: individual address %u.%u.%u saved\n",
+                  (unsigned)(address >> 12), (unsigned)((address >> 8) & 0x0F),
+                  (unsigned)(address & 0xFF));
 }
 
 /*

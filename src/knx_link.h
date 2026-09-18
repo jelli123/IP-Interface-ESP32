@@ -265,6 +265,7 @@ private:
 
     /** Say so when the address makes the coupler logic drop everything. */
     void warnAboutCouplerAddress();
+    void persistAddress();
 
     Stats _stats = {};
     char  _selfTest[48] = "pending";
@@ -288,6 +289,9 @@ private:
 
     uint32_t _lastRoutingCheck  = 0;
     uint16_t _lastCheckedAddress = 0xFFFF;
+    uint16_t _savedAddress      = 0xFFFF;  //!< what the flash holds
+    uint16_t _pendingAddress    = 0xFFFF;  //!< changed, waiting to settle
+    uint32_t _pendingSince      = 0;
     bool     _routeAllOverride  = false;
     bool     _wasConfigured     = false;
 };
