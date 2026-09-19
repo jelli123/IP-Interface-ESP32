@@ -84,6 +84,10 @@ enum HwLedCondition : uint8_t
     HW_COND_OFFLINE,       //!< no address, or the cable is unplugged
     HW_COND_HEARTBEAT,     //!< always, while the heartbeat switch is on
     HW_COND_ROUTE_ALL,     //!< group address filtering is switched off
+    HW_COND_ETS_UNLOCKED,  //!< every ETS path open for a while, see EtsAccess
+    HW_COND_ETS_TP,        //!< ETS may manage the device over TP
+    HW_COND_ETS_NET,       //!< ETS may manage the device over tunnel or routing
+    HW_COND_ETS_LOCKED,    //!< ETS cannot manage the device at all
     HW_COND_COUNT
 };
 
@@ -126,6 +130,10 @@ enum HwButtonFunction : uint8_t
     HW_BTNF_WIFI_SETUP,    //!< open the provisioning access point
     HW_BTNF_REBOOT,        //!< restart the device
     HW_BTNF_WIFI_TOGGLE,   //!< enable or disable WiFi, then restart
+    HW_BTNF_ETS_UNLOCK,    //!< open every ETS path for a while, again ends it
+    HW_BTNF_ETS_TP,        //!< lock or unlock ETS access over TP
+    HW_BTNF_ETS_NET,       //!< lock or unlock ETS access over the network
+    HW_BTNF_ETS_ALL,       //!< lock or unlock ETS access altogether
     HW_BTNF_COUNT
 };
 

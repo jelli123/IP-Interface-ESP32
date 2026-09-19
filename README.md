@@ -23,6 +23,7 @@ NCN5130-Transceiver; hier sitzt stattdessen ein Selfbus-Interface am UART.
 | **KNX-Zeitserver** | DPT 19.001 / 10.001 / 11.001, NTP + optionaler RV-3028-C7 || **Ethernet (optional)** | W5500 über SPI, beim Start automatisch erkannt || Web-Dashboard | Status, Buslast, Telegrammzähler, Systeminfo |
 | WLAN-Einrichtung | Captive Portal (offener AP) **oder** Improv über USB |
 | Programmiermodus | per Klick im Dashboard, kein Tastendruck am Gerät nötig |
+| **ETS-Zugriff** | pro Weg sperrbar (TP, Tunnel, Routing), Freigabe auf Zeit per Taster |
 | OTA-Update | Datei-Upload **und** Online-Pull aus einem Manifest |
 | **LPC-Programmierung** | SB-Interface über zwei GPIO erkennen und flashen |
 | Anti-Brick | zwei App-Partitionen + Bootloader-Rollback |
@@ -221,9 +222,18 @@ Programmiermodus, lang für die WLAN-Einrichtung.
 | 2 | WLAN Grundeinstellung | öffnet den Provisioning-Accesspoint |
 | 3 | Gerät neu starten | Neustart |
 | 4 | WLAN ein/aus | schaltet das Funkmodul um, wirkt nach dem Neustart |
+| 5 | ETS-Zugriff 15 min freigeben | öffnet alle Wege auf Zeit, ein zweiter Druck beendet das |
+| 6 | ETS-Zugriff über TP sperren/freigeben | schaltet den Weg über die TP-Linie um |
+| 7 | ETS-Zugriff über LAN/WLAN sperren/freigeben | Tunnel und Routing zusammen |
+| 8 | ETS-Zugriff ganz sperren/freigeben | alle Wege |
 
 > **Vorsicht bei 1.** Werkeinstellungen löscht auch die WLAN-Zugangsdaten und
 > das Hardware-Profil. Das braucht physischen Zugang, was die Absicherung ist.
+
+5 bis 8 sind Vorlagen für *ETS-Zugriff pro Weg sperren*, siehe dort. 6 bis 8
+ändern die gespeicherte Einstellung. Nach dem Sperren stellen 7 und 8 beim
+nächsten Druck wieder her, was vorher offen war – wer nur den Tunnel
+freigegeben hatte, bekommt nicht plötzlich auch das Routing.
 
 **WLAN abschalten geht nur mit Ethernet-Hardware.** Voraussetzung ist, dass
 der W5500 beim Start geantwortet hat – ein Kabel oder eine IP-Adresse ist
@@ -269,7 +279,7 @@ vorkommen – genau darum geht es.
 | Feld | Werte |
 | --- | --- |
 | `target` | Name aus `leds` |
-| `condition` | `0` Programmiermodus aktiv, `1` AP-Modus offen, `2` keine TP-Verbindung, `3` online, `4` offline, `5` Heartbeat, `6` GA-Filter deaktiviert |
+| `condition` | `0` Programmiermodus aktiv, `1` AP-Modus offen, `2` keine TP-Verbindung, `3` online, `4` offline, `5` Heartbeat, `6` GA-Filter deaktiviert, `7` ETS-Zugriff auf Zeit offen, `8` ETS-Zugriff über TP offen, `9` ETS-Zugriff über LAN/WLAN offen, `10` ETS-Zugriff ganz gesperrt |
 | `colour` | `0` rot, `1` grün, `2` blau, `3` gelb, `4` cyan, `5` magenta, `6` weiß, `7` orange |
 | `pattern` | `0` Dauerlicht, `1` langsam blinken (1 Hz), `2` schnell blinken (5 Hz), `3` Doppelblitz, `4` kurzer Blitz alle 2 s |
 
@@ -1391,6 +1401,8 @@ das Passwort und ein zweiter Ort für Fehler.
 | POST | `/api/wifi/fallback` | `enabled=1\|0` → WLAN-Ersatzverbindung |
 | POST | `/api/name` | `name=` → Geräte- und mDNS-Name |
 | POST | `/api/progmode` | `state=on\|off\|toggle` |
+| POST | `/api/knx/ets_access` | `tp=`, `tunnel=`, `routing=` je `1\|0` → ETS-Zugriff pro Weg |
+| POST | `/api/knx/ets_unlock` | `state=on\|off` → alle Wege auf Zeit öffnen oder das beenden |
 | GET | `/api/hwconfig` | aktives, gespeichertes und Image-Profil |
 | POST | `/api/hwconfig` | JSON-Profil speichern (Teilfelder erlaubt) |
 | POST | `/api/hwconfig/reset` | gespeichertes Profil verwerfen |
@@ -1795,6 +1807,74 @@ Kopplerparameter `PID_MAIN_LCCONFIG` und `PID_SUB_LCCONFIG` sind ebenfalls
 reine Download-Inhalte.
 
 Tunneling ist davon nicht betroffen und funktioniert unprogrammiert.
+
+### ETS-Zugriff pro Weg sperren
+
+Als Linienkoppler zu einer ungeschützten Linie – Garten, Garage, Carport – ist
+das Gerät von dort aus programmierbar. Wer die Adresse kennt, baut eine
+Verbindung auf, schreibt Filtertabelle oder `LCCONFIG` um, und die innere
+Linie steht offen. Der Programmiertaster hilft nicht: Er ist nur für das
+Setzen der physikalischen Adresse nötig, alles danach geht ohne ihn.
+
+Die Karte *ETS-Zugriff* legt deshalb fest, über welchen Weg Management dieses
+Gerät überhaupt erreicht:
+
+| Weg | Was darüber kommt |
+|---|---|
+| TP-Linie | alles von der Linie – der Weg, der draußen liegen kann |
+| KNXnet/IP-Tunnel | Tunnel- und Konfigurationsverbindungen aus dem LAN oder WLAN |
+| KNXnet/IP-Routing | der Multicast, den jeder andere Router im Netz ebenfalls erreicht |
+
+Vorgabe ist alles offen, wie bisher. Für eine Außenlinie: TP aus, Tunnel an,
+Routing je nach Netz. Kommerzielle Geräte kennen dasselbe, etwa den
+ETS-Parameter des MDT-IP-Routers, der die Parametrierung über die TP-Linie
+sperrt, oder die Telnet-Einstellung `lock` bei Enertex. Die Lösung, die der
+Standard vorsieht, ist KNX Data Secure; die kann dieser Stack nicht.
+
+**Was gesperrt wird.** Alles, was an die eigene physikalische Adresse geht,
+die lokale Zustellung von Broadcasts – Adresse setzen, Adresse per
+Seriennummer setzen, Adresse lesen – und bei Tunnelclients Property-Schreiben
+und `M_Reset` per cEMI. Property-*Lesen* per cEMI bleibt offen: Die ETS liest
+einige Werte, bevor sie das Gerät als Schnittstelle benutzt, und das soll auch
+mit gesperrtem Tunnel gehen. Ein abgewiesenes `T_Connect` bekommt sofort ein
+`T_Disconnect` zurück, die ETS meldet das Gerät also gleich als nicht
+erreichbar statt erst nach ihrem Timeout.
+
+**Was nicht gesperrt wird.** Die Weiterleitung. Telegramme an andere Geräte,
+Gruppentelegramme und Broadcasts gehen weiter wie eingestellt. Gegen
+Gruppentelegramme von draußen hilft die Filtertabelle, gegen Zugriffe auf
+Geräte der inneren Linie das Sperren physikalisch adressierter Telegramme in
+den ETS-Parametern des Kopplers. Die Sperre hier sorgt dafür, dass niemand
+diese beiden Einstellungen von draußen zurückdrehen kann. Mitlesen und
+Fälschen von Gruppentelegrammen auf der Außenlinie selbst verhindert sie
+nicht – das kann nur Secure.
+
+**Wo die Einstellung liegt.** In NVS (`sbip-ets`), geändert nur über das
+Dashboard (`POST /api/knx/ets_access`) und über Taster, nie über KNX – eine
+Sperre, die sich über den gesperrten Weg aufheben ließe, wäre keine. Ein
+KNX-Master-Reset und *ETS-Programmierung löschen* lassen sie stehen,
+Werkeinstellungen setzen sie auf offen zurück. Aussperren kann man sich
+damit nicht: Das Dashboard bleibt immer erreichbar.
+
+**Freigabe auf Zeit.** Die Schaltfläche in der Karte oder ein Taster mit
+Funktion 5 öffnet alle Wege für 15 Minuten. Solange die ETS weiter mit dem
+Gerät spricht, verlängert sich das um jeweils eine Minute, damit ein Download
+nicht mittendrin abreißt. Ein zweiter Druck beendet die Freigabe, ein
+Neustart ebenso. Damit lässt sich alles dauerhaft sperren und nur für den
+Moment der Programmierung am Gerät öffnen.
+
+**Wie es gebaut ist.** Patch 17 in [scripts/patch_knx.py](scripts/patch_knx.py)
+fragt `sbipManagementHook` aus [src/ets_access.cpp](src/ets_access.cpp) an
+den drei Stellen, an denen `NetworkLayerCoupler` an den eigenen Stack
+zustellt, und in `CemiServer`. Tunnelrahmen kommen über die TP-Schicht
+herein, weil `bau091A` den cEMI-Server dort angehängt hat, und tragen deshalb
+den Index der TP-Seite. `dataRequestFromTunnel()` setzt für die Dauer der
+Zustellung `sbipFromTunnel`, sodass der Hook sie trotzdem auseinanderhält.
+
+Abgewiesene Zugriffe stehen im Protokoll, höchstens eine Zeile je zehn
+Sekunden, und in der Karte mit Weg, Absender und Zeitpunkt. Abgewiesene
+Broadcasts zählen nicht mit: Auf eine Adressabfrage antwortet jedes Gerät der
+Linie, das ist kein Zugriffsversuch.
 
 ### Alle Gruppentelegramme weiterleiten
 

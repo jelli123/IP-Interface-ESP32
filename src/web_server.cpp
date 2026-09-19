@@ -15,6 +15,7 @@
 #include "bus_monitor.h"
 #include "cpu_load.h"
 #include "eth_interface.h"
+#include "ets_access.h"
 #include "fw_hash.h"
 #include "hour_meter.h"
 #include "hw_config.h"
@@ -284,6 +285,31 @@ static String statusJson()
     json += "\"knx_route_all\":" + String(knxLink.routeUnfiltered() ? "true" : "false") + ",";
     json += "\"knx_route_all_active\":" +
             String(knxLink.routeUnfilteredActive() ? "true" : "false") + ",";
+
+    {
+        uint8_t  allow = etsAccess.allowed();
+        uint16_t last  = etsAccess.lastRefusedSource();
+        uint32_t age   = etsAccess.lastRefusedAge();
+
+        json += "\"ets_access\":{";
+        json += "\"tp\":" + String((allow & EtsAccess::ALLOW_TP) ? "true" : "false") + ",";
+        json += "\"tunnel\":" + String((allow & EtsAccess::ALLOW_TUNNEL) ? "true" : "false") + ",";
+        json += "\"routing\":" + String((allow & EtsAccess::ALLOW_ROUTING) ? "true" : "false") + ",";
+        json += "\"unlock_left\":" + String(etsAccess.unlockRemaining()) + ",";
+        json += "\"refused\":" + String(etsAccess.refused());
+
+        if (age != UINT32_MAX)
+        {
+            json += ",\"last_path\":\"" + String(EtsAccess::pathName(etsAccess.lastRefusedPath())) + "\"";
+            json += ",\"last_source\":\"";
+            if (last != 0)
+            {
+                json += String(last >> 12) + "." + String((last >> 8) & 0x0F) + "." + String(last & 0xFF);
+            }
+            json += "\",\"last_age\":" + String(age);
+        }
+        json += "},";
+    }
     json += "\"led_present\":" + String(statusLed.present() ? "true" : "false") + ",";
     json += "\"led_beat_available\":" + String(statusLed.hasHeartbeat() ? "true" : "false") + ",";
     json += "\"led_heartbeat\":" + String(statusLed.heartbeat() ? "true" : "false") + ",";
@@ -635,6 +661,46 @@ static void registerKnxRoutes()
         sysLog.printf("KNX: unfiltered routing %s\n", enable ? "on" : "off");
 
         request->send(200, "application/json", "{\"status\":\"ok\"}");
+    });
+
+    /*
+     * Which path may manage the device: tp, tunnel and routing, each 0 or 1.
+     * Takes effect with the next frame. Deliberately only here and on the
+     * buttons - never over KNX, see ets_access.h.
+     */
+    server.on("/api/knx/ets_access", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        static const char* const NAMES[] = {"tp", "tunnel", "routing"};
+        static const uint8_t     BITS[]  = {EtsAccess::ALLOW_TP, EtsAccess::ALLOW_TUNNEL,
+                                            EtsAccess::ALLOW_ROUTING};
+        uint8_t mask = 0;
+
+        for (uint8_t i = 0; i < 3; i++)
+        {
+            if (!request->hasParam(NAMES[i], true))
+            {
+                request->send(400, "application/json",
+                              String("{\"error\":\"parameter '") + NAMES[i] + "' missing\"}");
+                return;
+            }
+            if (request->getParam(NAMES[i], true)->value() == "1") mask |= BITS[i];
+        }
+
+        etsAccess.setAllowed(mask);
+        request->send(200, "application/json", "{\"status\":\"ok\"}");
+    });
+
+    // Accepts state=on|off: open every path for a while, or end that early.
+    server.on("/api/knx/ets_unlock", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        bool enable = !request->hasParam("state", true) ||
+                      request->getParam("state", true)->value() != "off";
+        etsAccess.unlock(enable);
+
+        request->send(200, "application/json",
+                      String("{\"unlock_left\":") + etsAccess.unlockRemaining() + "}");
     });
 
     /*

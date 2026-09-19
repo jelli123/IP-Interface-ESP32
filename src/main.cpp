@@ -15,6 +15,7 @@
 #include "bus_monitor.h"
 #include "button_service.h"
 #include "cpu_load.h"
+#include "ets_access.h"
 #include "hour_meter.h"
 #include "hw_config.h"
 #include "interface_config.h"
@@ -163,6 +164,9 @@ void setup()
     // between the two.
     busMonitor.begin();
 
+    // Likewise: the lock has to be in place before the first frame arrives.
+    etsAccess.begin();
+
     if (!knxLink.begin())
     {
         // Not fatal. The interface still serves the dashboard, which is where
@@ -220,6 +224,7 @@ void loop()
     cpuLoad.pass();
 
     knxLink.loop();
+    etsAccess.loop();
     netManager.loop();
     timeService.loop();
     otaService.loop();

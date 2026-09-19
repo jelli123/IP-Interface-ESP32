@@ -7,6 +7,7 @@
 #include <nvs_flash.h>
 
 #include "button_service.h"
+#include "ets_access.h"
 #include "hw_config.h"
 #include "interface_config.h"
 #include "knx_link.h"
@@ -198,6 +199,29 @@ void ButtonService::dispatch(uint8_t function, const char* name)
                       netManager.wifiEnabled() ? "off" : "on");
         netManager.setWifiEnabled(!netManager.wifiEnabled());
         netManager.scheduleReboot();
+        break;
+
+    case HW_BTNF_ETS_UNLOCK:
+        // Pressed again while it runs, it closes early - the natural thing
+        // to do once the download is through.
+        sysLog.printf("Button %s: ETS access %s\n", name,
+                      etsAccess.unlocked() ? "unlock ended" : "unlocked for a while");
+        etsAccess.unlock(!etsAccess.unlocked());
+        break;
+
+    case HW_BTNF_ETS_TP:
+        sysLog.printf("Button %s: ETS access over TP\n", name);
+        etsAccess.toggleTp();
+        break;
+
+    case HW_BTNF_ETS_NET:
+        sysLog.printf("Button %s: ETS access over the network\n", name);
+        etsAccess.toggleNet();
+        break;
+
+    case HW_BTNF_ETS_ALL:
+        sysLog.printf("Button %s: ETS access altogether\n", name);
+        etsAccess.toggleAll();
         break;
 
     case HW_BTNF_FACTORY:

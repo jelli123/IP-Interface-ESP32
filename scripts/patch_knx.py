@@ -1870,3 +1870,258 @@ def patch_tunnel_confirm():
 
 
 patch_tunnel_confirm()
+
+
+# --------------------------------------------------------------------------
+# 17. Let the firmware decide which path may manage the device
+# --------------------------------------------------------------------------
+#
+# Used as a line coupler into an unprotected line - a garden, a garage - the
+# device can be reprogrammed from that line: anyone who knows its address
+# opens a connection, rewrites the filter table or LCCONFIG and the inner line
+# is open. The programming button does not help, it only guards the address
+# assignment.
+#
+# The device is reached along three paths, told apart here:
+#
+#     0  KNXnet/IP routing   frames from the multicast, primary interface
+#     1  TP1                 frames from the line, secondary interface
+#     2  KNXnet/IP tunnel    frames a tunnel client handed over; they enter
+#                            through the TP layer, which is where bau091A
+#                            put the cEMI server, so srcIfIdx says 1
+#
+# sbipManagementHook, defined in src/ets_access.cpp, answers per frame.
+# Refused are everything addressed to our own individual address, the local
+# delivery of broadcasts - address programming, serial number writes - and
+# property writes a tunnel client sends as cEMI M_PropWrite. Forwarding to
+# the other side is untouched: the lock guards the device, not the line.
+#
+# A refused T_Connect gets a T_Disconnect back, so the tool reports the
+# device unreachable at once instead of running into its timeout.
+
+MGMT_MARKER = "// sbip: management lock, see src/ets_access.cpp"
+
+MGMT_DECL = (
+    MGMT_MARKER + "\n"
+    "extern bool (*sbipManagementHook)(uint8_t path, uint16_t source, bool individual);\n"
+)
+
+# data_link_layer.cpp: mark the frames a tunnel client hands over.
+MGMT_TUN_ANCHOR = (
+    "    sbipMonitorSuppress = true;\n"
+    "    frameReceived(frame);\n"
+    "    sbipMonitorSuppress = false;\n"
+)
+
+MGMT_TUN_NEW = (
+    "    sbipMonitorSuppress = true;\n"
+    "    sbipFromTunnel = true;\n"
+    "    frameReceived(frame);\n"
+    "    sbipFromTunnel = false;\n"
+    "    sbipMonitorSuppress = false;\n"
+)
+
+MGMT_TUN_ANCHOR_DECL = "void DataLinkLayer::dataRequestFromTunnel(CemiFrame& frame)\n"
+
+MGMT_TUN_DECL = (
+    MGMT_MARKER + "\n"
+    "// Set while a tunnel client's frame is delivered locally.\n"
+    "bool sbipFromTunnel = false;\n"
+    "\n"
+)
+
+# network_layer_coupler.cpp: the three places that deliver to the local stack.
+MGMT_NL_ANCHOR_DECL = (
+    "void NetworkLayerCoupler::routeDataIndividual(AckType ack, uint16_t"
+    " destination, NPDU& npdu, Priority priority, uint16_t source, uint8_t"
+    " srcIfIndex)\n"
+)
+
+MGMT_NL_DECL = (
+    MGMT_DECL +
+    "extern bool sbipFromTunnel;\n"
+    "\n"
+    "static bool sbipManagementAllowed(uint8_t srcIfIdx, uint16_t source, bool individual)\n"
+    "{\n"
+    "    // Our own frames, and a build without the firmware side\n"
+    "    if (srcIfIdx > 1 || sbipManagementHook == nullptr)\n"
+    "        return true;\n"
+    "\n"
+    "    return sbipManagementHook(sbipFromTunnel ? 2 : srcIfIdx, source, individual);\n"
+    "}\n"
+    "\n"
+)
+
+MGMT_NL_ANCHOR_IND = (
+    "        // FORWARD_LOCALLY\n"
+    "        //println(\"NetworkLayerCoupler::routeDataIndividual locally\");\n"
+)
+
+MGMT_NL_NEW_IND = (
+    MGMT_NL_ANCHOR_IND +
+    "        if (!sbipManagementAllowed(srcIfIndex, source, true))\n"
+    "        {\n"
+    "            // sbip: hang up at once rather than let the tool time out\n"
+    "            if (npdu.tpdu().type() == Connect)\n"
+    "            {\n"
+    "                CemiFrame frame(0);\n"
+    "                TPDU& tpdu = frame.tpdu();\n"
+    "                tpdu.type(Disconnect);\n"
+    "                tpdu.sequenceNumber(0);\n"
+    "                dataIndividualRequest(AckRequested, source, NetworkLayerParameter,\n"
+    "                                      SystemPriority, tpdu);\n"
+    "            }\n"
+    "            return;\n"
+    "        }\n"
+    "\n"
+)
+
+MGMT_NL_ANCHOR_SYS = (
+    "            npdu.frame().systemBroadcast(SysBroadcast);\n"
+    "            _transportLayer.dataSystemBroadcastIndication(hopType, priority, source, npdu.tpdu());\n"
+    "            return;\n"
+)
+
+MGMT_NL_NEW_SYS = (
+    "            npdu.frame().systemBroadcast(SysBroadcast);\n"
+    "            if (sbipManagementAllowed(srcIfIdx, source, false))\n"
+    "                _transportLayer.dataSystemBroadcastIndication(hopType, priority, source, npdu.tpdu());\n"
+    "            return;\n"
+)
+
+MGMT_NL_ANCHOR_BC = (
+    "\n"
+    "        _transportLayer.dataBroadcastIndication(hopType, priority, source, npdu.tpdu());\n"
+)
+
+MGMT_NL_NEW_BC = (
+    "\n"
+    "        if (sbipManagementAllowed(srcIfIdx, source, false))\n"
+    "            _transportLayer.dataBroadcastIndication(hopType, priority, source, npdu.tpdu());\n"
+)
+
+MGMT_NL_ANCHOR_SYS2 = (
+    "        HopCountType hopType = npdu.hopCount() == 7 ? UnlimitedRouting : NetworkLayerParameter;\n"
+    "        _transportLayer.dataSystemBroadcastIndication(hopType, priority, source, npdu.tpdu());\n"
+    "    }\n"
+)
+
+MGMT_NL_NEW_SYS2 = (
+    "        HopCountType hopType = npdu.hopCount() == 7 ? UnlimitedRouting : NetworkLayerParameter;\n"
+    "        if (sbipManagementAllowed(srcIfIdx, source, false))\n"
+    "            _transportLayer.dataSystemBroadcastIndication(hopType, priority, source, npdu.tpdu());\n"
+    "    }\n"
+)
+
+# cemi_server.cpp: local device management over a tunnel or a configuration
+# connection. Reading stays open - ETS reads a few properties before it uses
+# the device as a plain interface. The client address writes only change
+# what this connection is told, and stay open for the same reason.
+MGMT_CEMI_ANCHOR_DECL = "void CemiServer::frameReceived(CemiFrame& frame)\n"
+
+MGMT_CEMI_ANCHOR_WRITE = (
+    "    else\n"
+    "    {\n"
+    "        _bau.propertyValueWrite((ObjectType)objectType, objectInstance,"
+    " propertyId, numberOfElements, startIndex, requestData, requestDataSize);\n"
+    "    }\n"
+)
+
+MGMT_CEMI_NEW_WRITE = (
+    "    else if (sbipManagementHook != nullptr && !sbipManagementHook(2, 0, true))\n"
+    "    {\n"
+    "        // sbip: refused, answered with a negative confirmation below\n"
+    "        numberOfElements = 0;\n"
+    "    }\n"
+) + MGMT_CEMI_ANCHOR_WRITE
+
+MGMT_CEMI_ANCHOR_RESET = (
+    "        case M_Reset_req:\n"
+    "        {\n"
+    "            handleMReset(frame);\n"
+)
+
+MGMT_CEMI_NEW_RESET = (
+    "        case M_Reset_req:\n"
+    "        {\n"
+    "            if (sbipManagementHook != nullptr && !sbipManagementHook(2, 0, true))\n"
+    "                break;\n"
+    "\n"
+    "            handleMReset(frame);\n"
+)
+
+
+def knx_source(name):
+    return os.path.join(
+        env["PROJECT_LIBDEPS_DIR"],  # noqa: F821
+        env["PIOENV"],  # noqa: F821
+        "knx", "src", "knx", name,
+    )
+
+
+def apply_edits(path, edits, what):
+    """All edits or none - a lock that covers only some paths is worse than
+    no lock, because the dashboard would claim otherwise."""
+    with open(path, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if MGMT_MARKER in source:
+        return None
+
+    for anchor, _ in edits:
+        if source.count(anchor) != 1:
+            sys.stderr.write(
+                "patch_knx.py: anchor no longer unique, %s:\n  %s\n"
+                % (what, anchor.strip().splitlines()[0])
+            )
+            return False
+
+    for anchor, replacement in edits:
+        source = source.replace(anchor, replacement)
+
+    return source
+
+
+def patch_management_lock():
+    files = (
+        (DLL_C, (
+            (MGMT_TUN_ANCHOR, MGMT_TUN_NEW),
+            (MGMT_TUN_ANCHOR_DECL, MGMT_TUN_DECL + MGMT_TUN_ANCHOR_DECL),
+        )),
+        (knx_source("network_layer_coupler.cpp"), (
+            (MGMT_NL_ANCHOR_IND, MGMT_NL_NEW_IND),
+            (MGMT_NL_ANCHOR_SYS, MGMT_NL_NEW_SYS),
+            (MGMT_NL_ANCHOR_BC, MGMT_NL_NEW_BC),
+            (MGMT_NL_ANCHOR_SYS2, MGMT_NL_NEW_SYS2),
+            (MGMT_NL_ANCHOR_DECL, MGMT_NL_DECL + MGMT_NL_ANCHOR_DECL),
+        )),
+        (knx_source("cemi_server.cpp"), (
+            (MGMT_CEMI_ANCHOR_WRITE, MGMT_CEMI_NEW_WRITE),
+            (MGMT_CEMI_ANCHOR_RESET, MGMT_CEMI_NEW_RESET),
+            (MGMT_CEMI_ANCHOR_DECL, MGMT_DECL + "\n" + MGMT_CEMI_ANCHOR_DECL),
+        )),
+    )
+
+    if not all(os.path.isfile(path) for path, _ in files):
+        return
+
+    what = "the ETS access setting has NO effect"
+    patched = []
+
+    for path, edits in files:
+        source = apply_edits(path, edits, what)
+        if source is False:
+            return
+        if source is not None:
+            patched.append((path, source))
+
+    for path, source in patched:
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(source)
+
+    if patched:
+        print("patch_knx.py: management lock applied to %s"
+              % ", ".join(os.path.basename(p) for p, _ in patched))
+
+
+patch_management_lock()

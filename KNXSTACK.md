@@ -405,3 +405,4 @@ Start abzustürzen.
 | `sbipRouteUnfiltered` in `router_object.cpp` | Bewusste Abweichung von der Norm, siehe [README](README.md) |
 | Messpunkte hinter `SBIP_KNX_TRACE` | Diagnose für dieses Projekt |
 | Zähler für unquittierte Tunnelrahmen | Behelf; die saubere Lösung wäre Punkt 8 |
+| Management-Sperre pro Weg (`sbipManagementHook`) | Einstellung dieser Firmware; der Standard sieht dafür KNX Data Secure vor |

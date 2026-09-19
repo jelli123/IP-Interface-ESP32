@@ -226,6 +226,33 @@ small{color:var(--dim)}
   </section>
 
   <section class="card">
+    <h2>ETS-Zugriff</h2>
+    <p><small>Über welche Wege die ETS dieses Gerät programmieren darf.</small></p>
+    <label class="chk"><input type="checkbox" id="etsTp" onchange="setEts()">
+      über die TP-Linie</label>
+    <label class="chk"><input type="checkbox" id="etsTun" onchange="setEts()">
+      über einen KNXnet/IP-Tunnel (LAN/WLAN)</label>
+    <label class="chk"><input type="checkbox" id="etsRt" onchange="setEts()">
+      über KNXnet/IP-Routing (Multicast)</label>
+    <div class="row" style="margin-top:10px"><span>Zustand</span><span id="etsSt">-</span></div>
+    <div class="row"><span>Abgewiesen</span><span id="etsRef">-</span></div>
+    <div class="actions">
+      <button class="sec" id="etsTmp" onclick="etsUnlock()">15 Minuten ganz freigeben</button>
+    </div>
+    <p><small>Als Linienkoppler zu einer ungeschützten Linie &ndash; Garten,
+    Garage, Carport &ndash; sollte die TP-Linie hier aus sein. Sonst kann
+    jeder, der dort angeschlossen ist, die Filtertabelle umschreiben und
+    die innere Linie öffnen. Der Programmiertaster schützt davor nicht.</small></p>
+    <p><small>Gesperrt wird nur das Programmieren dieses Geräts, auch das
+    Setzen der physikalischen Adresse. Telegramme an andere Geräte leitet es
+    weiter wie bisher. Die Einstellung lässt sich nur hier und über einen
+    Taster ändern, nie über KNX, und bleibt auch nach einem Master-Reset
+    erhalten.</small></p>
+    <p><small>Die Freigabe auf Zeit öffnet alle Wege, solange die ETS
+    arbeitet, mindestens 15 Minuten. Ein Neustart beendet sie.</small></p>
+  </section>
+
+  <section class="card">
     <h2>KNX TP1 &ndash; SB-Interface</h2>
     <div class="row"><span>Verbindung</span><span id="tpConn">-</span></div>
     <div class="row"><span>Schnittstelle</span><span id="tpType">-</span></div>
@@ -795,6 +822,11 @@ small{color:var(--dim)}
     <p><small>Werkeinstellungen löscht alles, auch die WLAN-Zugangsdaten.
     WLAN ein/aus lässt sich nur abschalten, wenn ein W5500 erkannt wurde,
     und wirkt nach einem Neustart.</small></p>
+    <p><small>Die ETS-Vorlagen schalten, über welchen Weg die ETS dieses
+    Gerät programmieren darf, siehe Karte ETS-Zugriff. „LAN/WLAN“ meint
+    Tunnel und Routing zusammen; nach dem Sperren stellt der nächste Druck
+    wieder her, was vorher offen war. „15 min freigeben“ öffnet alle Wege
+    auf Zeit, ein zweiter Druck beendet das.</small></p>
   </div>
 
   <div class="grp">
@@ -1383,6 +1415,59 @@ const EN = {
 + 'mDNS host name and appears in the log. Takes effect after a restart.',
 'Anfang':'Top', 'Ende':'Bottom',
 'GA-Filter deaktiviert':'Group address filter off',
+'ETS-Zugriff':'ETS access', 'Abgewiesen':'Refused',
+'Über welche Wege die ETS dieses Gerät programmieren darf.':
+  'The paths over which ETS may program this device.',
+'über die TP-Linie':'over the TP line',
+'über einen KNXnet/IP-Tunnel (LAN/WLAN)':'over a KNXnet/IP tunnel (LAN/WiFi)',
+'über KNXnet/IP-Routing (Multicast)':'over KNXnet/IP routing (multicast)',
+'15 Minuten ganz freigeben':'Open everything for 15 minutes',
+'Freigabe beenden':'End the unlock',
+'vorübergehend überall offen, noch':'open everywhere for now, remaining',
+'auf allen Wegen offen':'open on every path', 'ganz gesperrt':'locked entirely',
+'nur über':'only over', 'zuletzt':'last',
+'TP-Linie':'TP line',
+['Dann kann die ETS das Gerät auf keinem Weg mehr programmieren, bis es hier '
++ 'oder per Taster wieder freigegeben wird. Fortfahren?']:
+  'ETS then cannot program the device on any path until it is unlocked here '
++ 'or with a button. Continue?',
+['Als Linienkoppler zu einer ungeschützten Linie \u2013 Garten, Garage, '
++ 'Carport \u2013 sollte die TP-Linie hier aus sein. Sonst kann jeder, der '
++ 'dort angeschlossen ist, die Filtertabelle umschreiben und die innere Linie '
++ 'öffnen. Der Programmiertaster schützt davor nicht.']:
+  'Used as a line coupler to an unprotected line - garden, garage, car port - '
++ 'the TP line should be off here. Otherwise anyone connected there can '
++ 'rewrite the filter table and open the inner line. The programming button '
++ 'does not protect against that.',
+['Gesperrt wird nur das Programmieren dieses Geräts, auch das Setzen der '
++ 'physikalischen Adresse. Telegramme an andere Geräte leitet es weiter wie '
++ 'bisher. Die Einstellung lässt sich nur hier und über einen Taster ändern, '
++ 'nie über KNX, und bleibt auch nach einem Master-Reset erhalten.']:
+  'Only programming this device is locked, assigning its individual address '
++ 'included. Telegrams to other devices are forwarded as before. The setting '
++ 'can only be changed here and with a button, never over KNX, and survives '
++ 'a master reset.',
+['Die Freigabe auf Zeit öffnet alle Wege, solange die ETS arbeitet, '
++ 'mindestens 15 Minuten. Ein Neustart beendet sie.']:
+  'The temporary unlock opens every path for as long as ETS is working, at '
++ 'least 15 minutes. A restart ends it.',
+'ETS-Zugriff 15 min freigeben':'Unlock ETS access for 15 min',
+'ETS-Zugriff über TP sperren/freigeben':'Lock/unlock ETS access over TP',
+'ETS-Zugriff über LAN/WLAN sperren/freigeben':'Lock/unlock ETS access over LAN/WiFi',
+'ETS-Zugriff ganz sperren/freigeben':'Lock/unlock ETS access entirely',
+'ETS-Zugriff auf Zeit offen':'ETS access temporarily open',
+'ETS-Zugriff über TP offen':'ETS access over TP open',
+'ETS-Zugriff über LAN/WLAN offen':'ETS access over LAN/WiFi open',
+'ETS-Zugriff ganz gesperrt':'ETS access locked entirely',
+['Die ETS-Vorlagen schalten, über welchen Weg die ETS dieses Gerät '
++ 'programmieren darf, siehe Karte ETS-Zugriff. \u201eLAN/WLAN\u201c meint '
++ 'Tunnel und Routing zusammen; nach dem Sperren stellt der nächste Druck '
++ 'wieder her, was vorher offen war. \u201e15 min freigeben\u201c öffnet alle '
++ 'Wege auf Zeit, ein zweiter Druck beendet das.']:
+  'The ETS templates switch the paths over which ETS may program this device, '
++ 'see the ETS access card. "LAN/WiFi" means tunnel and routing together; '
++ 'after locking, the next press restores what was open before. "Unlock for '
++ '15 min" opens every path for a while, a second press ends it.',
 'Puffer voll, Älteres wurde überschrieben':
   'buffer full, older lines have been overwritten',
 'Automatisch aktualisieren':'Refresh automatically',
@@ -1685,6 +1770,7 @@ async function refresh(){
       ? (s.knx_route_all ? t('Aktiv über den Schalter.')
                          : t('Aktiv, weil die ETS das Gerät noch nicht programmiert hat.'))
       : t('Die Filtertabelle der ETS entscheidet.');
+  showEts(s.ets_access);
 
   $('beatRow').style.display = s.led_beat_available ? '' : 'none';
   $('beat').checked          = s.led_heartbeat;
@@ -1824,6 +1910,65 @@ async function setRouting(){
   }
   const body = new URLSearchParams({unfiltered: $('rtAll').checked ? '1' : '0'});
   await fetch('/api/knx/routing', {method:'POST', body});
+  setTimeout(refresh, 300);
+}
+
+const ETS_PATH = {TP:'TP-Linie', tunnel:'Tunnel', routing:'Routing'};
+
+function mmss(sec){
+  return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+}
+
+function ago(sec){
+  const d = sec < 60 ? sec + ' s' : (sec < 3600 ? Math.floor(sec / 60) + ' min'
+                                                : Math.floor(sec / 3600) + ' h');
+  return LANG === 'en' ? d + ' ago' : 'vor ' + d;
+}
+
+let etsUnlocked = false;
+
+function showEts(e){
+  if(!e) return;
+  $('etsTp').checked  = e.tp;
+  $('etsTun').checked = e.tunnel;
+  $('etsRt').checked  = e.routing;
+
+  const open = [e.tp && 'TP-Linie', e.tunnel && 'Tunnel', e.routing && 'Routing']
+               .filter(Boolean).map(t);
+  $('etsSt').innerHTML = e.unlock_left
+      ? '<span class="dot warn"></span>' + t('vorübergehend überall offen, noch')
+        + ' ' + mmss(e.unlock_left)
+      : (open.length === 3 ? t('auf allen Wegen offen')
+      : (open.length === 0 ? t('ganz gesperrt')
+      : t('nur über') + ' ' + open.join(', ')));
+
+  $('etsRef').textContent = e.refused
+      ? e.refused + ' \u2013 ' + t('zuletzt') + ' ' + t(ETS_PATH[e.last_path] || e.last_path)
+        + (e.last_source ? ' ' + e.last_source : '') + ', ' + ago(e.last_age)
+      : t('keine');
+
+  etsUnlocked = !!e.unlock_left;
+  $('etsTmp').textContent = t(e.unlock_left ? 'Freigabe beenden' : '15 Minuten ganz freigeben');
+  $('etsTmp').disabled    = !e.unlock_left && open.length === 3;
+}
+
+async function setEts(){
+  if(!$('etsTp').checked && !$('etsTun').checked && !$('etsRt').checked &&
+     !confirm(t('Dann kann die ETS das Gerät auf keinem Weg mehr programmieren, bis es hier oder per Taster wieder freigegeben wird. Fortfahren?'))){
+    setTimeout(refresh, 0);
+    return;
+  }
+  const body = new URLSearchParams({
+    tp:      $('etsTp').checked  ? '1' : '0',
+    tunnel:  $('etsTun').checked ? '1' : '0',
+    routing: $('etsRt').checked  ? '1' : '0'});
+  await fetch('/api/knx/ets_access', {method:'POST', body});
+  setTimeout(refresh, 300);
+}
+
+async function etsUnlock(){
+  const body = new URLSearchParams({state: etsUnlocked ? 'off' : 'on'});
+  await fetch('/api/knx/ets_unlock', {method:'POST', body});
   setTimeout(refresh, 300);
 }
 
@@ -2970,9 +3115,14 @@ const TRIG  = ['kurzer Druck','langer Druck','sehr langer Druck'];
 const LKIND = ['LED','RGB-LED'];
 const RGBT  = ['WS2812','SK6812'];
 const BFUNC = ['Programmiermodus','Werkeinstellungen','WLAN Grundeinstellung',
-               'Gerät neu starten','WLAN ein/aus'];
+               'Gerät neu starten','WLAN ein/aus','ETS-Zugriff 15 min freigeben',
+               'ETS-Zugriff über TP sperren/freigeben',
+               'ETS-Zugriff über LAN/WLAN sperren/freigeben',
+               'ETS-Zugriff ganz sperren/freigeben'];
 const LCOND = ['Programmiermodus aktiv','AP-Modus offen','keine TP-Verbindung',
-               'online','offline','Heartbeat','GA-Filter deaktiviert'];
+               'online','offline','Heartbeat','GA-Filter deaktiviert',
+               'ETS-Zugriff auf Zeit offen','ETS-Zugriff über TP offen',
+               'ETS-Zugriff über LAN/WLAN offen','ETS-Zugriff ganz gesperrt'];
 const LCOL  = ['rot','grün','blau','gelb','cyan','magenta','weiß','orange'];
 const LPAT  = ['Dauerlicht','langsam blinken','schnell blinken','Doppelblitz',
                'kurzer Blitz'];

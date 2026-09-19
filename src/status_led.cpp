@@ -8,6 +8,7 @@
 #include <esp32-hal-rmt.h>
 #include <soc/soc_caps.h>
 
+#include "ets_access.h"
 #include "hw_config.h"
 #include "knx_link.h"
 #include "net_manager.h"
@@ -245,6 +246,10 @@ bool StatusLed::conditionHolds(uint8_t condition) const
     case HW_COND_OFFLINE:   return !netManager.isOnline() && !netManager.isApMode();
     case HW_COND_HEARTBEAT: return _heartbeat;
     case HW_COND_ROUTE_ALL: return knxLink.routeUnfiltered();
+    case HW_COND_ETS_UNLOCKED: return etsAccess.unlocked();
+    case HW_COND_ETS_TP:       return etsAccess.effective() & EtsAccess::ALLOW_TP;
+    case HW_COND_ETS_NET:      return etsAccess.effective() & EtsAccess::ALLOW_NET;
+    case HW_COND_ETS_LOCKED:   return etsAccess.effective() == 0;
     default:                return false;
     }
 }
