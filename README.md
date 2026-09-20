@@ -2429,9 +2429,11 @@ Der KNX-Stack funktioniert deshalb **unverändert** über Ethernet.
 
 ### Verdrahtung
 
-Vier Leitungen plus Versorgung. `SCS` ist der Chip-Select des W5500, `INT` und
-`RST` bleiben in allen Vorgaben unbeschaltet (−1): der Treiber pollt, und der
-Reset des Moduls hängt am eigenen RC-Glied.
+Vier Leitungen plus Versorgung. `SCS` ist der Chip-Select des W5500. `INT` und
+`RST` sind optional und bleiben in allen Vorgaben unbeschaltet (−1): der
+Treiber pollt, und der Reset des Moduls hängt am eigenen RC-Glied. Wer sie
+verdrahtet, trägt die GPIO im Hardware-Profil unter `eth_irq` und `eth_rst`
+ein – ohne Neubau. Was sie bringen, steht unter *Die optionalen Leitungen*.
 
 Je nach Entwicklungsboard sind unterschiedliche GPIOs vorbelegt, weil die
 freien Pins woanders liegen:
@@ -2467,6 +2469,62 @@ Hardware-Profil überschreiben.
 bereits durch KNX-UART, I2C, LED und Taster belegt sind. Ethernet ist dort in
 der Vorgabe deaktiviert und lässt sich nur einschalten, wenn man dafür etwas
 anderes aufgibt.
+
+### Die optionalen Leitungen INT und RST
+
+Das Gerät läuft ohne beide. Verdrahtet bringt jede etwas, das sich nicht
+nachrüsten lässt, solange der Pin fehlt:
+
+| Leitung | Ohne sie | Mit ihr |
+| --- | --- | --- |
+| `INT` | Der Treiber fragt den Chip alle 10 ms über SPI nach neuen Daten, also hundertmal je Sekunde, auch wenn nichts ankommt. | Der Chip meldet sich selbst. Weniger SPI-Verkehr, weniger CPU-Last, kürzere Verzögerung beim Empfang. |
+| `RST` | Der W5500 wird nur durch sein eigenes RC-Glied zurückgesetzt, also beim Einschalten. Ein Neustart der Firmware allein setzt ihn **nicht** zurück – er behält seinen Zustand. | Die Firmware setzt ihn vor jeder Erkennung zurück: 2 ms auf Masse, dann 60 ms Wartezeit für die PLL. Der Start ist damit jedes Mal derselbe, auch nach einem Absturz. |
+
+Der Reset läuft in [src/eth_interface.cpp](src/eth_interface.cpp) vor dem
+Lesen des Versionsregisters. An den Treiber wird danach −1 übergeben: Der
+Chip ist bereits zurückgesetzt, und ein zweiter Durchlauf kostete nur weitere
+60 ms.
+
+**Welche GPIO auf dem ESP32-S3-DevKitC-1**
+
+| Signal | GPIO | Warum |
+| --- | --- | --- |
+| `INT` | **14** | liegt auf derselben Stiftleiste direkt neben `MISO` (13), keine Zweitaufgabe |
+| `RST` | **7** | dieselbe Leiste, frei, kein Strapping-Pin (6 geht genauso) |
+
+Nicht in Frage kommen 0, 3, 45 und 46 (Strapping), 19/20 (USB), 26–37 (Flash
+und PSRAM), 38/48 (RGB-LED), 39–42 (JTAG), 43/44 (UART0) sowie die schon
+belegten 4/5 (SB-Interface), 8/9 (I2C), 10–13 (SPI) und 17/18 (KNX-UART).
+
+Beide Leitungen sind **low-aktiv**. `INT` betrifft im Treiber allein den
+Empfang: Der Parameter heißt `int_gpio_num` und ersetzt das periodische
+Abfragen des Empfangsstatus (`poll_period_ms`). Ob eine Verbindung besteht,
+ermittelt der Treiber unabhängig davon über einen eigenen Zeitgeber – `INT`
+ändert an der Link-Erkennung also nichts.
+
+> **Beide ersetzen keine Fehlersuche im Netz.** Sie ändern nichts daran, ob
+> ein DHCP-Server antwortet, und sie erkennen keinen Link, den der PHY nicht
+> meldet. Kommt kein Link oder keine Adresse zustande, steht der Grund im
+> Protokoll – siehe *Was im Protokoll steht*.
+
+### Was im Protokoll steht
+
+Die Link-Überwachung läuft alle zwei Sekunden und **in jedem Betriebsmodus**,
+auch wenn das Gerät gerade über WLAN arbeitet. Nur so steht im Protokoll, ob
+die verkabelte Seite jemals zurückkam.
+
+| Zeile | Bedeutung |
+| --- | --- |
+| `ETH: W5500 found` | Das Versionsregister hat mit `0x04` geantwortet. |
+| `ETH: link up, 100 Mbit/s full duplex` | Der PHY meldet eine Verbindung. |
+| `ETH: no address from DHCP` | Der Link stand, aber binnen 12 s kam beim Start keine Adresse. |
+| `ETH: link up but still no address` | Dasselbe im laufenden Betrieb, nach 15 s. Kabel und PHY sind in Ordnung, die DHCP-Antwort fehlt. |
+| `ETH: address 192.168.1.20` | Adresse bezogen. Der Zusatz `(device is on WiFi)` heißt, dass das Gerät weiter über WLAN arbeitet. |
+| `ETH: address gone`, `ETH: link lost` | Adresse beziehungsweise Verbindung weg. |
+
+Die Standardroute übernimmt die Firmware nur, wenn Ethernet auch der genutzte
+Anschluss ist. Sie im WLAN-Betrieb umzubiegen, würde dem KNX-Multicast-Socket
+die Schnittstelle unter den Füßen wegziehen.
 
 **ESP32-C6-DevKitC-1** (`esp32c6`): Freie Pins gibt es genug, aber keine
 Vorgabe – die Belegung hängt davon ab, welche Stiftleiste man benutzt. SCK,

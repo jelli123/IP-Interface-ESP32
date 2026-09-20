@@ -81,6 +81,9 @@ private:
     bool     _present     = false;
     bool     _started     = false;
     bool     _wasUp       = false;
+    bool     _wasLink     = false;
+    bool     _leaseWarned = false;
+    uint32_t _linkSince   = 0;
     uint32_t _lastCheckMs = 0;
 };
 

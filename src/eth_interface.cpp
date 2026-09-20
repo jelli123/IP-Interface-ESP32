@@ -12,6 +12,7 @@
 
 #include "hw_config.h"
 #include "log_buffer.h"
+#include "net_manager.h"
 #endif
 
 EthInterface ethInterface;
@@ -49,6 +50,9 @@ static const uint32_t IP_TIMEOUT_MS = 12000UL;
 
 /** Interval of the link supervision in loop(). */
 static const uint32_t CHECK_INTERVAL_MS = 2000UL;
+
+/** How long a link may stay without an address before that is worth a line. */
+static const uint32_t LEASE_WARN_MS = 15000UL;
 
 void EthInterface::resetChip()
 {
@@ -197,7 +201,9 @@ bool EthInterface::begin(void (*keepAlive)())
      */
     ETH.setDefault();
 
-    _wasUp = true;
+    _wasUp     = true;
+    _wasLink   = true;
+    _linkSince = millis();
     sysLog.printf("ETH: ready, IP %s\n", ETH.localIP().toString().c_str());
     return true;
 }
@@ -214,7 +220,40 @@ void EthInterface::loop()
     }
     _lastCheckMs = millis();
 
-    bool up = ETH.linkUp() && ETH.hasIP();
+    bool link = ETH.linkUp();
+    bool up   = link && ETH.hasIP();
+
+    /*
+     * Link and address are reported apart, because the difference is the
+     * diagnosis: a link without an address means the cable and the PHY are
+     * fine and the DHCP answer is what never arrives.
+     */
+    if (link != _wasLink)
+    {
+        _wasLink     = link;
+        _linkSince   = millis();
+        _leaseWarned = false;
+
+        if (link)
+        {
+            sysLog.printf("ETH: link up, %u Mbit/s %s duplex\n",
+                          ETH.linkSpeed(), ETH.fullDuplex() ? "full" : "half");
+        }
+        else
+        {
+            sysLog.println("ETH: link lost");
+        }
+    }
+
+    if (link && !up && !_leaseWarned &&
+        (uint32_t)(millis() - _linkSince) > LEASE_WARN_MS)
+    {
+        _leaseWarned = true;
+        sysLog.println("ETH: link up but still no address - no DHCP answer on "
+                       "this segment, or the W5500 receives nothing (check INT "
+                       "if it is wired)");
+    }
+
     if (up == _wasUp)
     {
         return;
@@ -223,14 +262,21 @@ void EthInterface::loop()
 
     if (up)
     {
-        // lwIP re-runs DHCP on its own after a cable reconnect, but the
-        // default route has to be claimed again.
-        ETH.setDefault();
-        sysLog.printf("ETH: link restored, IP %s\n", ETH.localIP().toString().c_str());
+        /*
+         * lwIP re-runs DHCP on its own after a cable reconnect, but the
+         * default route has to be claimed again - and only where Ethernet is
+         * the interface in use. While the device runs on WiFi this watch only
+         * reports; taking the route from under the KNX multicast socket is
+         * what the restart-instead-of-switch rule exists to avoid.
+         */
+        if (netManager.isEthernetMode()) ETH.setDefault();
+
+        sysLog.printf("ETH: address %s%s\n", ETH.localIP().toString().c_str(),
+                      netManager.isEthernetMode() ? "" : " (device is on WiFi)");
     }
     else
     {
-        sysLog.println("ETH: link lost");
+        sysLog.println("ETH: address gone");
     }
 }
 

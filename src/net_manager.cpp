@@ -413,9 +413,13 @@ void NetManager::loop()
         ESP.restart();
     }
 
+    // In every mode: on WiFi this is the only thing that says whether the
+    // wired side ever came back, and that is exactly what has to be in the
+    // log when the fallback did not happen.
+    ethInterface.loop();
+
     if (_ethMode)
     {
-        ethInterface.loop();
         superviseFailover();
         return; // no WiFi watchdog, no captive portal
     }
