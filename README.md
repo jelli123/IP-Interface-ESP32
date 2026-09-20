@@ -2519,12 +2519,22 @@ die verkabelte Seite jemals zurückkam.
 | `ETH: link up, 100 Mbit/s full duplex` | Der PHY meldet eine Verbindung. |
 | `ETH: no address from DHCP` | Der Link stand, aber binnen 12 s kam beim Start keine Adresse. |
 | `ETH: link up but still no address` | Dasselbe im laufenden Betrieb, nach 15 s. Kabel und PHY sind in Ordnung, die DHCP-Antwort fehlt. |
-| `ETH: address 192.168.1.20` | Adresse bezogen. Der Zusatz `(device is on WiFi)` heißt, dass das Gerät weiter über WLAN arbeitet. |
+| `ETH: address 192.168.1.20` | Adresse per DHCP bezogen. |
+| `ETH: address … (lease only …)` | Dasselbe, während das Gerät über WLAN arbeitet: Der Lease besteht, erreichbar ist das Gerät dort aber erst nach dem Neustart in den Ethernet-Betrieb. |
 | `ETH: address gone`, `ETH: link lost` | Adresse beziehungsweise Verbindung weg. |
 
 Die Standardroute übernimmt die Firmware nur, wenn Ethernet auch der genutzte
 Anschluss ist. Sie im WLAN-Betrieb umzubiegen, würde dem KNX-Multicast-Socket
 die Schnittstelle unter den Füßen wegziehen.
+
+> **Ein Lease ist noch keine Erreichbarkeit.** Sobald die Leitung steht, holt
+> der Treiber eine Adresse, unabhängig davon, worüber das Gerät gerade
+> arbeitet. Ansprechbar ist es dort trotzdem nicht: Standardroute, mDNS und
+> der KNX-Multicast-Socket hängen weiter am WLAN, und liegen beide
+> Schnittstellen im selben Subnetz, wählt lwIP den Rückweg über die Route und
+> nicht über die Schnittstelle, auf der die Anfrage ankam. Erst der Neustart
+> in den Ethernet-Betrieb macht die Adresse nutzbar – dieselbe Adresse, denn
+> der Lease wird dabei nur erneuert.
 
 **ESP32-C6-DevKitC-1** (`esp32c6`): Freie Pins gibt es genug, aber keine
 Vorgabe – die Belegung hängt davon ab, welche Stiftleiste man benutzt. SCK,

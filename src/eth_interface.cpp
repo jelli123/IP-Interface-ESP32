@@ -271,8 +271,19 @@ void EthInterface::loop()
          */
         if (netManager.isEthernetMode()) ETH.setDefault();
 
+        /*
+         * The lease is real - the driver runs DHCP as soon as the link is
+         * there, whatever the device is using. Reaching the device at that
+         * address is another matter: the default route, mDNS and the KNX
+         * multicast socket all still sit on the other interface, and with
+         * both in the same subnet lwIP picks the netif for a reply by route,
+         * not by the address the request came in on. Only the restart makes
+         * the address usable, which is what the fallback is counting down to.
+         */
         sysLog.printf("ETH: address %s%s\n", ETH.localIP().toString().c_str(),
-                      netManager.isEthernetMode() ? "" : " (device is on WiFi)");
+                      netManager.isEthernetMode()
+                          ? "" : " (lease only - the device runs on WiFi and is "
+                                 "not reachable there until it restarts)");
     }
     else
     {
