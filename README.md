@@ -2502,6 +2502,29 @@ Abfragen des Empfangsstatus (`poll_period_ms`). Ob eine Verbindung besteht,
 ermittelt der Treiber unabhängig davon über einen eigenen Zeitgeber – `INT`
 ändert an der Link-Erkennung also nichts.
 
+**Werden die Leitungen wirklich benutzt?** Ein Pin im Hardware-Profil ist
+noch kein Beweis, dass er am Modul ankommt. Die Firmware prüft das beim Start
+und schreibt das Ergebnis ins Protokoll:
+
+* **RST** wird funktional geprüft. Der W5500 hat einen eigenen
+  Power-on-Reset, ein falscher oder offener Pin sähe also genauso aus wie ein
+  richtiger. Deshalb liest die Firmware das Versionsregister **während** die
+  Leitung auf Masse liegt: Ein Chip im Reset darf nicht antworten. Tut er es
+  doch, steht `ETH: RST on GPIO 7 does nothing` im Protokoll, sonst
+  `ETH: RST on GPIO 7 works, chip was held in reset`. Kostet eine einzige
+  SPI-Übertragung je Start.
+* **INT** beweist sich selbst, sobald Daten ankommen. Mit gesetztem Pin
+  schaltet der Treiber das Abfragen des Empfangs vollständig ab
+  (`poll_period_ms` gilt nur ohne Interrupt). Kommt danach eine DHCP-Adresse
+  zustande, kann kein Paket ohne die Leitung hereingekommen sein. Das
+  Protokoll sagt beides: `ETH: INT on GPIO 14, receive polling off` beim
+  Starten des Treibers und `ETH: INT on GPIO 14 works, frames arrive without
+  polling`, sobald die Adresse da ist.
+
+Bleibt die zweite INT-Zeile aus, während eine Adresse kommt, liegt ein
+Widerspruch vor und die Meldung gehört ins Protokoll geschaut – ohne INT
+gäbe es keine Adresse.
+
 > **Beide ersetzen keine Fehlersuche im Netz.** Sie ändern nichts daran, ob
 > ein DHCP-Server antwortet, und sie erkennen keinen Link, den der PHY nicht
 > meldet. Kommt kein Link oder keine Adresse zustande, steht der Grund im
@@ -2516,6 +2539,9 @@ die verkabelte Seite jemals zurückkam.
 | Zeile | Bedeutung |
 | --- | --- |
 | `ETH: W5500 found` | Das Versionsregister hat mit `0x04` geantwortet. |
+| `ETH: RST on GPIO 7 works…` / `…does nothing` | Die Reset-Leitung wurde beim Start geprüft, siehe *Die optionalen Leitungen*. |
+| `ETH: INT on GPIO 14, receive polling off` | Der Treiber läuft im Interrupt-Betrieb. |
+| `ETH: INT on GPIO 14 works…` | Eine Adresse kam zustande, also arbeitet die Leitung. |
 | `ETH: link up, 100 Mbit/s full duplex` | Der PHY meldet eine Verbindung. |
 | `ETH: no address from DHCP` | Der Link stand, aber binnen 12 s kam beim Start keine Adresse. |
 | `ETH: link up but still no address` | Dasselbe im laufenden Betrieb, nach 15 s. Kabel und PHY sind in Ordnung, die DHCP-Antwort fehlt. |

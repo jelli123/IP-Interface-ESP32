@@ -77,6 +77,7 @@ public:
 private:
     static bool probeChip();
     static void resetChip();
+    static uint8_t readVersion();
 
     bool     _present     = false;
     bool     _started     = false;

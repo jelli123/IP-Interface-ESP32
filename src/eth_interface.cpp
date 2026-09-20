@@ -54,20 +54,62 @@ static const uint32_t CHECK_INTERVAL_MS = 2000UL;
 /** How long a link may stay without an address before that is worth a line. */
 static const uint32_t LEASE_WARN_MS = 15000UL;
 
+/** One read of VERSIONR. The SPI bus has to be started already. */
+uint8_t EthInterface::readVersion()
+{
+    const HwProfile& hw = hwConfig.active();
+
+    SPI.beginTransaction(SPISettings(PROBE_SPI_HZ, MSBFIRST, SPI_MODE0));
+    digitalWrite(hw.ethCsPin, LOW);
+    SPI.transfer((uint8_t)(W5500_ADDR_VERSIONR >> 8));
+    SPI.transfer((uint8_t)(W5500_ADDR_VERSIONR & 0xFF));
+    SPI.transfer(W5500_CTRL_READ_1);
+    uint8_t version = SPI.transfer(0x00);
+    digitalWrite(hw.ethCsPin, HIGH);
+    SPI.endTransaction();
+
+    return version;
+}
+
+/*
+ * Reset the chip - and find out whether that line does anything.
+ *
+ * A pin entered in the hardware profile is no proof that it reaches the
+ * module: the W5500 has its own power-on reset, so a wrong or open RST pin
+ * looks exactly like a working one. Held in reset the chip must not answer,
+ * so one register read while the line is low settles it. Costs a single SPI
+ * transaction, once per boot.
+ */
 void EthInterface::resetChip()
 {
     const HwProfile& hw = hwConfig.active();
 
     if (hw.ethRstPin < 0)
     {
-        return; // rely on the chip's power-on reset
+        sysLog.println("ETH: RST not wired, using the chip's own power-on reset");
+        return;
     }
 
     pinMode(hw.ethRstPin, OUTPUT);
     digitalWrite(hw.ethRstPin, LOW);
     delay(2);   // datasheet asks for >500 us
+
+    uint8_t held = readVersion();
+
     digitalWrite(hw.ethRstPin, HIGH);
     delay(60);  // PLL lock, ~50 ms
+
+    if (held == W5500_VERSION)
+    {
+        sysLog.printf("ETH: RST on GPIO %d does nothing - the chip answers "
+                      "while the line is low, so it is not the reset input\n",
+                      (int)hw.ethRstPin);
+    }
+    else
+    {
+        sysLog.printf("ETH: RST on GPIO %d works, chip was held in reset\n",
+                      (int)hw.ethRstPin);
+    }
 }
 
 /*
@@ -102,14 +144,7 @@ bool EthInterface::probeChip()
             delay(PROBE_RETRY_MS);
         }
 
-        SPI.beginTransaction(SPISettings(PROBE_SPI_HZ, MSBFIRST, SPI_MODE0));
-        digitalWrite(hw.ethCsPin, LOW);
-        SPI.transfer((uint8_t)(W5500_ADDR_VERSIONR >> 8));
-        SPI.transfer((uint8_t)(W5500_ADDR_VERSIONR & 0xFF));
-        SPI.transfer(W5500_CTRL_READ_1);
-        version = SPI.transfer(0x00);
-        digitalWrite(hw.ethCsPin, HIGH);
-        SPI.endTransaction();
+        version = readVersion();
 
         if (version == W5500_VERSION)
         {
@@ -159,6 +194,22 @@ bool EthInterface::begin(void (*keepAlive)())
     }
     _started = true;
 
+    /*
+     * The driver polls the receive status every 10 ms unless it is given an
+     * interrupt pin, in which case it polls not at all. So once an address
+     * arrives below, the INT line has proven itself: not a single frame
+     * could have been picked up without it.
+     */
+    if (hw.ethIrqPin >= 0)
+    {
+        sysLog.printf("ETH: INT on GPIO %d, receive polling off\n",
+                      (int)hw.ethIrqPin);
+    }
+    else
+    {
+        sysLog.println("ETH: INT not wired, the driver polls every 10 ms");
+    }
+
     // Wait for the link. Without a cable this is the normal outcome, so it is
     // reported rather than treated as an error.
     uint32_t deadline = millis() + LINK_TIMEOUT_MS;
@@ -200,6 +251,12 @@ bool EthInterface::begin(void (*keepAlive)())
      * Ethernet by default.
      */
     ETH.setDefault();
+
+    if (hw.ethIrqPin >= 0)
+    {
+        sysLog.printf("ETH: INT on GPIO %d works, frames arrive without "
+                      "polling\n", (int)hw.ethIrqPin);
+    }
 
     _wasUp     = true;
     _wasLink   = true;
