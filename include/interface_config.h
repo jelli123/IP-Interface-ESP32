@@ -20,64 +20,95 @@
  * Firmware identity
  * ------------------------------------------------------------------------- */
 
-#define FIRMWARE_VERSION      "0.1.0"
+#define FIRMWARE_VERSION      "0.2.0"
 
 /* ------------------------------------------------------------------------- *
  * KNX device identity
  *
  * ETS matches a device against its product database by these values, so they
- * decide which knxprod can commission this device. Selected with
- * SBIP_KNX_PRODUCT from platformio.ini - see the [knx_product] section there.
+ * decide which knxprod can commission this device.
  *
- *   0  own identity. Manufacturer 0x00FA is the thelsing/knx default and
- *      belongs to no registered vendor, so ETS finds no product data. Fine
- *      for tunnelling, which needs none, and the starting point for an own
- *      knxprod built with Kaenx or OpenKNXproducer.
+ * Everything here is only the DEFAULT: the Selfbus identity, and the one the
+ * product database in knxprod/ declares. What the firmware actually runs on
+ * lives in NVS and can be replaced through the dashboard - by hand or by
+ * loading a knxprod, which the browser reads for exactly these fields, see
+ * src/knx_identity.cpp.
  *
- *   1  ABB i-bus KNX IP Router IPR/S 3.1.1, application "IP-Router/2.0a".
- *      Read from docs/ABB ABB IPRS 3.1.1/IPRS_311_VD-TP_XX_V2-0a_*.knxprod,
- *      file M-0002/M-0002_A-A0A9-10-AA35.xml:
- *          ApplicationNumber="41129" ApplicationVersion="16"
- *          MaskVersion="MV-091A" AdditionalAddressesCount="5"
- *      and Hardware.xml: SerialNumber="2CDG 110 175 R0011" VersionNumber="2"
- *      The mask version matches what this firmware already builds, so the
- *      coupler behaviour needs no change - only the identity does.
+ * That is deliberately the only way to present another vendor's identity.
+ * The firmware carries none: a device that emulates a commercial product
+ * does so because its owner fed it that product's knxprod, on their own
+ * decision and with their own copy of the file. Nothing here claims to be
+ * anyone else.
+ *
+ * Each value can still be overridden at build time with -DSBIP_KNX_..., for
+ * a series that is to ship with an identity of its own.
  * ------------------------------------------------------------------------- */
-#ifndef SBIP_KNX_PRODUCT
-#define SBIP_KNX_PRODUCT 0
+
+/** Name for the dashboard and the log. Not sent anywhere. */
+#ifndef SBIP_KNX_PRODUCT_NAME
+#define SBIP_KNX_PRODUCT_NAME    "Selfbus KNX/IP"
 #endif
 
-#if SBIP_KNX_PRODUCT == 1
-
-#define SBIP_KNX_PRODUCT_NAME    "ABB IPR/S 3.1.1"
-#define SBIP_KNX_MANUFACTURER_ID 0x0002
-#define SBIP_KNX_APP_NUMBER      0xA0A9
-#define SBIP_KNX_APP_VERSION     0x10
-#define SBIP_KNX_DEVICE_VERSION  0x0002
-#define SBIP_KNX_TUNNELS         5
-
-#else
-
-#define SBIP_KNX_PRODUCT_NAME    "Selfbus KNX/IP"
+/**
+ * Manufacturer 0x00FA is the thelsing/knx default and belongs to no
+ * registered vendor - fine for own use, not an official identifier.
+ */
+#ifndef SBIP_KNX_MANUFACTURER_ID
 #define SBIP_KNX_MANUFACTURER_ID 0x00FA
-#define SBIP_KNX_APP_NUMBER      0x0000
-#define SBIP_KNX_APP_VERSION     0x01
-#define SBIP_KNX_DEVICE_VERSION  0x0001
-#define SBIP_KNX_TUNNELS         10
+#endif
 
+/*
+ * Application 1 version 1, which is what knxprod/ declares. Zero would be a
+ * legal value for the device but no product data can carry it: an ETS
+ * application id is built from this number, so the file would have no name
+ * to be found under.
+ */
+#ifndef SBIP_KNX_APP_NUMBER
+#define SBIP_KNX_APP_NUMBER      0x0001
+#endif
+#ifndef SBIP_KNX_APP_VERSION
+#define SBIP_KNX_APP_VERSION     0x01
+#endif
+
+/** PID_VERSION, the VersionNumber of the hardware in the product data. */
+#ifndef SBIP_KNX_DEVICE_VERSION
+#define SBIP_KNX_DEVICE_VERSION  0x0001
+#endif
+
+/**
+ * Tunnel addresses the product data manages.
+ *
+ * Has to be at most KNX_TUNNELING, which is what the stack can really serve
+ * - the addresses live in arrays of that size. See platformio.ini.
+ */
+#ifndef SBIP_KNX_TUNNELS
+#define SBIP_KNX_TUNNELS         10
 #endif
 
 /**
  * Hardware type, six octets.
  *
- * ETS compares this against the product data before a download. The ABB
- * knxprod does not spell it out, so it stays zero until a real device or a
- * failed download tells us otherwise - that is the first thing to check if
- * ETS rejects the application.
+ * ETS compares this against the product data before a download. knxprod/
+ * declares nothing here, so zero is what matches it - and zero is also what
+ * an unconfigured stack reports. If ETS ever rejects an application although
+ * everything else lines up, this is the first value to look at.
  */
 #ifndef SBIP_KNX_HARDWARE_TYPE
 #define SBIP_KNX_HARDWARE_TYPE 0, 0, 0, 0, 0, 0
 #endif
+
+/*
+ * Order number, at most ten characters of PID_ORDER_INFO.
+ *
+ * Informational: ETS shows it in the device info, no download depends on it.
+ * Empty leaves the property at zero, which is what an unconfigured stack
+ * reports and therefore the safe answer wherever the real number does not
+ * fit. The knxprod import fills it.
+ */
+#ifndef SBIP_KNX_ORDER_INFO
+#define SBIP_KNX_ORDER_INFO      "SBIP-1"
+#endif
+
 #define DEVICE_NAME           "Selfbus KNX/IP"
 /** mDNS host name, reachable as http://<MDNS_HOSTNAME>.local */
 #define MDNS_HOSTNAME         "sbip"

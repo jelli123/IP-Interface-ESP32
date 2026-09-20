@@ -22,6 +22,7 @@
 #include "interface_config.h"
 #include "index_html.h"
 #include "json_util.h"
+#include "knx_identity.h"
 #include "knx_link.h"
 #include "lpc_isp.h"
 #include "net_manager.h"
@@ -701,6 +702,159 @@ static void registerKnxRoutes()
 
         request->send(200, "application/json",
                       String("{\"unlock_left\":") + etsAccess.unlockRemaining() + "}");
+    });
+
+    /* --------------------------------------------------------------------- *
+     * Device identity
+     *
+     * What ETS matches against its product database. Only ever read at
+     * startup, so every change here needs a restart - the endpoint says so
+     * rather than pretending otherwise.
+     * --------------------------------------------------------------------- */
+
+    server.on(AsyncURIMatcher::exact("/api/knx/identity"), HTTP_GET,
+              [](AsyncWebServerRequest* request) {
+        request->send(200, "application/json", knxIdentity.toJson());
+    });
+
+    /*
+     * The interface objects of the running stack. Read by the dashboard to
+     * check the load procedure of a knxprod against what is there to write
+     * to, see KnxLink::objectsJson().
+     */
+    server.on("/api/knx/objects", HTTP_GET, [](AsyncWebServerRequest* request) {
+        request->send(200, "application/json", knxLink.objectsJson());
+    });
+
+    /*
+     * Replace the stored identity. Body is the raw JSON document, the same
+     * one /api/knx/identity hands out under "active", so a file saved from
+     * one device can be loaded into the next.
+     *
+     * Small on purpose: nine fields, none of them a list.
+     */
+    static const size_t IDENTITY_MAX_BODY = 1024;
+
+    // Exact, or this would also answer POST /api/knx/identity/reset - the
+    // first matching handler wins and the default matcher accepts any
+    // sub-path.
+    server.on(
+        AsyncURIMatcher::exact("/api/knx/identity"), HTTP_POST,
+        [](AsyncWebServerRequest* request) {
+            // Every reply is written here; the body handler below only
+            // collects, exactly as /api/hwconfig does.
+            if (!mutationAllowed(request)) return;
+
+            if (request->contentLength() > IDENTITY_MAX_BODY)
+            {
+                request->send(413, "application/json", "{\"error\":\"body too large\"}");
+                return;
+            }
+
+            String* body = (String*)request->_tempObject;
+            if (body == nullptr || body->length() == 0)
+            {
+                delete body;
+                request->_tempObject = nullptr;
+                request->send(400, "application/json", "{\"error\":\"empty body\"}");
+                return;
+            }
+
+            /*
+             * What the stack will do with its flash image on the next start
+             * decides whether the address has to be parked: it discards the
+             * whole image when manufacturer, hardware type or version no
+             * longer match it, and the individual address goes with it.
+             */
+            KnxIdentity before = knxIdentity.active();
+
+            String error;
+            bool   ok = knxIdentity.applyJson(*body, error);
+
+            // The request destructor frees _tempObject with free(), which
+            // would leave the String's own buffer behind.
+            delete body;
+            request->_tempObject = nullptr;
+
+            if (!ok)
+            {
+                request->send(400, "application/json",
+                              String("{\"error\":\"") + jsonEscape(error) + "\"}");
+                return;
+            }
+
+            /*
+             * Only now, on the stored result: the document is a patch, so
+             * what it means for the image cannot be read off the request.
+             * Storing the identity does not touch the running stack, so the
+             * address is still there to be read.
+             */
+            bool invalidates = KnxIdentityStore::invalidatesImage(before, knxIdentity.stored());
+            if (invalidates) knxLink.preserveAddress();
+
+            sysLog.printf("KNX: identity stored - manufacturer 0x%04X, "
+                          "application 0x%04X v%u%s\n",
+                          (unsigned)knxIdentity.stored().manufacturer,
+                          (unsigned)knxIdentity.stored().appNumber,
+                          (unsigned)knxIdentity.stored().appVersion,
+                          invalidates ? ", the ETS download becomes invalid" : "");
+
+            request->send(200, "application/json",
+                          String("{\"status\":\"ok\",\"reboot_required\":") +
+                              (knxIdentity.rebootPending() ? "true" : "false") +
+                              ",\"erases_download\":" +
+                              (invalidates ? "true" : "false") + "}");
+        },
+        nullptr,
+        [](AsyncWebServerRequest* request, uint8_t* data, size_t len,
+           size_t index, size_t total) {
+            // Collect only. Gate here as well so a rejected request never
+            // has a buffer allocated for it.
+            if (!originAllowed(request) || netManager.isApMode()) return;
+            if (total > IDENTITY_MAX_BODY) return;
+
+            if (index == 0)
+            {
+                request->_tempObject = new String();
+                ((String*)request->_tempObject)->reserve(total + 1);
+            }
+
+            String* body = (String*)request->_tempObject;
+            if (body == nullptr) return;
+
+            // total is what the client announced. A chunked request announces
+            // nothing, so the accumulated length is the one that has to hold.
+            if (body->length() + len > IDENTITY_MAX_BODY)
+            {
+                body->clear();
+                return;
+            }
+
+            for (size_t i = 0; i < len; i++)
+            {
+                *body += (char)data[i];
+            }
+        });
+
+    server.on("/api/knx/identity/reset", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        bool invalidates = KnxIdentityStore::invalidatesImage(
+            knxIdentity.active(), KnxIdentityStore::defaults());
+
+        if (!knxIdentity.resetToDefaults())
+        {
+            request->send(500, "application/json",
+                          "{\"error\":\"the stored identity could not be cleared\"}");
+            return;
+        }
+
+        if (invalidates) knxLink.preserveAddress();
+
+        request->send(200, "application/json",
+                      String("{\"status\":\"ok\",\"reboot_required\":") +
+                          (knxIdentity.rebootPending() ? "true" : "false") +
+                          ",\"erases_download\":" + (invalidates ? "true" : "false") + "}");
     });
 
     /*

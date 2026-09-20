@@ -165,6 +165,28 @@ public:
      */
     String friendlyName() const;
 
+    /**
+     * The interface objects of the running stack and their properties.
+     *
+     * The dashboard compares this against the load procedure of a knxprod
+     * before it is accepted: a procedure that writes a property this stack
+     * does not have makes the ETS download stop at that step, and that is
+     * worth knowing before the download rather than during it.
+     *
+     * Read only, safe from the web server task.
+     */
+    String objectsJson() const;
+
+    /**
+     * Park the individual address so it survives the next start.
+     *
+     * For a change of identity: the stack discards the whole flash image
+     * when manufacturer, hardware type or version no longer match it, and
+     * the address goes with it. Called before the identity is stored, read
+     * back by begin().
+     */
+    void preserveAddress();
+
     bool progMode() const;
     /**
      * Request a programming mode change.

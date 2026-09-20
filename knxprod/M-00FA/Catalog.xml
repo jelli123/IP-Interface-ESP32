@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Der Katalogeintrag: wo das Produkt im Katalog der ETS auftaucht. Fuer das
+  Geraet selbst ohne Bedeutung - es liest nie eine knxprod.
+-->
+<KNX xmlns="http://knx.org/xml/project/14">
+  <ManufacturerData>
+    <Manufacturer RefId="M-00FA">
+      <Catalog>
+        <CatalogSection Id="M-00FA_CS-Selfbus"
+                        Name="Selfbus"
+                        Number="1"
+                        DefaultLanguage="de-DE">
+          <CatalogItem Id="M-00FA_CS-Selfbus_CI-SBIP-1-1"
+                       Name="KNX/IP Interface"
+                       Number="SBIP-1"
+                       ProductRefId="M-00FA_H-SBIP1-1_P-SBIP-1"
+                       Hardware2ProgramRefId="M-00FA_H-SBIP1-1_HP-0001-01-0000"
+                       DefaultLanguage="de-DE"
+                       VisibleDescription="KNXnet/IP Router und Tunnelserver auf ESP32 mit Selfbus SB-Interface." />
+        </CatalogSection>
+      </Catalog>
+    </Manufacturer>
+  </ManufacturerData>
+</KNX>

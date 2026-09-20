@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Die Hardware hinter dem Applikationsprogramm.
+
+  VersionNumber ist die Geraeteversion, die der Stack gegen sein Flash-Abbild
+  prueft (PID_VERSION); SerialNumber ist hier - wie in jeder knxprod - keine
+  Seriennummer, sondern die Typbezeichnung. OrderNumber landet im Geraet in
+  PID_ORDER_INFO und ist deshalb hoechstens zehn Zeichen lang.
+-->
+<KNX xmlns="http://knx.org/xml/project/14">
+  <ManufacturerData>
+    <Manufacturer RefId="M-00FA">
+      <Hardware>
+        <Hardware Id="M-00FA_H-SBIP1-1"
+                  SerialNumber="SBIP1"
+                  VersionNumber="1"
+                  Name="Selfbus KNX/IP Interface"
+                  BusCurrent="10"
+                  HasIndividualAddress="true"
+                  HasApplicationProgram="true"
+                  IsCoupler="true"
+                  IsIPEnabled="true"
+                  IsPowerSupply="false"
+                  NoDownloadWithoutPlugin="false">
+          <Products>
+            <Product Id="M-00FA_H-SBIP1-1_P-SBIP-1"
+                     Text="Selfbus KNX/IP Interface"
+                     OrderNumber="SBIP-1"
+                     IsRailMounted="false"
+                     DefaultLanguage="de-DE" />
+          </Products>
+          <Hardware2Programs>
+            <Hardware2Program Id="M-00FA_H-SBIP1-1_HP-0001-01-0000"
+                              MediumTypes="MT-0 MT-5">
+              <ApplicationProgramRef RefId="M-00FA_A-0001-01-0000" />
+            </Hardware2Program>
+          </Hardware2Programs>
+        </Hardware>
+      </Hardware>
+    </Manufacturer>
+  </ManufacturerData>
+</KNX>

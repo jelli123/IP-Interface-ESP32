@@ -118,6 +118,13 @@ background:var(--bg);border:1px solid var(--line);margin:10px 0 4px}
 /* Am PC zieht sich der Profildialog sonst ueber den ganzen Schirm, und die
  * Eingabefelder werden absurd breit. */
 #hwDlg{max-width:min(94vw,720px)}
+#idDlg{max-width:min(94vw,720px)}
+/* Ergebnis der knxprod-Pruefung: eine Zeile je Ladeschritt, die Ampel links.
+ * Keine Tabelle - die Texte sind verschieden lang und sollen umbrechen. */
+#idCheck{margin:8px 0 0;font-size:12px}
+#idCheck>div{padding:4px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+#idCheck>div:last-child{border:0}
+#idCheck .dot{vertical-align:baseline}
 #timeDlg{max-width:min(94vw,620px)}
 /* Row editors. The selected row is what the minus button acts on, so it has
  * to be obvious which one that is - a border alone is too quiet here. */
@@ -343,6 +350,29 @@ small{color:var(--dim)}
       <button class="sec" onclick="factoryReset()"
               title="Löscht den gesamten NVS-Speicher">Werkseinstellungen</button>
     </div>
+  </section>
+
+  <section class="card">
+    <h2>Ger&auml;teidentit&auml;t</h2>
+    <div class="row"><span>Quelle</span><span id="idSrc">-</span></div>
+    <div class="row"><span>Produkt</span><span id="idName">-</span></div>
+    <div class="row"><span>Hersteller</span><span id="idMan">-</span></div>
+    <div class="row"><span>Applikation</span><span id="idApp">-</span></div>
+    <div class="row"><span>Ger&auml;teversion</span><span id="idDev">-</span></div>
+    <div class="row"><span>Maskenversion</span><span id="idMask">-</span></div>
+    <div class="row"><span>Hardwaretyp</span><span id="idHwT">-</span></div>
+    <div class="row"><span>Bestellnummer</span><span id="idOrd">-</span></div>
+    <div class="row"><span>Tunneladressen im Produkt</span><span id="idTun">-</span></div>
+    <div class="actions">
+      <button class="sec" onclick="openId()">Bearbeiten</button>
+      <button class="sec" onclick="idFile.click()">JSON laden</button>
+      <button class="sec" onclick="idDownload()">JSON speichern</button>
+      <input type="file" id="idFile" accept=".json" style="display:none" onchange="idUpload()">
+    </div>
+    <p><small>Diese Werte entscheiden, welche Produktdatenbank die ETS zu
+    diesem Ger&auml;t zul&auml;sst. Im Bearbeiten-Dialog l&auml;sst sich eine
+    knxprod einlesen: Sie wird im Browser ausgewertet, das Ger&auml;t bekommt
+    nur die Zahlen daraus. &Auml;nderungen wirken nach einem Neustart.</small></p>
   </section>
 
   <section class="card">
@@ -924,6 +954,73 @@ small{color:var(--dim)}
   Firmware zurück.</small></p>
 </dialog>
 
+<dialog id="idDlg">
+  <h2>Ger&auml;teidentit&auml;t</h2>
+  <p><small>Die ETS sucht zu jedem Ger&auml;t die passende Produktdatenbank
+  &uuml;ber Hersteller, Applikationsnummer und -version. Nur wenn beides
+  zusammenpasst, l&auml;sst sie einen Download zu.</small></p>
+
+  <div class="grp">
+    <label class="hd">Aus einer knxprod &uuml;bernehmen</label>
+    <div class="actions">
+      <button class="sec" onclick="idProd.click()">knxprod ausw&auml;hlen</button>
+      <input type="file" id="idProd" accept=".knxprod,.zip" style="display:none"
+             onchange="idProdPick()">
+    </div>
+    <p><small id="idProdInfo" data-dyn></small></p>
+    <div id="idCheck"></div>
+    <p><small>Die Datei verl&auml;sst den Rechner nicht &ndash; der Browser
+    liest sie und schickt nur die Kennungen an das Ger&auml;t. Ob sie
+    signiert ist, spielt dabei keine Rolle; das betrifft allein den Import in
+    die ETS.</small></p>
+  </div>
+
+  <div class="grp">
+    <label class="hd">Kennung</label>
+    <label>Produktname &ndash; nur f&uuml;r die Anzeige hier</label>
+    <input id="idfName" maxlength="32">
+    <div class="fields wide">
+      <div><label>Hersteller</label>
+        <input id="idfMan" type="number" min="1" max="65535" oninput="idHex()"></div>
+      <div><label>Applikationsnummer</label>
+        <input id="idfApp" type="number" min="1" max="65535" oninput="idHex()"></div>
+      <div><label>Applikationsversion</label>
+        <input id="idfAppV" type="number" min="1" max="255" oninput="idHex()"></div>
+    </div>
+    <p><small id="idHexNote" data-dyn></small></p>
+    <div class="fields wide">
+      <div><label>Ger&auml;teversion</label>
+        <input id="idfDev" type="number" min="0" max="65535"></div>
+      <div><label>Tunneladressen</label>
+        <input id="idfTun" type="number" min="1" max="255"></div>
+      <div><label>Bestellnummer</label>
+        <input id="idfOrd" maxlength="10"></div>
+    </div>
+    <label>Hardwaretyp &ndash; zw&ouml;lf Hexziffern, leer hei&szlig;t null</label>
+    <input id="idfHw" maxlength="17" placeholder="000000000000">
+    <p><small>Die Zahlen stehen in der knxprod dezimal, die Dateinamen darin
+    hexadezimal &ndash; beide Schreibweisen meinen dasselbe. Hersteller,
+    Hardwaretyp und Ger&auml;teversion pr&uuml;ft der Stack gegen sein
+    Flash-Abbild: &auml;ndert sich eine davon, verwirft er die
+    ETS-Programmierung und das Ger&auml;t muss neu geladen werden. Die
+    physikalische Adresse bleibt dabei erhalten.</small></p>
+  </div>
+
+  <p id="idErr" style="color:var(--err);font-size:12px"></p>
+  <div class="actions">
+    <button onclick="idSave()">Speichern</button>
+    <button class="sec" onclick="idDefaults()"
+            title="Formular mit den Werten der Firmware füllen, nichts speichern">Formular zur&uuml;cksetzen</button>
+    <button class="sec" onclick="idReset()"
+            title="Gespeicherte Kennung im Gerät löschen">Kennung im Ger&auml;t l&ouml;schen</button>
+    <button class="sec" onclick="idDlg.close()">Abbrechen</button>
+  </div>
+  <p><small>Die Maskenversion l&auml;sst sich nicht einstellen: Diese Firmware
+  ist ein Koppler der Maske 091A, und die Maske bestimmt, wie die ETS das
+  Ger&auml;t programmiert. Eine knxprod f&uuml;r eine andere Maske wird
+  deshalb abgelehnt statt angepasst.</small></p>
+</dialog>
+
 <script>
 const $ = id => document.getElementById(id);
 
@@ -978,6 +1075,134 @@ const EN = {
 'Partitionstabelle':'Partition table', 'Typ':'Type', 'Adresse':'Address',
 'Größe':'Size', 'Firmware':'Firmware',
 'frei':'free',
+
+/* --- Geraeteidentitaet --- */
+'Geräteidentität':'Device identity', 'Produkt':'Product',
+'Hersteller':'Manufacturer', 'Applikation':'Application',
+'Geräteversion':'Device version', 'Maskenversion':'Mask version',
+'Hardwaretyp':'Hardware type', 'Bestellnummer':'Order number',
+'Tunneladressen im Produkt':'Tunnel addresses in the product',
+'Tunneladressen':'Tunnel addresses',
+'Applikationsnummer':'Application number',
+'Applikationsversion':'Application version',
+'Vorgabe der Firmware':'firmware default',
+'gespeicherte Kennung':'stored identity',
+'nichts gespeichert':'nothing stored',
+'gespeicherte Kennung abgelehnt':'stored identity refused',
+'Kennung':'Identity', 'knxprod auswählen':'Choose a knxprod',
+'Aus einer knxprod übernehmen':'Take the values from a knxprod',
+'Kennung im Gerät löschen':'Delete the identity in the device',
+'Gespeicherte Kennung im Gerät löschen':'Delete the stored identity in the device',
+'Produktname – nur für die Anzeige hier':'Product name – shown here only',
+'Hardwaretyp – zwölf Hexziffern, leer heißt null':
+  'Hardware type – twelve hex digits, empty means zero',
+['Diese Werte entscheiden, welche Produktdatenbank die ETS zu diesem Gerät '
++ 'zulässt. Im Bearbeiten-Dialog lässt sich eine knxprod einlesen: Sie wird '
++ 'im Browser ausgewertet, das Gerät bekommt nur die Zahlen daraus. '
++ 'Änderungen wirken nach einem Neustart.']:
+  'These values decide which product database ETS accepts for this device. '
++ 'The edit dialog reads a knxprod: the browser takes it apart, the device '
++ 'only ever sees the numbers in it. Changes take effect after a restart.',
+['Die ETS sucht zu jedem Gerät die passende Produktdatenbank über Hersteller, '
++ 'Applikationsnummer und -version. Nur wenn beides zusammenpasst, lässt sie '
++ 'einen Download zu.']:
+  'ETS finds the product database for a device by manufacturer, application '
++ 'number and version. It only allows a download when the two match.',
+['Die Datei verlässt den Rechner nicht – der Browser liest sie und schickt '
++ 'nur die Kennungen an das Gerät. Ob sie signiert ist, spielt dabei keine '
++ 'Rolle; das betrifft allein den Import in die ETS.']:
+  'The file never leaves this computer – the browser reads it and sends only '
++ 'the identifiers to the device. Whether it is signed makes no difference '
++ 'here; that only matters for the import into ETS.',
+['Die Zahlen stehen in der knxprod dezimal, die Dateinamen darin hexadezimal '
++ '– beide Schreibweisen meinen dasselbe. Hersteller, Hardwaretyp und '
++ 'Geräteversion prüft der Stack gegen sein Flash-Abbild: ändert sich eine '
++ 'davon, verwirft er die ETS-Programmierung und das Gerät muss neu geladen '
++ 'werden. Die physikalische Adresse bleibt dabei erhalten.']:
+  'A knxprod spells these numbers out in decimal and its file names in hex – '
++ 'both mean the same thing. Manufacturer, hardware type and device version '
++ 'are what the stack checks its flash image against: change one of them and '
++ 'it discards the ETS download, so the device has to be programmed again. '
++ 'The individual address survives.',
+['Die Maskenversion lässt sich nicht einstellen: Diese Firmware ist ein '
++ 'Koppler der Maske 091A, und die Maske bestimmt, wie die ETS das Gerät '
++ 'programmiert. Eine knxprod für eine andere Maske wird deshalb abgelehnt '
++ 'statt angepasst.']:
+  'The mask version is not a setting: this firmware is a coupler of mask '
++ '091A, and the mask decides how ETS programmes the device. A knxprod for '
++ 'any other mask is therefore refused rather than adapted.',
+'In der knxprod':'In the knxprod',
+['Gespeichert. Beim Neustart verwirft der Stack die ETS-Programmierung: '
++ 'Filtertabelle und Gruppenadressen sind dann weg, die physikalische '
++ 'Adresse bleibt. Die ETS muss das Gerät neu laden.']:
+  'Stored. On the next start the stack discards the ETS download: filter '
++ 'table and group addresses are gone, the individual address stays. ETS has '
++ 'to programme the device again.',
+'Kennung gespeichert. Jetzt neu starten?':'Identity stored. Restart now?',
+'Bitte alle Zahlenfelder ausfüllen.':'Please fill in every number field.',
+'Gespeicherte Kennung verwerfen und die Werte der Firmware verwenden?':
+  'Discard the stored identity and use the values from the firmware?',
+'kein ZIP-Archiv':'not a ZIP archive', 'Eintrag defekt':'broken entry',
+'unbekannte Kompression':'unknown compression', 'XML unlesbar':'unreadable XML',
+'Keine Applikationsdatei M-xxxx/M-xxxx_A-... im Archiv.':
+  'No application file M-xxxx/M-xxxx_A-... in the archive.',
+'Der Inhalt ließ sich nicht lesen':'The content could not be read',
+'Übernommen wurden nur die Kennungen aus dem Dateinamen.':
+  'Only the identifiers from the file name were taken.',
+'Die Datei enthält kein ApplicationProgram.':
+  'The file holds no ApplicationProgram.',
+'Hardware.xml ließ sich nicht lesen':'Hardware.xml could not be read',
+'Geräteversion und Bestellnummer bleiben, wie sie sind.':
+  'Device version and order number stay as they are.',
+'wird gelesen':'reading', 'Datei nicht lesbar':'File not readable',
+'Geräteobjekt':'device object', 'Adresstabelle':'address table',
+'Assoziationstabelle':'association table',
+'Applikationsprogramm':'application program',
+'Interfaceprogramm':'interface program', 'Kopplerobjekt':'router object',
+'cEMI-Server':'cEMI server', 'Gruppenobjekttabelle':'group object table',
+'KNXnet/IP-Parameter':'KNXnet/IP parameter object',
+'RF-Medium':'RF medium', 'Maske':'Mask', 'Maske 091A':'Mask 091A',
+'passt zu dieser Firmware.':'matches this firmware.',
+['diese Firmware ist ein Koppler der Maske 091A. Die Datei gehört zu einem '
++ 'anderen Gerätetyp und wird abgelehnt.']:
+  'this firmware is a coupler of mask 091A. The file belongs to a different '
++ 'kind of device and is refused.',
+'Das Produkt verwaltet':'The product manages',
+'Tunneladressen, dieses Image bietet':'tunnel addresses, this image offers',
+'KNX_TUNNELING in platformio.ini anheben und neu bauen.':
+  'Raise KNX_TUNNELING in platformio.ini and rebuild.',
+'der':'of the',
+['Tunneladressen. Die übrigen bleiben, wie der Stack sie abgeleitet hat - die '
++ 'ETS kennt sie nicht.']:
+  'tunnel addresses. The rest stay as the stack derived them - ETS does not '
++ 'know about them.',
+'Tunneladressen, genau so viele bietet das Image.':
+  'tunnel addresses, exactly as many as the image offers.',
+['Die Bestellnummer ist länger als die zehn Zeichen von PID_ORDER_INFO und '
++ 'wurde gekürzt auf']:
+  'The order number is longer than the ten characters of PID_ORDER_INFO and '
++ 'was cut down to',
+'Die Datei nennt keine Ladeprozedur - es gibt nichts zu prüfen.':
+  'The file names no load procedure - there is nothing to check.',
+['Die Objektliste des Geräts war nicht abrufbar - die Ladeprozedur wurde '
++ 'nicht geprüft.']:
+  'The object list of the device could not be read - the load procedure was '
++ 'not checked.',
+'Objekt':'Object', 'Nummer':'number',
+'gibt es in diesem Stack nicht.':'does not exist in this stack.',
+'Property':'Property', 'fehlt im':'is missing from the',
+'der Download bricht an dieser Stelle ab.':'the download stops right there.',
+'Property-Zugriffe der Ladeprozedur - alle vorhanden.':
+  'property accesses in the load procedure - all of them exist.',
+'Speicherschritte':'memory steps', 'Byte KNX-Speicher':'bytes of KNX memory',
+['weitere Schritte (Verbinden, Entladen, Neustart) - ohne Anforderung an die '
++ 'Firmware.']:
+  'further steps (connect, unload, restart) - nothing the firmware has to '
++ 'provide.',
+'Diese Datei passt nicht zu dieser Firmware.':
+  'This file does not fit this firmware.',
+'Nichts gefunden, was gegen diese Datei spricht.':
+  'Nothing found that speaks against this file.',
 
 /* --- Busmonitor --- */
 'Busmonitor':'Bus monitor', 'Aufzeichnen':'Recording',
@@ -1644,7 +1869,7 @@ function applyLang(){
     + 'ermitteln mit "Get-FileHash firmware.bin" bzw. "sha256sum '
     + 'firmware.bin", oder leer lassen.');
 
-  refresh(); refreshTime(); refreshHw();
+  refresh(); refreshTime(); refreshHw(); refreshId();
 }
 
 function toggleLang(){
@@ -3556,6 +3781,505 @@ async function hwUpload(){
   try { p = JSON.parse(await f.text()); }
   catch(e){ alert(t('Keine gültige JSON-Datei.')); return; }
   if(!await hwPost(p)) { hwDlg.showModal(); hwFill(p); }
+}
+
+/* --- Geraeteidentitaet --------------------------------------------------- *
+ * Was das Geraet der ETS ueber sich erzaehlt. Die Werte liegen im Geraet,
+ * hier steht nur die Maske - und der Leser fuer die knxprod, denn eine
+ * knxprod auf dem ESP32 auszupacken waere ein ZIP-Entpacker und ein
+ * XML-Parser fuer fuenf Zahlen. Der Browser hat beides schon.
+ * ------------------------------------------------------------------------ */
+
+let idState = null;
+let idObjs  = null;   //!< Objekt- und Propertyliste des Geraets, einmal geholt
+
+const hexOf = (v, digits) =>
+  '0x' + (v >>> 0).toString(16).toUpperCase().padStart(digits, '0');
+
+const isNum = v => typeof v === 'number' && Number.isFinite(v);
+
+/*
+ * Was die Firmware als Text annimmt: druckbares ASCII ohne " und \.
+ *
+ * Produktnamen aus einer knxprod tragen gern Umlaute oder Gedankenstriche.
+ * Die hier wegzuschneiden ist freundlicher, als das Gerät die ganze Kennung
+ * ablehnen zu lassen - der Name ist ohnehin nur Anzeige.
+ */
+const idClean = (text, max) =>
+  String(text).replace(/[^\x20-\x7E]/g, '').replace(/["\\]/g, '')
+              .trim().slice(0, max);
+
+async function refreshId(){
+  try { idState = await (await fetch('/api/knx/identity')).json(); }
+  catch(e){ return; }
+  const a = idState.active;
+
+  $('idSrc').innerHTML = idState.using_defaults
+      ? '<span class="dot warn"></span>' + t('Vorgabe der Firmware')
+        + (idState.fallback ? ' (' + t(idState.fallback) + ')' : '')
+      : dot(true) + ' ' + t('gespeicherte Kennung');
+  if(idState.reboot_pending)
+    $('idSrc').innerHTML += ' <span class="warnbadge">' + t('Neustart nötig') + '</span>';
+
+  $('idName').textContent = a.name || '-';
+  $('idMan').textContent  = hexOf(a.manufacturer, 4) + ' (' + a.manufacturer + ')';
+  $('idApp').textContent  = hexOf(a.app_number, 4) + ' v' + hexOf(a.app_version, 2)
+                          + ' (' + a.app_number + ' v' + a.app_version + ')';
+  $('idDev').textContent  = a.device_version;
+  $('idMask').textContent = 'MV-' + a.mask.toString(16).toUpperCase().padStart(4, '0');
+  $('idHwT').textContent  = /^0*$/.test(a.hardware_type) ? t('nicht gesetzt')
+                                                         : a.hardware_type;
+  $('idOrd').textContent  = a.order_info || t('nicht gesetzt');
+  $('idTun').textContent  = a.tunnels === idState.max_tunnels
+      ? String(a.tunnels)
+      : a.tunnels + ' ' + t('von') + ' ' + idState.max_tunnels;
+}
+
+function idFill(o){
+  $('idfName').value = o.name || '';
+  $('idfMan').value  = o.manufacturer;
+  $('idfApp').value  = o.app_number;
+  $('idfAppV').value = o.app_version;
+  $('idfDev').value  = o.device_version;
+  $('idfTun').value  = o.tunnels;
+  $('idfOrd').value  = o.order_info || '';
+  $('idfHw').value   = /^0*$/.test(o.hardware_type || '') ? '' : o.hardware_type;
+  idHex();
+}
+
+// Die knxprod schreibt die Zahlen dezimal, ihre Dateinamen hexadezimal. Wer
+// eine Kennung von Hand nachschlaegt, sucht nach dem Dateinamen - also steht
+// er hier mit, statt dass man ihn im Kopf umrechnet.
+function idHex(){
+  const v = id => parseInt($(id).value, 10);
+  const man = v('idfMan'), app = v('idfApp'), ver = v('idfAppV');
+  const h = (n, d) => n.toString(16).toUpperCase().padStart(d, '0');
+
+  $('idHexNote').textContent = (isNum(man) && isNum(app) && isNum(ver))
+    ? t('In der knxprod') + ': M-' + h(man, 4) + '/M-' + h(man, 4)
+      + '_A-' + h(app, 4) + '-' + h(ver, 2) + '-....xml'
+    : '';
+}
+
+function idCollect(){
+  return {
+    name:           $('idfName').value.trim(),
+    manufacturer:   parseInt($('idfMan').value, 10),
+    app_number:     parseInt($('idfApp').value, 10),
+    app_version:    parseInt($('idfAppV').value, 10),
+    device_version: parseInt($('idfDev').value, 10),
+    mask:           idState ? idState.supported_mask : 2330,
+    tunnels:        parseInt($('idfTun').value, 10),
+    order_info:     $('idfOrd').value.trim(),
+    hardware_type:  $('idfHw').value.trim()
+  };
+}
+
+async function openId(){
+  await refreshId();
+  if(!idState) return;
+  idFill(idState.has_stored ? idState.stored : idState.active);
+  $('idErr').textContent = '';
+  $('idProdInfo').textContent = '';
+  $('idCheck').innerHTML = '';
+  idDlg.showModal();
+}
+
+function idDefaults(){ if(idState) idFill(idState.defaults); }
+
+async function idPost(o){
+  const r = await fetch('/api/knx/identity', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(o)
+  });
+
+  if(!r.ok){
+    let msg = t('abgelehnt');
+    try { const j = await r.json(); if(j.error) msg = j.error; } catch(e){}
+    $('idErr').textContent = msg;
+    return false;
+  }
+
+  let j = {};
+  try { j = await r.json(); } catch(e){}
+  idDlg.close();
+  refreshId();
+
+  if(j.erases_download){
+    alert(t('Gespeichert. Beim Neustart verwirft der Stack die '
+          + 'ETS-Programmierung: Filtertabelle und Gruppenadressen sind dann '
+          + 'weg, die physikalische Adresse bleibt. Die ETS muss das Gerät '
+          + 'neu laden.'));
+  }
+  if(j.reboot_required !== false
+     && confirm(t('Kennung gespeichert. Jetzt neu starten?'))) doReboot();
+  return true;
+}
+
+function idSave(){
+  const o = idCollect();
+  for(const k of ['manufacturer','app_number','app_version','device_version','tunnels']){
+    if(!isNum(o[k])){
+      $('idErr').textContent = t('Bitte alle Zahlenfelder ausfüllen.');
+      return;
+    }
+  }
+  $('idErr').textContent = '';
+  return idPost(o);
+}
+
+async function idReset(){
+  if(!confirm(t('Gespeicherte Kennung verwerfen und die Werte der Firmware verwenden?'))) return;
+
+  const r = await fetch('/api/knx/identity/reset', {method:'POST'});
+  if(!r.ok){
+    let why = '';
+    try { why = (await r.json()).error || ''; } catch(e){}
+    alert(t('Zurücksetzen fehlgeschlagen.') + (why ? '\n\n' + why : ''));
+    return;
+  }
+
+  let j = {};
+  try { j = await r.json(); } catch(e){}
+  idDlg.close();
+  refreshId();
+  if(j.reboot_required !== false
+     && confirm(t('Zurückgesetzt. Jetzt neu starten?'))) doReboot();
+}
+
+function idDownload(){
+  if(!idState) return;
+  const blob = new Blob([JSON.stringify(idState.active, null, 2)],
+                        {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'sbip-identity.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function idUpload(){
+  const f = $('idFile').files[0];
+  if(!f) return;
+  let o;
+  try { o = JSON.parse(await f.text()); }
+  catch(e){ alert(t('Keine gültige JSON-Datei.')); return; }
+  if(!await idPost(o)){ idDlg.showModal(); idFill(Object.assign(idCollect(), o)); }
+}
+
+/* --- knxprod lesen ------------------------------------------------------- *
+ * Eine knxprod ist ein ZIP-Archiv. Die drei wichtigsten Kennungen stehen
+ * schon im Namen des Eintrags - M-00FA/M-00FA_A-0001-01-0000.xml ist
+ * Hersteller 0x00FA, Applikation 0x0001, Version 0x01 - dafuer muss nichts
+ * ausgepackt werden. Alles weitere steht im XML, und das packt der Browser
+ * mit DecompressionStream selbst aus, ohne Bibliothek.
+ * ------------------------------------------------------------------------ */
+
+/** Eintraege aus dem Central Directory. */
+function zipEntries(buf){
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+
+  // Das Ende-Verzeichnis steht hinten und ist variabel lang, also rueckwaerts
+  // suchen. 65557 Byte ist die groesste moegliche Entfernung vom Dateiende.
+  let eocd = -1;
+  for(let i = buf.length - 22; i >= 0 && i > buf.length - 65558; i--){
+    if(dv.getUint32(i, true) === 0x06054b50){ eocd = i; break; }
+  }
+  if(eocd < 0) throw new Error(t('kein ZIP-Archiv'));
+
+  const count = dv.getUint16(eocd + 10, true);
+  let at = dv.getUint32(eocd + 16, true);
+  const out = [];
+  const dec = new TextDecoder();
+
+  for(let k = 0; k < count; k++){
+    if(at + 46 > buf.length || dv.getUint32(at, true) !== 0x02014b50) break;
+    const nameLen = dv.getUint16(at + 28, true);
+    out.push({
+      name:   dec.decode(buf.subarray(at + 46, at + 46 + nameLen)),
+      method: dv.getUint16(at + 10, true),
+      csize:  dv.getUint32(at + 20, true),
+      local:  dv.getUint32(at + 42, true)
+    });
+    at += 46 + nameLen + dv.getUint16(at + 30, true) + dv.getUint16(at + 32, true);
+  }
+  return out;
+}
+
+/** Einen Eintrag als Text. Nur "stored" und "deflate" - mehr benutzt ETS nicht. */
+async function zipText(buf, e){
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  if(dv.getUint32(e.local, true) !== 0x04034b50) throw new Error(t('Eintrag defekt'));
+
+  const at = e.local + 30 + dv.getUint16(e.local + 26, true)
+                          + dv.getUint16(e.local + 28, true);
+  const raw = buf.subarray(at, at + e.csize);
+
+  if(e.method === 0) return new TextDecoder().decode(raw);
+  if(e.method !== 8) throw new Error(t('unbekannte Kompression'));
+
+  return await new Response(new Blob([raw]).stream()
+    .pipeThrough(new DecompressionStream('deflate-raw'))).text();
+}
+
+/** "MV-091A" -> 0x091A */
+function maskNumber(text){
+  const m = /([0-9A-F]{4})\s*$/i.exec(text || '');
+  return m ? parseInt(m[1], 16) : NaN;
+}
+
+function xmlDoc(text){
+  const doc = new DOMParser().parseFromString(text, 'application/xml');
+  if(doc.getElementsByTagName('parsererror').length) throw new Error(t('XML unlesbar'));
+  return doc;
+}
+
+// M-00FA/M-00FA_A-0001-01-0000.xml: Hersteller, Applikation und Version
+// stehen schon im Namen, dafuer muss nichts ausgepackt werden.
+const KNXPROD_APP = /(^|\/)M-([0-9A-F]{4})\/M-\2_A-[0-9A-F]{4}-[0-9A-F]{2}/i;
+const KNXPROD_HW  = /\/Hardware\.xml$/i;
+
+async function knxprodRead(file){
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const entries = zipEntries(buf);
+  const out = {notes: [], ops: []};
+
+  const app = entries.find(e => KNXPROD_APP.test(e.name));
+  if(!app) throw new Error(t('Keine Applikationsdatei M-xxxx/M-xxxx_A-... im Archiv.'));
+
+  const m = /M-([0-9A-F]{4})_A-([0-9A-F]{4})-([0-9A-F]{2})/i.exec(app.name);
+  out.manufacturer = parseInt(m[1], 16);
+  out.app_number   = parseInt(m[2], 16);
+  out.app_version  = parseInt(m[3], 16);
+  out.file         = app.name;
+
+  let doc;
+  try { doc = xmlDoc(await zipText(buf, app)); }
+  catch(e){
+    // ETS 6 legt den Inhalt teils verschluesselt ab. Der Dateiname bleibt
+    // lesbar, also ist die Kennung da - der Rest muss von Hand kommen.
+    out.notes.push({level:'warn', text: t('Der Inhalt ließ sich nicht lesen')
+      + ' (' + e.message + '). ' + t('Übernommen wurden nur die Kennungen aus dem Dateinamen.')});
+    return out;
+  }
+
+  const ap = doc.getElementsByTagName('ApplicationProgram')[0];
+  if(!ap){
+    out.notes.push({level:'warn', text: t('Die Datei enthält kein ApplicationProgram.')});
+    return out;
+  }
+
+  const num = a => {
+    const v = ap.getAttribute(a);
+    return v === null ? NaN : parseInt(v, 10);
+  };
+
+  out.appId    = ap.getAttribute('Id') || '';
+  out.maskText = ap.getAttribute('MaskVersion') || '';
+  out.mask     = maskNumber(out.maskText);
+  if(isNum(num('ApplicationNumber')))       out.app_number  = num('ApplicationNumber');
+  if(isNum(num('ApplicationVersion')))      out.app_version = num('ApplicationVersion');
+  if(isNum(num('AdditionalAddressesCount'))) out.tunnels    = num('AdditionalAddressesCount');
+  if(ap.getAttribute('Name'))                out.name       = ap.getAttribute('Name');
+
+  // Die Ladeprozedur: jeder LdCtrl-Schritt, den die ETS beim Download
+  // ausfuehrt. Geprueft wird sie in idProdCheck().
+  out.ops = [...ap.getElementsByTagName('*')]
+    .filter(el => el.tagName.indexOf('LdCtrl') === 0)
+    .map(el => ({
+      tag:  el.tagName,
+      ot:   el.getAttribute('ObjType'),
+      idx:  el.getAttribute('ObjIdx'),
+      pid:  el.getAttribute('PropId'),
+      size: parseInt(el.getAttribute('Size'), 10)
+    }));
+
+  // Hardware.xml traegt Geraeteversion und Bestellnummer.
+  const hwEntry = entries.find(e => KNXPROD_HW.test(e.name));
+  if(hwEntry){
+    try {
+      const hd  = xmlDoc(await zipText(buf, hwEntry));
+      // <Hardware> ist in dieser Datei zweierlei: die Sammlung und die
+      // einzelnen Geraete darin. Nur letztere tragen eine Id.
+      const all = [...hd.getElementsByTagName('Hardware')]
+                    .filter(h => h.getAttribute('Id'));
+      const hw  = all.find(h => [...h.getElementsByTagName('ApplicationProgramRef')]
+                    .some(r => (r.getAttribute('RefId') || '') === out.appId)) || all[0];
+
+      if(hw){
+        const v = parseInt(hw.getAttribute('VersionNumber'), 10);
+        if(isNum(v)) out.device_version = v;
+
+        const prod  = hw.getElementsByTagName('Product')[0];
+        const order = (prod && prod.getAttribute('OrderNumber'))
+                      || hw.getAttribute('SerialNumber') || '';
+        if(order){
+          out.order_full = order;
+          out.order_info = order.replace(/\s+/g, '').slice(0, 10);
+        }
+        if(prod && prod.getAttribute('Text') && !out.name){
+          out.name = prod.getAttribute('Text');
+        }
+      }
+    } catch(e){
+      out.notes.push({level:'warn', text: t('Hardware.xml ließ sich nicht lesen')
+        + ' - ' + t('Geräteversion und Bestellnummer bleiben, wie sie sind.')});
+    }
+  }
+
+  return out;
+}
+
+async function idProdPick(){
+  const f = $('idProd').files[0];
+  if(!f) return;
+
+  $('idCheck').innerHTML = '';
+  $('idProdInfo').textContent = t('wird gelesen') + '...';
+
+  let info;
+  try { info = await knxprodRead(f); }
+  catch(e){
+    $('idProdInfo').textContent = t('Datei nicht lesbar') + ': ' + e.message;
+    return;
+  }
+
+  // Nur uebernehmen, was die Datei wirklich hergibt - der Rest bleibt
+  // stehen. Der Hardwaretyp steht in keiner knxprod.
+  const o = idCollect();
+  ['manufacturer','app_number','app_version','device_version','tunnels'].forEach(k => {
+    if(isNum(info[k])) o[k] = info[k];
+  });
+  if(info.order_info) o.order_info = idClean(info.order_info, 10);
+  if(info.name)       o.name = idClean(info.name, 32);
+  idFill(o);
+
+  $('idProdInfo').textContent = f.name + ' – '
+    + (info.file || '') + (info.maskText ? ', ' + info.maskText : '');
+
+  await idProdCheck(info);
+}
+
+/*
+ * Was beim Download aus dieser Datei passieren wuerde.
+ *
+ * Die Ladeprozedur einer knxprod ist eine Liste von Schritten, die die ETS
+ * am Geraet ausfuehrt. Schreibt einer davon eine Property, die dieser Stack
+ * nicht hat, bricht der Download genau dort ab. Das laesst sich vorher
+ * sagen, statt es in der ETS zu erleben.
+ */
+const ID_OT = {0:'Geräteobjekt', 1:'Adresstabelle', 2:'Assoziationstabelle',
+  3:'Applikationsprogramm', 4:'Interfaceprogramm', 6:'Kopplerobjekt',
+  8:'cEMI-Server', 9:'Gruppenobjekttabelle', 11:'KNXnet/IP-Parameter',
+  17:'Security', 19:'RF-Medium'};
+
+async function idProdCheck(info){
+  const rows = [];
+  // Eine zusammengefuehrte Ladeprozedur schreibt dieselbe Property oft
+  // mehrfach. Einmal melden reicht - sonst steht dreimal dasselbe da.
+  const add  = (level, text) => {
+    if(!rows.some(r => r.text === text)) rows.push({level, text});
+  };
+  const otName = ot => t(ID_OT[ot] || ('Objekttyp ' + ot));
+
+  info.notes.forEach(n => add(n.level, n.text));
+
+  if(idState && isNum(info.mask)){
+    if(info.mask !== idState.supported_mask){
+      add('err', t('Maske') + ' ' + (info.maskText || hexOf(info.mask, 4)) + ' – '
+        + t('diese Firmware ist ein Koppler der Maske 091A. Die Datei gehört zu einem anderen Gerätetyp und wird abgelehnt.'));
+    } else {
+      add('ok', t('Maske 091A') + ' – ' + t('passt zu dieser Firmware.'));
+    }
+  }
+
+  if(idState && isNum(info.tunnels)){
+    if(info.tunnels > idState.max_tunnels){
+      add('err', t('Das Produkt verwaltet') + ' ' + info.tunnels + ' '
+        + t('Tunneladressen, dieses Image bietet') + ' ' + idState.max_tunnels + '. '
+        + t('KNX_TUNNELING in platformio.ini anheben und neu bauen.'));
+    } else if(info.tunnels < idState.max_tunnels){
+      add('warn', t('Das Produkt verwaltet') + ' ' + info.tunnels + ' '
+        + t('der') + ' ' + idState.max_tunnels + ' '
+        + t('Tunneladressen. Die übrigen bleiben, wie der Stack sie abgeleitet hat - die ETS kennt sie nicht.'));
+    } else {
+      add('ok', info.tunnels + ' ' + t('Tunneladressen, genau so viele bietet das Image.'));
+    }
+  }
+
+  if(info.order_full && info.order_full.replace(/\s+/g, '').length > 10){
+    add('warn', t('Die Bestellnummer ist länger als die zehn Zeichen von PID_ORDER_INFO und wurde gekürzt auf')
+      + ' "' + info.order_info + '".');
+  }
+
+  if(!idObjs){
+    try { idObjs = await (await fetch('/api/knx/objects')).json(); } catch(e){}
+  }
+
+  if(!info.ops.length){
+    add('off', t('Die Datei nennt keine Ladeprozedur - es gibt nichts zu prüfen.'));
+  } else if(!idObjs){
+    add('warn', t('Die Objektliste des Geräts war nicht abrufbar - die Ladeprozedur wurde nicht geprüft.'));
+  } else {
+    const byOt = {}, byIdx = {};
+    idObjs.objects.forEach(o => { byOt[o.ot] = o; byIdx[o.idx] = o; });
+
+    let checked = 0, memory = 0, memBytes = 0, other = 0, missing = 0;
+
+    info.ops.forEach(op => {
+      // Was eine PropId traegt, greift auf eine Property zu - egal ob der
+      // Schritt sie schreibt, liest oder vergleicht. Das ist das Merkmal,
+      // nicht der Name des Schrittes: davon gibt es zu viele Spielarten.
+      if(op.pid !== null){
+        const pid = parseInt(op.pid, 10);
+        // ObjType nennt den Typ, ObjIdx die Position in der Objektliste des
+        // Geraets. Beide kommen vor, je nach Alter der Datei.
+        const obj = op.ot !== null ? byOt[parseInt(op.ot, 10)]
+                                   : byIdx[parseInt(op.idx, 10)];
+        checked++;
+
+        if(!obj){
+          missing++;
+          add('err', op.tag + ': ' + t('Objekt')
+            + (op.ot !== null ? ' ' + otName(parseInt(op.ot, 10))
+                              : ' ' + t('Nummer') + ' ' + (op.idx === null ? '?' : op.idx))
+            + ' ' + t('gibt es in diesem Stack nicht.'));
+        } else if(isNum(pid) && obj.pids.indexOf(pid) < 0){
+          missing++;
+          add('err', op.tag + ': ' + t('Property') + ' ' + pid + ' '
+            + t('fehlt im') + ' ' + otName(obj.ot) + ' – '
+            + t('der Download bricht an dieser Stelle ab.'));
+        }
+      } else if(/Segment|Mem/i.test(op.tag)){
+        memory++;
+        if(isNum(op.size)) memBytes += op.size;
+      } else {
+        other++;
+      }
+    });
+
+    if(checked && !missing){
+      add('ok', checked + ' ' + t('Property-Zugriffe der Ladeprozedur - alle vorhanden.'));
+    }
+    if(memory){
+      add(idObjs.user_memory && memBytes > idObjs.user_memory ? 'err' : 'off',
+        memory + ' ' + t('Speicherschritte')
+        + (memBytes ? ', ' + memBytes + ' Byte' : '')
+        + (idObjs.user_memory ? ' ' + t('von') + ' ' + idObjs.user_memory + ' '
+           + t('Byte KNX-Speicher') : ''));
+    }
+    if(other){
+      add('off', other + ' ' + t('weitere Schritte (Verbinden, Entladen, Neustart) - ohne Anforderung an die Firmware.'));
+    }
+  }
+
+  const bad = rows.some(r => r.level === 'err');
+  rows.unshift({level: bad ? 'err' : 'ok',
+    text: bad ? t('Diese Datei passt nicht zu dieser Firmware.')
+              : t('Nichts gefunden, was gegen diese Datei spricht.')});
+
+  $('idCheck').innerHTML = rows.map(r =>
+    '<div><span class="dot ' + r.level + '"></span>' + esc(r.text) + '</div>').join('');
 }
 
 async function doReboot(){

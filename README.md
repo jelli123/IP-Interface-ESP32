@@ -24,6 +24,7 @@ NCN5130-Transceiver; hier sitzt stattdessen ein Selfbus-Interface am UART.
 | WLAN-Einrichtung | Captive Portal (offener AP) **oder** Improv über USB |
 | Programmiermodus | per Klick im Dashboard, kein Tastendruck am Gerät nötig |
 | **ETS-Zugriff** | pro Weg sperrbar (TP, Tunnel, Routing), Freigabe auf Zeit per Taster |
+| **Geräteidentität** | im Dashboard einstellbar oder aus einer knxprod eingelesen, mit Prüfung der Ladeprozedur |
 | OTA-Update | Datei-Upload **und** Online-Pull aus einem Manifest |
 | **LPC-Programmierung** | SB-Interface über zwei GPIO erkennen und flashen |
 | Anti-Brick | zwei App-Partitionen + Bootloader-Rollback |
@@ -1207,6 +1208,13 @@ Stack sie aus dem eigenen Subnetz ab (`15.15.1` … `15.15.10`). Der Aufwand lie
 bei ~24 Byte RAM und 7 Byte Property-Daten je Tunnel – die praktische Grenze ist
 der Adressbereich, nicht der ESP32.
 
+Die Zahl gehört zur Produktdatenbank: Die ETS verwaltet genau so viele
+Tunneladressen, wie die Applikation mit `AdditionalAddressesCount` ansagt. Sie
+ist deshalb der einzige Teil der Geräteidentität, der im Image festliegt und
+nicht im Dashboard umgestellt werden kann – eine Kennung, die mehr Adressen
+verlangt als einkompiliert sind, weist das Gerät ab. Weniger wird angenommen
+und gemeldet.
+
 ---
 
 ## Firmware auf den ESP32 bringen
@@ -1339,10 +1347,11 @@ mit Bindestrich beginnend oder endend – die Beschränkung kommt daher, dass
 der Name als Hostname endet. Ohne eigene Angabe gilt `SBIP_MDNS_HOSTNAME`.
 
 > Der Name im **KNXnet/IP-Discovery** ist ein anderer: Den schreibt die ETS
-> beim Download in das Gerät (bei der ABB-Vorlage etwa
-> `IPR/S3.1.1 IP-Router,REG`). Solange nicht programmiert wurde, ist dort der
-> Produktname der Firmware zu sehen. Der Gerätename hier ändert daran nichts.
-> Angezeigt wird er als *Name in der ETS* und in der Kopfzeile.
+> beim Download in das Gerät, und zwar so, wie der Katalogeintrag der
+> geladenen Produktdatenbank heißt. Solange nicht programmiert wurde, ist
+> dort der Produktname der Firmware zu sehen. Der Gerätename hier ändert
+> daran nichts. Angezeigt wird er als *Name in der ETS* und in der
+> Kopfzeile.
 
 ### Zugangsschutz
 
@@ -1406,6 +1415,10 @@ das Passwort und ein zweiter Ort für Fehler.
 | GET | `/api/hwconfig` | aktives, gespeichertes und Image-Profil |
 | POST | `/api/hwconfig` | JSON-Profil speichern (Teilfelder erlaubt) |
 | POST | `/api/hwconfig/reset` | gespeichertes Profil verwerfen |
+| GET | `/api/knx/identity` | aktive, gespeicherte und Image-Kennung |
+| POST | `/api/knx/identity` | JSON-Kennung speichern (Teilfelder erlaubt) |
+| POST | `/api/knx/identity/reset` | gespeicherte Kennung verwerfen |
+| GET | `/api/knx/objects` | Interfaceobjekte und ihre Properties, für die knxprod-Prüfung |
 | POST | `/api/peaks/reset` | `scope=bus\|cpu\|all` → Spitzenwertmarker löschen |
 | POST | `/api/hours/reset` | Betriebsstunden und Startzähler auf null |
 | POST | `/api/led/heartbeat` | `enabled=1\|0` → Herzschlag schalten |
@@ -1728,7 +1741,10 @@ zurückholen; der Knopf ist dann abgeschaltet und nennt den Grund.
 
 ## Konfiguration über die ETS
 
-**Kurz: nur eingeschränkt, und ein knxprod bringt hier wenig.**
+**Kurz: für den Betrieb als Schnittstelle braucht es keine
+Produktdatenbank.** Wer das Gerät als Koppler ins Projekt aufnehmen will,
+braucht eine – welche, entscheidet die Geräteidentität, und die lässt sich im
+Dashboard einstellen oder aus einer knxprod einlesen, siehe unten.
 
 Was **ohne** Produktdatenbank funktioniert, weil es über Standard-Properties
 läuft:
@@ -2348,58 +2364,186 @@ fehlende Antwort erst danach.
 > Tunnel; den Absender selbst überspringt der Stack absichtlich, und bei nur
 > einer offenen Verbindung bleibt dann niemand übrig.
 
-### Fremde Produktdatenbank verwenden
+### Die Geräteidentität
 
-Statt eine eigene Produktdatenbank zu erstellen, kann sich die Firmware als
-vorhandenes Gerät ausgeben, dessen Verhalten sie nachbildet.
+Die ETS sucht zu jedem Gerät die passende Produktdatenbank über eine Handvoll
+Werte, die das Gerät über sich meldet. Stimmen sie nicht mit der knxprod
+überein, lässt sie keinen Download zu.
 
-Ausgewählt wird das Profil in `platformio.ini`, Abschnitt `[knx_product]` –
-es ist genau eine Zeile zu tauschen. Die Werte selbst stehen in
-`include/interface_config.h`.
+| Wert | Property | Woher er in der knxprod stammt |
+| --- | --- | --- |
+| Herstellerkennung | `PID_SERIAL_NUMBER`, `PID_PROG_VERSION` | Ordner- und Dateiname `M-00FA` |
+| Applikationsnummer und -version | `PID_PROG_VERSION` | `ApplicationNumber`, `ApplicationVersion` |
+| Geräteversion | `PID_VERSION` | `Hardware.xml`, `VersionNumber` |
+| Hardwaretyp, sechs Oktette | `PID_HARDWARE_TYPE` | steht in keiner knxprod |
+| Bestellnummer, zehn Zeichen | `PID_ORDER_INFO` | `Product`, `OrderNumber` |
+| Maskenversion | `PID_DEVICE_DESCRIPTOR` | `MaskVersion` |
+| verwaltete Tunneladressen | `PID_ADDITIONAL_INDIVIDUAL_ADDRESSES` | `AdditionalAddressesCount` |
 
-| Profil | Gerät |
-| --- | --- |
-| `0` | Eigene Kennung, Hersteller `0x00FA`. Nur Tunneling, Basis für ein eigenes knxprod (Kaenx, OpenKNXproducer). |
-| `1` | ABB i-bus KNX IP-Router **IPR/S 3.1.1**, Applikation *IP-Router/2.0a* |
+**Diese Werte stehen im Gerät und lassen sich im Dashboard ändern**, Karte
+*Geräteidentität*. Gespeichert werden sie in NVS; die Defines in
+`include/interface_config.h` sind nur die Vorgabe für ein Gerät, das noch
+nichts Eigenes gespeichert hat, und der Rückfall, wenn das Gespeicherte
+abgelehnt wird. Gelesen wird die Kennung genau einmal, vor `knx.start()` –
+jede Änderung wirkt deshalb erst nach einem Neustart.
 
-Die ABB-Applikation passt, weil sie dieselbe Maskenversion `091A` verwendet,
-die diese Firmware ohnehin baut – die Kopplerlogik bleibt unberührt, nur die
-Identität wechselt. Sie kennt keine Kommunikationsobjekte, und ihre 25
-Parameter sind Standard-Linienkopplereinstellungen, die `NetworkLayerCoupler`
-bereits auswertet. `AdditionalAddressesCount="5"` gibt die fünf Tunnel vor,
-deshalb setzt das Profil `KNX_TUNNELING=5`; ein `static_assert` bricht ab,
-wenn beides auseinanderläuft.
+Drei Dinge lassen sich **nicht** zur Laufzeit ändern:
 
-**Die Unterlagen liegen bewusst nicht im Repository.** Produkthandbuch und
-knxprod sind urheberrechtlich geschützt.
-Beides gibt es kostenlos bei ABB unter der Bestellnummer `2CDG 110 175 R0011`
-([Produktseite](https://new.abb.com/products/2CDG110175R0011/ipr-s3-1-1)) sowie
-im KNX-Online-Katalog. Zum Nachvollziehen genügt die knxprod – sie ist ein
-ZIP-Archiv, die Kennungen stehen in `M-0002/M-0002_A-A0A9-10-AA35.xml`.
+1. **Die Maskenversion.** Sie ist hier keine Zahl, sondern eine Klasse:
+   `Bau091A`. Aus der Maske leitet die ETS ab, wie sie das Gerät programmiert.
+   Eine andere Maske in `PID_DEVICE_DESCRIPTOR` zu schreiben wäre eine Lüge,
+   nach der die ETS dann handelt – eine knxprod für eine andere Maske wird
+   deshalb abgelehnt statt angepasst.
+2. **Die Tunnelanzahl.** `KNX_TUNNELING` bestimmt Feldgrößen im Stack. Ein
+   Produkt, das *weniger* Adressen verwaltet als das Image bietet, wird
+   angenommen – die übrigen bleiben dann aber so, wie der Stack sie aus der
+   Gerätadresse abgeleitet hat, und die ETS weiß nichts von ihnen. Mehr wird
+   abgewiesen; dafür ist `KNX_TUNNELING` in `platformio.ini` anzuheben.
+3. **Die Ladeprozedur.** Jede knxprod bringt eine Liste von Schritten mit, die
+   die ETS beim Download am Gerät ausführt. Schreibt einer davon eine
+   Property, die dieser Stack nicht hat, bricht der Download genau dort ab.
+   Deshalb prüft das Dashboard die Prozedur, bevor die Datei übernommen wird.
 
-Offen ist die Hardwarekennung `PID_HARDWARE_TYPE`: sechs Oktette, die weder im
-Handbuch noch in der knxprod stehen. Sie bleibt vorerst null.
+> Ändern sich **Herstellerkennung, Hardwaretyp oder Geräteversion**, verwirft
+> `Memory::readMemory()` beim nächsten Start das gesamte Flash-Abbild:
+> Filtertabelle und Gruppenadressen sind weg, das Gerät gilt als nie
+> programmiert. Das ist beabsichtigt – ein Gerät, das sich als etwas anderes
+> ausgibt, darf die Tabellen des Vorgängers nicht weiterbenutzen. Die
+> physikalische Adresse wird vorher beiseitegelegt und nach dem Neustart
+> zurückgeschrieben, sodass die ETS das Gerät an seiner alten Adresse wieder
+> findet und nur neu laden muss.
+
+**Beim Update von einer Firmware mit anderer Vorgabekennung** gilt dasselbe,
+nur ungefragt: Das Gerät startet mit der Selfbus-Kennung, der Stack verwirft
+das Abbild, und die ETS muss neu laden – auch die physikalische Adresse ist
+dann weg, denn die rettet nur eine Änderung über das Dashboard, nicht ein
+Firmwarewechsel. Wer die alte Kennung behalten will, stellt sie nach dem
+Update im Dashboard wieder her (von Hand oder über die knxprod); der Download
+aus der ETS ist trotzdem einmal fällig. Es lohnt sich deshalb, die Kennung
+**vor** dem Update über *JSON speichern* zu sichern.
+
+### Eine knxprod einlesen
+
+Im Bearbeiten-Dialog der Karte *Geräteidentität* lässt sich eine knxprod
+auswählen. **Ausgewertet wird sie im Browser**, nicht im Gerät: Eine knxprod
+ist ein ZIP-Archiv mit XML darin, und beides auf dem ESP32 auszupacken wäre
+ein Entpacker und ein XML-Parser für sieben Zahlen. Der Browser hat beides
+eingebaut – ZIP über das Central Directory, `deflate` über
+`DecompressionStream`, XML über den `DOMParser`. Zum Gerät gehen nur die
+Zahlen, rund fünfzig Byte; die Datei verlässt den Rechner nicht.
+
+Drei Werte stehen schon im **Namen** des Eintrags und brauchen gar kein
+Auspacken: `M-00FA/M-00FA_A-0001-01-0000.xml` ist Hersteller `0x00FA`,
+Applikation `0x0001`, Version `0x01`. Alles weitere kommt aus dem XML –
+`MaskVersion`, `AdditionalAddressesCount`, `VersionNumber`, `OrderNumber` und
+die Ladeprozedur.
+
+> Die Zahlen stehen in den XML-Attributen **dezimal**, in den Dateinamen
+> **hexadezimal**. `ApplicationNumber="4660"` und `A-1234` wären dasselbe.
+
+Danach zeigt der Dialog, was beim Download aus dieser Datei passieren würde:
+
+* Maske und Tunnelanzahl gegen das, was dieses Image kann.
+* Jeder `LdCtrlWriteProp` der Ladeprozedur gegen die Objekte und Properties
+  des laufenden Stacks. Die Liste dafür kommt vom Gerät selbst
+  (`/api/knx/objects`); aufgezählt wird sie über
+  `InterfaceObject::readPropertyDescription()`, also über denselben Weg, den
+  auch die ETS ginge. `ObjType` nennt den Objekttyp direkt, `ObjIdx` die
+  Position in der Objektliste des Geräts – beide Schreibweisen kommen vor.
+* Die Speicherschritte gegen die Größe des KNX-Speichers.
+
+Fehlt eine Property, sagt der Dialog welche und in welchem Objekt. Genau das
+war der Grund für die einzige produktspezifische Anpassung am Stack, siehe
+unten.
+
+**Ob die Datei signiert ist, spielt für das Gerät keine Rolle.** Es liest
+sieben Zahlen, keine Prüfsumme. Die Signatur betrifft allein den Import in die
+ETS; Werkzeuge wie SB-Project prüfen sie nicht.
+
+### Eine fremde Produktdatenbank verwenden
+
+Weil die Kennung im Gerät liegt und aus einer knxprod gelesen werden kann,
+**kann sich dieses Gerät auch als ein anderes ausgeben** – als ein
+vorhandenes Produkt, dessen Verhalten es ohnehin nachbildet. Dafür genügt es,
+dessen knxprod im Bearbeiten-Dialog einzulesen; nach dem Neustart meldet sich
+das Gerät mit dieser Kennung, und die ETS lässt den Download zu.
+
+**Die Firmware bringt dafür nichts mit.** Sie enthält keine fremde Kennung,
+keine fremde Produktdatenbank und keinen Verweis auf ein fremdes Produkt. Wer
+diesen Weg geht, tut es mit seiner eigenen Kopie der Datei und auf eigene
+Entscheidung; ob die Lizenz des Herstellers das deckt, ist zwischen ihm und
+dem Hersteller zu klären. Ohne ein eingelesenes knxprod bleibt es bei der
+Selfbus-Kennung.
+
+Damit das überhaupt aussichtsreich ist, muss das fremde Produkt **dieselbe
+Maskenversion 091A** verwenden – sonst lehnt der Dialog die Datei ab, denn
+aus der Maske leitet die ETS ab, wie sie das Gerät programmiert. Passt die
+Maske, bleibt die Kopplerlogik unberührt und nur die Identität wechselt.
+
+Zwei Dinge entscheiden dann noch, ob der Download durchläuft, und beide
+benennt die Prüfung im Dialog:
+
+* **`AdditionalAddressesCount`** muss zu `KNX_TUNNELING` passen, siehe oben.
+* **Die Ladeprozedur** darf nur Properties schreiben, die dieser Stack hat.
+  Herstellereigene Properties (ab 200) sind der typische Stolperstein; zwei
+  davon, 204 und 209 im KNXnet/IP-Parameterobjekt, legt
+  `scripts/patch_knx.py` an, weil sie auf Kopplern dieser Maske vorkommen.
+  Fehlt eine andere, sagt der Dialog welche – und der Download ist an genau
+  dieser Stelle zu Ende.
+
+Was keine knxprod hergibt, ist die Hardwarekennung `PID_HARDWARE_TYPE`: sechs
+Oktette, die in den Produktdaten schlicht nicht stehen. Sie bleibt null. Wenn
+alles andere zusammenpasst und die ETS die Applikation trotzdem ablehnt, ist
+das der erste Wert, an dem zu drehen ist.
 
 ### Eine eigene Produktdatenbank
 
-Drei Gründe, warum das bisher nicht beschritten wurde:
+In `knxprod/` liegt eine Produktdatenbank auf Selfbus-Basis, ohne Bezug auf
+einen fremden Hersteller. Sie besteht aus den drei XML-Dateien, aus denen eine
+knxprod besteht, und einem Skript, das sie zusammenpackt:
 
-1. **Herstellerkennung.** Ein importierbares knxprod braucht eine bei der KNX
-   Association registrierte Manufacturer-ID. Der Stack meldet sich mit `0xFA`
-   (thelsing/knx-Default), was für den Eigengebrauch reicht, aber keine
-   offizielle Kennung ist.
-2. **Doppelte Konfigurationswege.** Zeitserver-Parameter gleichzeitig per ETS
-   *und* Web-GUI pflegbar zu machen, erzeugt Zustandskonflikte. Die GUI ist
-   für dieses Gerät der praktikablere Weg – sie funktioniert ohne ETS-Lizenz
-   und ohne PC mit installierter ETS.
-3. **Aufwand.** Das Erzeugen liefe über
-   [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer) (XML → knxprod,
-   ETS 5.7/6 muss installiert sein). Die Applikationsbeschreibung und der
-   Parameterspeicher wären ein eigenes Teilprojekt.
+```
+python3 scripts/make_knxprod.py --identity sbip-identity.json
+```
 
-Falls es später gewünscht ist: Der KNX-Stack unterstützt die dafür nötigen
-`knx.paramByte()`/`paramWord()`-Zugriffe bereits, `Bau091A` enthält ein
-`OT_APPLICATION_PROG`-Objekt. Der Weg ist offen, nur nicht beschritten.
+Das erzeugt `knxprod/M-00FA_A-0001-01.knxprod` und daneben die JSON-Datei mit
+genau denselben Werten, die sich im Dashboard über *JSON laden* einspielen
+lässt. Beide Wege führen zum selben Ergebnis – die knxprod lässt sich ebenso
+im Bearbeiten-Dialog einlesen.
+
+`--tunnels`, `--app`, `--app-version`, `--manufacturer` und `--order` erzeugen
+Varianten; die Ids in den drei Dateien verweisen aufeinander und werden
+gemeinsam umgeschrieben. Wichtig ist allein, dass `--tunnels` zu
+`KNX_TUNNELING` der Firmware passt.
+
+**Bewusst ohne Parameter und ohne Kommunikationsobjekte.** Dieses Gerät wird
+über sein Dashboard eingestellt, nicht über die ETS; Zeitserver-Parameter
+gleichzeitig über beide Wege pflegbar zu machen, erzeugte nur
+Zustandskonflikte. Und was die ETS an einem Koppler der Maske 091A tatsächlich
+einstellt – Filtertabelle und Weiterleitung – schreibt sie über das
+Kopplerobjekt, nicht über Applikationsparameter. Die Ladeprozedur schreibt
+deshalb keine einzige Property: Was nicht geschrieben wird, kann auch nicht
+fehlschlagen. Die Prüfung im Dashboard meldet zu dieser Datei entsprechend
+nichts.
+
+Zwei Einschränkungen, offen benannt:
+
+1. **Die Herstellerkennung `0x00FA`** ist die Vorgabe des thelsing-Stacks und
+   bei der KNX Association auf niemanden eingetragen. Für den Eigengebrauch
+   reicht sie; ein offiziell registriertes Produkt wird daraus nicht.
+2. **Unsigniert nimmt die ETS die Datei nicht an.** Das Signieren verlangt die
+   ETS-Bibliotheken; `make_knxprod.py` kann es nicht. Die XML-Dateien sind
+   aber genau das, was
+   [Kaenx-Creator](https://github.com/OpenKNX/Kaenx-Creator) oder
+   [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer) zum Signieren
+   erwarten. Ohne ETS bleibt der unsignierte Weg: SB-Project prüft die
+   Signatur nicht.
+
+> Diese Dateien sind bisher **nicht gegen einen ETS-Import verprobt** worden.
+> Geprüft ist, dass sie wohlgeformt sind, dass das Dashboard sie liest und
+> dass die Werte darin zur Vorgabekennung der Firmware passen. Wenn die ETS
+> beim Import meckert, ist das XML der Ort, an dem nachzubessern ist – eine
+> Datei, kein Firmwarebau.
 
 ---
 

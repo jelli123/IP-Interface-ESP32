@@ -225,7 +225,7 @@ patch_router()
 
 
 # --------------------------------------------------------------------------
-# 3. Manufacturer specific properties of the emulated product
+# 3. Manufacturer specific properties a foreign load procedure may write
 # --------------------------------------------------------------------------
 
 IPPARAM = os.path.join(
@@ -237,20 +237,29 @@ IPPARAM = os.path.join(
     "ip_parameter_object.cpp",
 )
 
-IPPARAM_MARKER = "// sbip: manufacturer specific, written by the ABB load procedure"
+IPPARAM_MARKER = ("// sbip: manufacturer specific, written by some products' "
+                  "load procedures")
 
 IPPARAM_ANCHOR = (
     "        new DataProperty(PID_IP_ASSIGNMENT_METHOD, true, PDT_UNSIGNED_CHAR, 1,"
     " ReadLv3 | WriteLv3),\n"
 )
 
-# The ABB IPR/S 3.1.1 load procedure writes these two:
+# Property ids from 200 up are the manufacturer's own by definition, and a
+# product's load procedure may write them:
 #     <LdCtrlWriteProp ObjType="11" PropId="204" Verify="false" />
 #     <LdCtrlWriteProp ObjType="11" PropId="209" Verify="false" />
-# The knxprod does not say what goes in them, and Verify="false" means ETS
-# never reads them back - they only have to exist, otherwise the write fails
-# and the download stops. Declared as byte arrays so any length ETS sends
-# fits; adjust once the monitor shows the real size.
+# Such a write goes to a property the stack does not have, the device answers
+# with zero elements and the download stops there. 204 and 209 are the two
+# that turned up on mask 091A routers, so they exist here - what goes in them
+# is nobody's business but the vendor's, and Verify="false" means ETS never
+# reads them back. Declared as byte arrays so any length fits.
+#
+# This is what the knxprod check in the dashboard reports on: it names every
+# property a load procedure writes that this stack does not have, before the
+# download runs into it. Nothing here emulates a particular product - the
+# identity for that comes from the knxprod the user loads, see
+# src/knx_identity.cpp.
 IPPARAM_EXTRA = (
     "        " + IPPARAM_MARKER + "\n"
     "        new DataProperty((PropertyID)204, true, PDT_UNSIGNED_CHAR, 16,"
@@ -267,13 +276,16 @@ def patch_ipparam():
     with open(IPPARAM, "r", encoding="utf-8") as handle:
         source = handle.read()
 
-    if IPPARAM_MARKER in source:
+    # Checked on the code, not on the comment: a copy patched by an older
+    # revision of this script carries the properties but an older marker, and
+    # inserting them a second time is a silent duplicate.
+    if "(PropertyID)204" in source:
         return
 
     if source.count(IPPARAM_ANCHOR) != 1:
         sys.stderr.write(
             "patch_knx.py: anchor for the manufacturer properties not found, "
-            "an ABB download will fail on ObjType 11 PropId 204/209\n"
+            "a download that writes ObjType 11 PropId 204/209 will fail\n"
         )
         return
 
@@ -1336,8 +1348,9 @@ patch_tunnel_ack()
 # Mandatory properties a mask 091A download writes
 # --------------------------------------------------------------------------
 #
-# The load procedure of mask 091A (knx_master.xml, merged with the IPR/S 3.1.1
-# application) writes PID_COUPL_SERV_CONTROL in the router object and
+# The load procedure of mask 091A (knx_master.xml, merged with whatever
+# application is downloaded) writes PID_COUPL_SERV_CONTROL in the router
+# object and
 # PID_ROUTING_BUSY_WAIT_TIME in the KNXnet/IP parameter object. The stack has
 # neither for this mask, so the device answers the write with zero elements
 # and the download stops.

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Applikationsprogramm des Selfbus KNX/IP Interface.
+
+  Die Kennungen hier muessen zu denen im Geraet passen - Dashboard, Karte
+  "Geraeteidentitaet". Aus dem Dateinamen liest die ETS (und das Dashboard)
+  Hersteller 0x00FA, Applikation 0x0001, Version 0x01; dieselben Zahlen
+  stehen unten dezimal als ApplicationNumber und ApplicationVersion.
+
+  Bewusst ohne Parameter und ohne Kommunikationsobjekte: Diese Firmware wird
+  ueber ihr Web-Dashboard eingestellt, nicht ueber die ETS. Was die ETS an
+  einem Koppler der Maske 091A einstellt - Filtertabelle und Weiterleitung -
+  schreibt sie ueber das Kopplerobjekt, nicht ueber Applikationsparameter.
+  Die Ladeprozedur schreibt deshalb keine einzige Property; jede, die sie
+  schreiben wuerde, muesste es im Stack geben.
+-->
+<KNX xmlns="http://knx.org/xml/project/14">
+  <ManufacturerData>
+    <Manufacturer RefId="M-00FA">
+      <ApplicationPrograms>
+        <ApplicationProgram Id="M-00FA_A-0001-01-0000"
+                            ApplicationNumber="1"
+                            ApplicationVersion="1"
+                            ProgramType="ApplicationProgram"
+                            MaskVersion="MV-091A"
+                            Name="Selfbus KNX/IP 1.0"
+                            LoadProcedureStyle="MergedProcedure"
+                            PeiType="0"
+                            DefaultLanguage="de-DE"
+                            DynamicTableManagement="false"
+                            Linkable="false"
+                            MinEtsVersion="5.7"
+                            AdditionalAddressesCount="10"
+                            IsIpEnabled="true"
+                            Broken="false">
+          <Static>
+            <Code />
+            <Parameters />
+            <ParameterRefs />
+            <ComObjectTable />
+            <ComObjectRefs />
+            <LoadProcedures>
+              <LoadProcedure MergeId="2">
+                <LdCtrlConnect />
+                <LdCtrlDisconnect />
+              </LoadProcedure>
+            </LoadProcedures>
+          </Static>
+          <Dynamic />
+        </ApplicationProgram>
+      </ApplicationPrograms>
+    </Manufacturer>
+  </ManufacturerData>
+</KNX>

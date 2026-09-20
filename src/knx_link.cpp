@@ -17,6 +17,7 @@
 #include "eth_interface.h"
 #include "hw_config.h"
 #include "interface_config.h"
+#include "knx_identity.h"
 #include "knx_link.h"
 
 #include "log_buffer.h"
@@ -298,6 +299,12 @@ public:
         return getInterfaceObject(type, instance);
     }
 
+    /** By position in the stack's object list, which is what ObjIdx means. */
+    InterfaceObject* interfaceObject(uint8_t index)
+    {
+        return getInterfaceObject(index);
+    }
+
 protected:
     /*
      * A_Restart as master reset. The stack calls masterReset() on each object,
@@ -368,43 +375,154 @@ static inline uint32_t frameBitTimes(uint32_t octets)
  *
  * Must run before knx.start(): the values end up in the device object and in
  * the application program object, both of which ETS reads during a download.
+ *
+ * Where they come from is KnxIdentityStore's business - NVS if something is
+ * stored, the defines from interface_config.h otherwise. Only the mask is
+ * not negotiable, because it is a class here and not a number.
  */
 void KnxLink::applyIdentity()
 {
-    // ETS manages exactly as many tunnel addresses as the product data
-    // declares, so a mismatch would leave addresses unaccounted for.
-    static_assert(KNX_TUNNELING == SBIP_KNX_TUNNELS,
-                  "KNX_TUNNELING must match the selected product profile - "
-                  "see the [knx_product] section in platformio.ini");
+    static_assert(MASK_VERSION == KNX_ID_MASK,
+                  "this image builds a different BAU than KnxIdentity accepts");
 
-    DeviceObject& dev = knxBau.deviceObject();
+    knxIdentity.begin();
 
-    dev.manufacturerId(SBIP_KNX_MANUFACTURER_ID);
-    dev.version(SBIP_KNX_DEVICE_VERSION);
+    const KnxIdentity& id  = knxIdentity.active();
+    DeviceObject&      dev = knxBau.deviceObject();
 
-    const uint8_t hardwareType[LEN_HARDWARE_TYPE] = {SBIP_KNX_HARDWARE_TYPE};
-    dev.hardwareType(hardwareType);
+    dev.manufacturerId(id.manufacturer);
+    dev.version(id.deviceVersion);
+    dev.hardwareType(id.hardwareType);
+
+    /*
+     * PID_ORDER_INFO, ten octets. Space padded the way a real device writes
+     * it; an empty setting leaves the property at zero, which is what an
+     * unconfigured stack reports.
+     */
+    if (id.orderInfo[0] != '\0')
+    {
+        uint8_t order[KNX_ID_ORDER_MAX];
+        memset(order, ' ', sizeof(order));
+        memcpy(order, id.orderInfo, strlen(id.orderInfo));
+        dev.orderNumber(order);
+    }
 
     // PID_PROG_VERSION is manufacturer, application number and application
     // version in five octets. Written through the public property API so no
     // private stack member is needed.
     uint8_t progVersion[5] = {
-        (uint8_t)(SBIP_KNX_MANUFACTURER_ID >> 8),
-        (uint8_t)(SBIP_KNX_MANUFACTURER_ID & 0xFF),
-        (uint8_t)(SBIP_KNX_APP_NUMBER >> 8),
-        (uint8_t)(SBIP_KNX_APP_NUMBER & 0xFF),
-        (uint8_t)SBIP_KNX_APP_VERSION,
+        (uint8_t)(id.manufacturer >> 8),
+        (uint8_t)(id.manufacturer & 0xFF),
+        (uint8_t)(id.appNumber >> 8),
+        (uint8_t)(id.appNumber & 0xFF),
+        id.appVersion,
     };
 
     uint8_t count = 1;
     knxBau.propertyValueWrite(OT_APPLICATION_PROG, 1, PID_PROG_VERSION,
                               count, 1, progVersion, sizeof(progVersion));
 
-    sysLog.printf("KNX: %s - manufacturer 0x%04X, application 0x%04X v%u\n",
-                  SBIP_KNX_PRODUCT_NAME,
-                  (unsigned)SBIP_KNX_MANUFACTURER_ID,
-                  (unsigned)SBIP_KNX_APP_NUMBER,
-                  (unsigned)SBIP_KNX_APP_VERSION);
+    sysLog.printf("KNX: identity \"%s\" (%s) - manufacturer 0x%04X, "
+                  "application 0x%04X v%u, device v%u\n",
+                  id.name,
+                  knxIdentity.usingDefaults() ? "Vorgabe" : "gespeichert",
+                  (unsigned)id.manufacturer, (unsigned)id.appNumber,
+                  (unsigned)id.appVersion, (unsigned)id.deviceVersion);
+
+    /*
+     * Fewer managed addresses than tunnels is legal but worth saying out
+     * loud: ETS writes only as many as the product data declares, and the
+     * remaining ones keep whatever the stack derived from the device
+     * address - which nobody checked against the rest of the line.
+     */
+    if (id.tunnels != KNX_TUNNELING)
+    {
+        sysLog.printf("KNX: the product data manages %u of the %u tunnel "
+                      "addresses - the rest stay as the stack derived them\n",
+                      (unsigned)id.tunnels, (unsigned)KNX_TUNNELING);
+    }
+}
+
+/*
+ * The interface objects and the properties each one has.
+ *
+ * Answers the one question a foreign knxprod raises: its load procedure
+ * writes a list of properties, and a property this stack does not have makes
+ * the download fail at that step. The dashboard reads the file, this says
+ * what is there to write to.
+ *
+ * Read only, so calling it from the web server task is fine - same as
+ * configured() and tunnelAddresses(). The property table is built once in
+ * the constructor and never changes afterwards.
+ */
+String KnxLink::objectsJson() const
+{
+    String j = "{\"mask\":" + String(MASK_VERSION);
+    j += ",\"max_tunnels\":" + String(KNX_TUNNELING);
+    j += ",\"user_memory\":" + String((uint32_t)knxPlatform.getNonVolatileMemorySize());
+    j += ",\"objects\":[";
+
+    for (uint8_t index = 0; index < 16; index++)
+    {
+        InterfaceObject* object = knxBau.interfaceObject(index);
+        if (object == nullptr) break;
+
+        // The object type is a property like any other, so no second lookup
+        // table has to be kept in step with the stack's object order.
+        uint8_t objectType[2] = {0, 0};
+        uint8_t count         = 1;
+        object->readProperty(PID_OBJECT_TYPE, 1, count, objectType);
+
+        if (index) j += ",";
+        j += "{\"idx\":" + String(index);
+        j += ",\"ot\":" + String(count ? ((objectType[0] << 8) | objectType[1]) : 0xFFFF);
+        j += ",\"pids\":[";
+
+        bool first = true;
+        for (uint16_t at = 0; at < 256; at++)
+        {
+            uint8_t  propertyId    = 0;
+            uint8_t  propertyIndex = (uint8_t)at;
+            bool     writeEnable   = false;
+            uint8_t  type          = 0;
+            uint16_t elements      = 0;
+            uint8_t  access        = 0;
+
+            object->readPropertyDescription(propertyId, propertyIndex, writeEnable,
+                                            type, elements, access);
+
+            // Nothing at this index. Not "no elements": a property may well
+            // have none and still exist, PID_CURRENT_IP_ASSIGNMENT_METHOD
+            // being the example.
+            if (propertyId == 0) break;
+
+            if (!first) j += ",";
+            j += String(propertyId);
+            first = false;
+        }
+        j += "]}";
+    }
+
+    j += "]}";
+    return j;
+}
+
+/*
+ * Keep the individual address over a change that invalidates the ETS image.
+ *
+ * Same mechanism a master reset without IA uses: the image cannot hold the
+ * address once readMemory() has discarded it, so it waits in NVS and begin()
+ * puts it back. Without this, changing the identity would silently move the
+ * device to 15.15.255 and ETS would have to find it in programming mode.
+ */
+void KnxLink::preserveAddress()
+{
+    uint16_t address = knxBau.deviceObject().individualAddress();
+
+    if (address == 0 || !knxPrefs.begin(KNX_NS, false)) return;
+
+    knxPrefs.putUShort(KEY_KEEPIA, address);
+    knxPrefs.end();
 }
 
 bool KnxLink::begin()

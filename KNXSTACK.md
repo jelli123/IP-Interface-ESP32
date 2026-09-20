@@ -398,7 +398,7 @@ Start abzustürzen.
 
 | Änderung in `patch_knx.py` | Warum sie projektspezifisch ist |
 |---|---|
-| Herstellerproperties 204/209 im `IpParameterObject` | Nachbildung des ABB IPR/S 3.1.1; die Ladeprozedur dieses Produkts schreibt sie |
+| Herstellerproperties 204/209 im `IpParameterObject` | Ladeprozeduren fremder Produkte schreiben herstellereigene Properties; ohne sie bricht der Download dort ab. Genau diese Klasse von Fehlern meldet die knxprod-Prüfung im Dashboard vorab, siehe `KnxLink::objectsJson()` |
 | PID 57 und 78 als `VolatileDataProperty` (nur im RAM) | Hält das Flash-Abbild programmierter Geräte gültig, ohne `apiVersion` zu erhöhen; upstream gehören sie gespeichert, siehe Punkt 10 |
 | Busmonitor-Haken in `data_link_layer.cpp` | Dient allein der Aufzeichnung im Dashboard dieser Firmware |
 | Schleifenerkennung für Routing-Indications | Reaktion auf eine konkrete Anlage mit einem zweiten Interface auf derselben Linie |
