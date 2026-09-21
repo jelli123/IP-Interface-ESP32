@@ -28,5 +28,7 @@ sbip-monitor-*.csv
 sbip-identity.json
 sbip-hardware.json
 
-# Erzeugnis von scripts/make_knxprod.py; die Quelle sind die XML-Dateien
+# Erzeugnisse von scripts/make_knxprod.py; die Quelle sind die XML-Dateien
+# in knxprod/M-00FA/. Die Kombi-Datei zum Signieren liegt daneben.
 knxprod/*.knxprod
+knxprod/M-*.xml

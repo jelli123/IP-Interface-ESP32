@@ -13,8 +13,20 @@ Applikationsprogramm per MergedProcedure übernimmt. Mehr braucht es nicht,
 damit das Gerät und die Datei zueinander passen - und mehr kann dieses Skript
 auch nicht: Eine **Signatur** kann es nicht erzeugen, die
 verlangt die ETS-Bibliotheken. Ohne Signatur nimmt die ETS die Datei nicht an;
-Werkzeuge wie SB-Project prüfen sie nicht und kommen damit zurecht. Zum
-Signieren die XML-Dateien in Kaenx-Creator oder OpenKNXproducer geben.
+Werkzeuge wie SB-Project prüfen sie nicht und kommen damit zurecht.
+
+Zum Signieren schreibt das Skript daneben dieselbe Produktdatenbank als
+**eine** XML-Datei, wie OpenKNXproducer sie erwartet:
+
+    cd knxprod
+    OpenKNXproducer knxprod M-00FA_A-0001-01.xml
+
+Das teilt die Datei wieder auf, signiert mit den Bibliotheken der
+installierten ETS und legt die offiziellen Stammdaten bei. Kaenx-Creator
+eignet sich dafür nicht: Es verwirft beim Import
+Options/LineCoupler0912NewProgrammingStyle, und ohne diesen Schalter
+programmiert die ETS einen Koppler der Maske 091A über BCU1-Speicher, den
+dieser Stack nicht hat.
 
 Das Gegenstück im Gerät ist die Karte "Geräteidentität" im Dashboard. Mit
 --identity schreibt dieses Skript die JSON-Datei, die sich dort über "JSON
@@ -27,6 +39,7 @@ import os
 import re
 import sys
 import zipfile
+from xml.etree import ElementTree as ET
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -135,6 +148,53 @@ def build(args):
     return files
 
 
+def combined(files):
+    """Die drei Dateien als eine, für OpenKNXproducer.
+
+    Dessen Signierroutine sucht in genau einem Manufacturer die Elemente
+    Catalog, Hardware und ApplicationPrograms und teilt sie selbst wieder
+    auf. Die Reihenfolge ist die des ETS-Schemas. Kommentare bleiben
+    erhalten - die Datei ist zum Lesen genauso gedacht wie zum Signieren.
+    """
+    def parse(text):
+        parser = ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))
+        return ET.fromstring(text.encode("utf-8"), parser=parser)
+
+    by_kind = {}
+    for name, text in files.items():
+        if "/" not in name:
+            continue  # knx_master.xml - die Signierroutine holt die offiziellen
+        base = name.rsplit("/", 1)[1]
+        kind = ("hardware" if base == "Hardware.xml" else
+                "catalog" if base == "Catalog.xml" else
+                "application" if "_A-" in base else None)
+        if kind:
+            by_kind[kind] = parse(text)
+
+    ns = by_kind["catalog"].tag[1:].split("}")[0]
+    ET.register_namespace("", ns)
+
+    def manufacturer(root):
+        return root.find("{%s}ManufacturerData/{%s}Manufacturer" % (ns, ns))
+
+    root = by_kind["catalog"]
+    manu = manufacturer(root)
+    for kind, tag in (("application", "ApplicationPrograms"), ("hardware", "Hardware")):
+        manu.append(manufacturer(by_kind[kind]).find("{%s}%s" % (ns, tag)))
+
+    # Catalog, ApplicationPrograms, Hardware - die Folge des Schemas.
+    order = {"Catalog": 0, "ApplicationPrograms": 1, "Hardware": 2}
+    children = sorted(list(manu), key=lambda e: order.get(
+        e.tag.split("}")[-1] if isinstance(e.tag, str) else "", 3))
+    for child in list(manu):
+        manu.remove(child)
+    manu.extend(children)
+
+    ET.indent(root, space="  ")
+    text = ET.tostring(root, encoding="unicode")
+    return '<?xml version="1.0" encoding="utf-8"?>\n' + text + "\n"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -185,6 +245,13 @@ def main():
           "%d Tunneladressen" % (args.manufacturer, args.app, args.app_version,
                                  MASK, args.tunnels))
     print("  unsigniert - die ETS nimmt die Datei erst nach dem Signieren an")
+
+    # Dieselbe Datenbank als eine Datei, zum Signieren mit OpenKNXproducer.
+    single = os.path.splitext(out)[0] + ".xml"
+    with open(single, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(combined(files))
+    print("geschrieben: %s" % single)
+    print("  zum Signieren: OpenKNXproducer knxprod %s" % os.path.basename(single))
 
     if args.identity:
         identity = {

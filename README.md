@@ -2655,18 +2655,31 @@ Zwei Einschränkungen, offen benannt:
    daraus nicht – dafür bräuchte es eine eigene Kennung, und die vergibt die
    KNX Association an ihre Mitglieder.
 2. **Unsigniert nimmt die ETS die Datei nicht an.** Das Signieren verlangt die
-   ETS-Bibliotheken; `make_knxprod.py` kann es nicht. Die XML-Dateien sind
-   aber genau das, was
-   [Kaenx-Creator](https://github.com/OpenKNX/Kaenx-Creator) oder
-   [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer) zum Signieren
-   erwarten. Ohne ETS bleibt der unsignierte Weg: SB-Project prüft die
-   Signatur nicht.
+   ETS-Bibliotheken; `make_knxprod.py` kann es nicht. Es schreibt aber neben
+   die knxprod dieselbe Datenbank als **eine** XML-Datei, und die signiert
+   [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer) mit einer
+   installierten ETS:
 
-> Diese Dateien sind bisher **nicht gegen einen ETS-Import verprobt** worden.
-> Geprüft ist, dass sie wohlgeformt sind, dass das Dashboard sie liest, dass
-> die Werte darin zur Vorgabekennung der Firmware passen und dass die
-> Ladeprozedur der Maske nur Schritte enthält, die SB-Project übersetzen kann. Wenn die ETS
-> beim Import meckert, ist das XML der Ort, an dem nachzubessern ist – eine
+   ```
+   cd knxprod
+   OpenKNXproducer knxprod M-00FA_A-0001-01.xml
+   ```
+
+   [Kaenx-Creator](https://github.com/OpenKNX/Kaenx-Creator) eignet sich dafür
+   **nicht**: Es verwirft beim Import `Options/LineCoupler0912NewProgrammingStyle`.
+   Ohne diesen Schalter wählt die ETS für Maske 091A die alte Fassung, die den
+   Koppler über BCU1-Speicher programmiert, und bricht mit „unterstützt die
+   Managementprozedur 'LoadLCConfigApp' nicht“ ab. Ohne ETS bleibt der
+   unsignierte Weg: SB-Project prüft die Signatur nicht.
+
+> **Stand:** Eine mit Kaenx-Creator signierte Fassung ließ sich in die ETS 6
+> importieren, und die ETS vergab darüber die physikalische Adresse. Der
+> Applikationsdownload scheiterte an dem fehlenden Schalter oben; ein Download
+> mit der über OpenKNXproducer signierten Fassung steht noch aus. Geprüft ist
+> außerdem, dass die Dateien wohlgeformt sind, dass das Dashboard sie liest,
+> dass die Werte darin zur Vorgabekennung der Firmware passen und dass die
+> Ladeprozedur der Maske nur Schritte enthält, die SB-Project übersetzen kann.
+> Wenn die ETS meckert, ist das XML der Ort, an dem nachzubessern ist – eine
 > Datei, kein Firmwarebau.
 
 ---

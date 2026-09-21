@@ -45,9 +45,27 @@ soll, mit *Ja* beantworten. Sonst exportiert Kaenx-Creator unter einer
 anderen Kennung, und die ETS findet zum Gerät keine passende Datenbank.
 
 **Unsigniert.** Die ETS nimmt eine knxprod erst nach dem Signieren an; das
-verlangt ihre eigenen Bibliotheken und kann dieses Skript nicht. Zum Signieren
-die XML-Dateien in [Kaenx-Creator](https://github.com/OpenKNX/Kaenx-Creator)
-oder [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer) geben.
+verlangt ihre eigenen Bibliotheken und kann dieses Skript nicht. Es schreibt
+aber neben die knxprod dieselbe Datenbank als eine Datei,
+`M-00FA_A-0001-01.xml`, und die signiert
+[OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer) auf einem
+Rechner mit ETS:
+
+```
+OpenKNXproducer knxprod M-00FA_A-0001-01.xml
+```
+
+OpenKNXproducer teilt die Datei selbst wieder auf, signiert und legt die
+offiziellen KNX-Stammdaten bei; dafür braucht es beim ersten Lauf
+Internetzugang.
+
+**Kaenx-Creator zum Signieren nicht verwenden.** Sein Datenmodell kennt
+`Options/LineCoupler0912NewProgrammingStyle` nicht und verwirft den Schalter
+beim Import. Ohne ihn wählt die ETS für Maske 091A die Prozedur, die den
+Koppler über BCU1-Speicher programmiert, und bricht den Download ab
+(„unterstützt die Managementprozedur 'LoadLCConfigApp' nicht“). Die Hinweise
+zum Import oben gelten weiter, falls Kaenx-Creator den Schalter einmal
+kennt.
 Werkzeuge, die die Signatur nicht prüfen – etwa SB-Project – kommen mit der
 unsignierten Datei zurecht.
 
