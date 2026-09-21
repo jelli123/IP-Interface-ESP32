@@ -188,7 +188,7 @@ button.ico svg .sol{fill:currentColor;stroke:none}
 .actions + label.chk, p + label.chk, .bar + label.chk,
 .fields + label.chk{margin-top:14px}
 label.chk{display:flex;align-items:center;gap:9px;font-size:13px}
-small{color:var(--dim)}
+small{color:var(--dim)} small.warn{color:var(--warn)}
 </style>
 </head>
 <body>
@@ -883,6 +883,21 @@ small{color:var(--dim)}
       <div><label>SDA</label><input id="hwSda" type="number" min="-1"></div>
       <div><label>SCL</label><input id="hwScl" type="number" min="-1"></div>
     </div>
+    <label>Pufferzelle laden (Ladewiderstand)</label>
+    <select id="hwRtcChg" onchange="rtcChgPick()">
+      <option value="0">aus</option>
+      <option value="3000">3 kΩ – größter Ladestrom</option>
+      <option value="5000">5 kΩ</option>
+      <option value="9000">9 kΩ</option>
+      <option value="15000">15 kΩ – kleinster Ladestrom</option>
+    </select>
+    <p><small class="warn">Nur einschalten, wenn am Pufferanschluss der RTC
+    ein Super-Cap oder ein Akku sitzt.</small></p>
+    <p><small>Die RTC legt VDD dann über den gewählten Widerstand auf diesen
+    Anschluss. Eine gewöhnliche Lithiumzelle (CR2032) ist nicht
+    wiederaufladbar und darf das nicht sehen. Ohne bestückten Puffer bleibt
+    die Einstellung wirkungslos und gehört trotzdem auf „aus“. Der Wert wirkt
+    nach dem nächsten Neustart.</small></p>
   </div>
 
   <div class="grp">
@@ -1512,6 +1527,28 @@ const EN = {
 + 'tells the states apart by pattern alone.',
 'LED low-aktiv':'LED active low',
 'RTC über I2C aktivieren':'Enable the RTC on I2C',
+'Pufferzelle laden (Ladewiderstand)':'Charge the backup cell (series resistor)',
+'3 kΩ – größter Ladestrom':'3 kΩ – largest charge current',
+'15 kΩ – kleinster Ladestrom':'15 kΩ – smallest charge current',
+'Ladung':'charging', 'ohne Ladung':'not charging',
+['Nur einschalten, wenn am Pufferanschluss der RTC ein Super-Cap oder ein '
++ 'Akku sitzt.']:
+  'Switch this on only if a supercap or a rechargeable cell sits on the '
++ 'backup pin of the RTC.',
+['Die RTC legt VDD dann über den gewählten Widerstand auf diesen Anschluss. '
++ 'Eine gewöhnliche Lithiumzelle (CR2032) ist nicht wiederaufladbar und darf '
++ 'das nicht sehen. Ohne bestückten Puffer bleibt die Einstellung wirkungslos '
++ 'und gehört trotzdem auf „aus“. Der Wert wirkt nach dem nächsten Neustart.']:
+  'The RTC then puts VDD on that pin through the resistor you pick. An '
++ 'ordinary lithium cell (CR2032) cannot be recharged and must never see it. '
++ 'With no backup fitted the setting does nothing, and still belongs on '
++ '"off". It takes effect after the next restart.',
+['Laden einschalten?\n\nNur zulässig, wenn am Pufferanschluss der RTC ein '
++ 'Super-Cap oder ein Akku sitzt. Eine nicht wiederaufladbare Zelle kann '
++ 'dabei auslaufen oder bersten.']:
+  'Switch charging on?\n\nOnly allowed if a supercap or a rechargeable cell '
++ 'sits on the backup pin of the RTC. A cell that cannot be recharged may '
++ 'leak or burst.',
 'Ethernet W5500 aktivieren':'Enable the W5500 Ethernet',
 'Formular zurücksetzen':'Reset the form',
 'Profil im Gerät löschen':'Delete the stored profile',
@@ -3323,12 +3360,13 @@ async function sendTime(){
 
 // --- Hardware-Profil ---
 const HWF = ['knx_uart','knx_rx','knx_tx','lpc_reset','lpc_isp',
-             'i2c_sda','i2c_scl','eth_sck','eth_miso','eth_mosi',
+             'i2c_sda','i2c_scl','rtc_charge_ohms',
+             'eth_sck','eth_miso','eth_mosi',
              'eth_cs','eth_irq','eth_rst','eth_spi_mhz',
              'log_kib','monitor_kib'];
 const HWID = {knx_uart:'hwUart', knx_rx:'hwRx', knx_tx:'hwTx',
               lpc_reset:'hwLpcRst', lpc_isp:'hwLpcIsp',
-              i2c_sda:'hwSda', i2c_scl:'hwScl',
+              i2c_sda:'hwSda', i2c_scl:'hwScl', rtc_charge_ohms:'hwRtcChg',
               eth_sck:'hwSck', eth_miso:'hwMiso', eth_mosi:'hwMosi',
               eth_cs:'hwCs', eth_irq:'hwIrq', eth_rst:'hwRst',
               log_kib:'hwLogKib', monitor_kib:'hwMonKib'};
@@ -3384,8 +3422,11 @@ async function refreshHw(){
   $('hwLeds').textContent = named(a.leds || [],
       l => l.name + ' (GPIO ' + l.pin
          + (l.kind == 1 ? ', ' + RGBT[l.rgb_type] + ' #' + (l.rgb_index + 1) : '') + ')');
-  $('hwI2c').textContent = a.i2c_enabled ? ('SDA ' + a.i2c_sda + ', SCL ' + a.i2c_scl)
-                                         : t('aus');
+  $('hwI2c').textContent = a.i2c_enabled
+      ? ('SDA ' + a.i2c_sda + ', SCL ' + a.i2c_scl + ', '
+         + (a.rtc_charge_ohms ? t('Ladung') + ' ' + (a.rtc_charge_ohms/1000) + ' kΩ'
+                              : t('ohne Ladung')))
+      : t('aus');
   $('hwEth').textContent = a.eth_enabled
       ? ('SCK ' + a.eth_sck + ', MISO ' + a.eth_miso + ', MOSI ' + a.eth_mosi + ', CS ' + a.eth_cs)
       : t('aus');
@@ -3691,6 +3732,19 @@ async function openHw(){
                           + ', UART 0..' + (hwState.uart_count-1);
   $('hwErr').textContent = '';
   hwDlg.showModal();
+}
+
+/* Der Ladewiderstand ist die einzige Einstellung im Profil, die an falscher
+ * Stelle Hardware zerstoeren kann - eine Primaerzelle nimmt Ladestrom uebel.
+ * Deshalb hier die Rueckfrage und nicht nur der Hinweistext darunter. */
+function rtcChgPick(){
+  const sel = $('hwRtcChg');
+  if(sel.value === '0') return;
+  if(confirm(t('Laden einschalten?\n\n'
+            + 'Nur zulässig, wenn am Pufferanschluss der RTC ein Super-Cap '
+            + 'oder ein Akku sitzt. Eine nicht wiederaufladbare Zelle kann '
+            + 'dabei auslaufen oder bersten.'))) return;
+  sel.value = '0';
 }
 
 function hwDefaults(){ if(hwState) hwFill(hwState.defaults); }

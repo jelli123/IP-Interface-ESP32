@@ -172,9 +172,26 @@ void TimeService::probeRtc()
         return;
     }
 
-    if (_rtc.begin(RV3028_BACKUP_LEVEL, RV3028_TRICKLE_OFF))
+    /*
+     * Level switching, because the backup pin is fed either from a supercap
+     * or from a cell that is charged from VDD - in both cases its voltage
+     * tracks VDD, which is what direct switching cannot cope with.
+     *
+     * Whether to charge at all is a property of the board and comes from the
+     * hardware profile. Off unless someone said what is fitted.
+     */
+    const uint16_t ohms = hwConfig.active().rtcChargeOhms;
+
+    if (_rtc.begin(RV3028_BACKUP_LEVEL, rv3028TrickleFromOhms(ohms)))
     {
-        sysLog.println("RTC: RV-3028-C7 found");
+        sysLog.printf("RTC: RV-3028-C7 found, backup switchover on, charging %s\n",
+                      ohms ? (String(ohms / 1000) + " kOhm").c_str() : "off");
+
+        if (!_rtc.backupConfigured())
+        {
+            sysLog.println("RTC: backup configuration did not stick - the clock "
+                           "will not survive a power cut");
+        }
     }
 }
 

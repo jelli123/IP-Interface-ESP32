@@ -288,6 +288,21 @@
 #define SBIP_I2C_SCL_PIN        22
 #endif
 
+/**
+ * Default series resistance of the RTC trickle charger, in ohms.
+ *
+ * 0 means "do not charge" and is the only safe default: the firmware cannot
+ * see what is fitted on the backup pin, and charging a primary cell - a
+ * plain CR2032 - is dangerous. Only 3000, 5000, 9000 and 15000 exist in the
+ * chip; anything else falls back to off.
+ *
+ * Set this for a board that carries a supercap or a rechargeable cell, or
+ * switch it on per device in the hardware profile.
+ */
+#ifndef SBIP_RTC_CHARGE_OHMS
+#define SBIP_RTC_CHARGE_OHMS    0
+#endif
+
 /* ------------------------------------------------------------------------- *
  * Firmware update
  * ------------------------------------------------------------------------- */

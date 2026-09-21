@@ -211,6 +211,16 @@ struct HwProfile
     int8_t  i2cSdaPin    = -1;
     int8_t  i2cSclPin    = -1;
 
+    /**
+     * Trickle charger series resistance in ohms, 0 = do not charge.
+     *
+     * A property of the board, not of the time server: only the person who
+     * knows what hangs on the backup pin may switch this on. A supercap or a
+     * rechargeable cell wants it, a primary cell must never see it. The chip
+     * has 3000, 5000, 9000 and 15000; other values are rejected.
+     */
+    uint16_t rtcChargeOhms = 0;
+
     // W5500 Ethernet
     bool    ethEnabled   = false;
     int8_t  ethSckPin    = -1;

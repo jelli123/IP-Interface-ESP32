@@ -18,15 +18,24 @@
  * The factory default is DISABLED, which means the RTC stops as soon as VDD
  * goes away even with a battery or supercap fitted. Without setting this, a
  * fitted backup source does nothing at all.
+ *
+ * The values are the BSM bit pattern, not an index: 10b is standby and not
+ * a switchover at all, which is why it sits in the middle.
  */
 enum Rv3028Backup : uint8_t
 {
     RV3028_BACKUP_DISABLED = 0, //!< no switchover, RTC dies with VDD
     RV3028_BACKUP_DIRECT   = 1, //!< direct switching, for a battery
-    RV3028_BACKUP_LEVEL    = 2  //!< level switching, for a supercap
+    RV3028_BACKUP_STANDBY  = 2, //!< standby, backup unused as well
+    RV3028_BACKUP_LEVEL    = 3  //!< level switching, for a supercap
 };
 
-/** Trickle charger series resistance. Only meaningful for a supercap. */
+/**
+ * Trickle charger series resistance, the TCR bit pattern.
+ *
+ * The charger feeds the backup pin from VDD through this resistor. It is for
+ * a supercap or a rechargeable cell; on anything else it has to stay off.
+ */
 enum Rv3028Trickle : uint8_t
 {
     RV3028_TRICKLE_OFF = 0xFF,
@@ -35,6 +44,26 @@ enum Rv3028Trickle : uint8_t
     RV3028_TRICKLE_9K  = 2,
     RV3028_TRICKLE_15K = 3
 };
+
+/**
+ * Translate a series resistance in ohms into the register setting.
+ *
+ * Only the four values the chip actually has are accepted; everything else,
+ * 0 included, means "do not charge". A configuration that names a resistor
+ * the chip cannot produce therefore switches the charger off rather than
+ * silently picking a neighbouring one.
+ */
+inline Rv3028Trickle rv3028TrickleFromOhms(uint16_t ohms)
+{
+    switch (ohms)
+    {
+        case 3000:  return RV3028_TRICKLE_3K;
+        case 5000:  return RV3028_TRICKLE_5K;
+        case 9000:  return RV3028_TRICKLE_9K;
+        case 15000: return RV3028_TRICKLE_15K;
+        default:    return RV3028_TRICKLE_OFF;
+    }
+}
 
 class Rv3028
 {
@@ -53,6 +82,15 @@ public:
 
     /** @return true if begin() found the chip */
     bool present() const { return _present; }
+
+    /**
+     * Whether the backup configuration read back exactly as written.
+     *
+     * A fitted supercap that is never charged and a switchover that never
+     * happens both look like a working clock until the next power cut, so
+     * the write is verified rather than assumed.
+     */
+    bool backupConfigured() const { return _backupOk; }
 
     /**
      * Test whether the stored time is trustworthy.
@@ -106,5 +144,6 @@ private:
     static uint8_t fromBcd(uint8_t bcd) { return (uint8_t)((bcd >> 4) * 10 + (bcd & 0x0F)); }
     static uint8_t toBcd(uint8_t value) { return (uint8_t)(((value / 10) << 4) | (value % 10)); }
 
-    bool _present = false;
+    bool _present  = false;
+    bool _backupOk = false;
 };

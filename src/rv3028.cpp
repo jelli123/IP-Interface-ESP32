@@ -89,7 +89,8 @@ bool Rv3028::writeReg(uint8_t reg, uint8_t value)
 
 bool Rv3028::begin(Rv3028Backup backup, Rv3028Trickle trickle)
 {
-    _present = false;
+    _present  = false;
+    _backupOk = false;
 
     uint8_t status;
     if (!readReg(REG_STATUS, status))
@@ -99,7 +100,7 @@ bool Rv3028::begin(Rv3028Backup backup, Rv3028Trickle trickle)
     _present = true;
 
     /*
-     * Configure backup switchover.
+     * Configure backup switchover and the trickle charger.
      *
      * Register 0x37 lives in the configuration EEPROM but is mirrored into
      * RAM, and that mirror is what the chip actually acts on. The mirror is
@@ -108,29 +109,56 @@ bool Rv3028::begin(Rv3028Backup backup, Rv3028Trickle trickle)
      * itself would only matter if the backup source were empty too, and then
      * the time is gone anyway and we reconfigure on the next boot.
      *
-     * So: RAM only. No EEPROM command sequence, no wear.
+     * So: RAM only. No EEPROM command sequence, no wear - but that only
+     * holds with the automatic refresh switched off. While EERD is clear the
+     * chip may copy the EEPROM back over the mirror, which would quietly
+     * undo both settings some time after boot. EERD stays set from here on:
+     * nothing in this firmware reads the EEPROM, and a power cut deep enough
+     * to clear it takes the configuration with it anyway.
      */
+    uint8_t ctrl1;
+    if (!readReg(REG_CTRL1, ctrl1))
+    {
+        return false;
+    }
+    if ((ctrl1 & CTRL1_EERD) == 0 &&
+        !writeReg(REG_CTRL1, (uint8_t)(ctrl1 | CTRL1_EERD)))
+    {
+        return false;
+    }
+
     uint8_t eeBackup;
     if (!readReg(REG_EE_BACKUP, eeBackup))
     {
         return false;
     }
 
-    eeBackup &= (uint8_t)~0x0C;                       // clear BSM
-    eeBackup |= (uint8_t)((backup & 0x03) << 2);      // set BSM
+    uint8_t wanted = eeBackup;
+    wanted &= (uint8_t)~0x0C;                       // clear BSM
+    wanted |= (uint8_t)((backup & 0x03) << 2);      // set BSM
 
     if (trickle == RV3028_TRICKLE_OFF)
     {
-        eeBackup &= (uint8_t)~0x20;                   // TCE off
+        wanted &= (uint8_t)~0x20;                   // TCE off
     }
     else
     {
-        eeBackup |= 0x20;                             // TCE on
-        eeBackup &= (uint8_t)~0x03;                   // clear TCR
-        eeBackup |= (uint8_t)(trickle & 0x03);        // set TCR
+        wanted |= 0x20;                             // TCE on
+        wanted &= (uint8_t)~0x03;                   // clear TCR
+        wanted |= (uint8_t)(trickle & 0x03);        // set TCR
     }
 
-    return writeReg(REG_EE_BACKUP, eeBackup);
+    if (wanted != eeBackup && !writeReg(REG_EE_BACKUP, wanted))
+    {
+        return false;
+    }
+
+    // Read back: the charger and the switchover only show themselves at the
+    // next power cut, which is too late to find out that the write was lost.
+    uint8_t check;
+    _backupOk = readReg(REG_EE_BACKUP, check) && check == wanted;
+
+    return true;
 }
 
 bool Rv3028::timeValid()

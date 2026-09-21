@@ -141,6 +141,7 @@ konfigurierbar. Das Dashboard bietet ein Formular, JSON-Upload und -Download.
 | `buttons[]`, `leds[]` | vorhandene Taster und LEDs, siehe *Taster und LEDs* |
 | `button_assign[]`, `led_assign[]` | wozu sie dienen |
 | `i2c_enabled`, `i2c_sda`, `i2c_scl` | RV-3028-C7 |
+| `rtc_charge_ohms` | Ladewiderstand für den Puffer der RTC, `0` = nicht laden |
 | `eth_enabled`, `eth_sck`, `eth_miso`, `eth_mosi`, `eth_cs`, `eth_irq`, `eth_rst`, `eth_spi_mhz` | W5500 |
 | `log_kib`, `monitor_kib` | PSRAM für Protokoll und Busmonitor, siehe *PSRAM aufteilen* |
 
@@ -178,6 +179,7 @@ Beispiel:
   "i2c_enabled": true,
   "i2c_sda": 8,
   "i2c_scl": 9,
+  "rtc_charge_ohms": 3000,
   "eth_enabled": true,
   "eth_sck": 12, "eth_miso": 13, "eth_mosi": 11, "eth_cs": 10,
   "eth_irq": -1, "eth_rst": -1, "eth_spi_mhz": 20
@@ -1613,16 +1615,44 @@ Zwei Punkte, die in der Praxis Ärger machen:
 * **Backup-Umschaltung ist ab Werk deaktiviert.** Ohne Aktivierung tut eine
   bestückte Batterie oder ein Goldcap gar nichts – der Baustein bleibt bei
   VDD-Verlust einfach stehen. [src/rv3028.cpp](src/rv3028.cpp) setzt bei jedem
-  Start `BSM` im Konfigurationsregister. Bewusst nur im RAM-Spiegel, nicht im
-  EEPROM: Der Spiegel hängt an der gepufferten Versorgung und überlebt genau
-  den Fall, um den es geht – ohne EEPROM-Verschleiß.
+  Start `BSM` im Konfigurationsregister auf `11b` (Level Switching): Die
+  Pufferspannung folgt hier VDD, und genau damit kommt das direkte Umschalten
+  nicht zurecht. Geschrieben wird bewusst nur der RAM-Spiegel, nicht das
+  EEPROM – der Spiegel hängt an der gepufferten Versorgung und überlebt genau
+  den Fall, um den es geht, ohne EEPROM-Verschleiß. Dazu gehört `EERD`: Solange
+  die automatische Auffrischung läuft, kann der Baustein den Spiegel wieder mit
+  dem EEPROM-Inhalt überschreiben und beide Einstellungen still zurücknehmen.
+  Der Treiber liest das Register nach dem Schreiben zurück; stimmt es nicht,
+  sagt das Protokoll es beim Start statt erst beim nächsten Stromausfall.
 * **Das PORF-Bit** meldet, ob die Zeit einen Spannungsverlust überstanden hat.
   Der Treiber liefert nur dann eine Zeit, wenn sie vertrauenswürdig ist –
   statt stillschweigend das Jahr 2000 auszugeben.
 
-Der Trickle-Charger ist standardmäßig **aus**. Für einen Goldcap in
-`Rv3028::begin()` z. B. `RV3028_TRICKLE_3K` setzen. Mit einer nicht
-wiederaufladbaren Batterie muss er aus bleiben.
+#### Puffer laden
+
+Der Trickle-Charger legt VDD über 3, 5, 9 oder 15 kΩ auf den Pufferanschluss.
+Er ist standardmäßig **aus** und gehört ins Hardware-Profil, nicht in die
+Zeitserver-Einstellungen: Ob geladen werden darf, hängt allein daran, was auf
+der Platine sitzt.
+
+| Puffer | Einstellung |
+| --- | --- |
+| Super-Cap / Goldcap | 3 kΩ (schnellstes Nachladen) bis 15 kΩ |
+| Akku, z. B. LIR2032 | passend zum Datenblatt der Zelle |
+| Primärzelle, z. B. CR2032 | **aus** |
+| kein Puffer bestückt | aus |
+
+Eine nicht wiederaufladbare Zelle darf keinen Ladestrom sehen – sie kann
+auslaufen oder bersten. Deshalb fragt das Dashboard beim Einschalten zurück,
+`0` ist der Vorgabewert, und angenommen werden nur die vier Werte, die der
+Baustein wirklich kennt; alles andere wird abgelehnt statt auf den nächsten
+Widerstand gerundet. Für eine Platine, die den Puffer immer trägt, setzt
+`-DSBIP_RTC_CHARGE_OHMS=3000` die Vorgabe schon im Image. Das Protokoll nennt
+beim Start, was gilt:
+
+```
+RTC: RV-3028-C7 found, backup switchover on, charging 3 kOhm
+```
 
 ### Statusflags in DPT 19.001
 
