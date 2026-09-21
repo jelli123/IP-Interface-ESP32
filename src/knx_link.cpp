@@ -1136,7 +1136,11 @@ void KnxLink::applyRouting()
     _wasConfigured      = programmed;
 }
 
-/** Read one unsigned long property of the KNXnet/IP parameter object. */
+/**
+ * Read one unsigned long property of the KNXnet/IP parameter object.
+ *
+ * @return 0 if the property holds no value
+ */
 static uint32_t readIpParamLong(uint8_t propertyId)
 {
     uint8_t  count  = 1;
@@ -1149,7 +1153,9 @@ static uint32_t readIpParamLong(uint8_t propertyId)
 
     uint32_t value = 0;
 
-    if (length >= 4)
+    // Same trap as in friendlyName(): length is the size of the buffer, not of
+    // what went into it. See etsIpConfig().
+    if (count == 1 && length >= 4)
     {
         value = ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) |
                 ((uint32_t)data[2] << 8) | data[3];
@@ -1168,11 +1174,24 @@ bool KnxLink::etsIpConfig(uint32_t& ip, uint32_t& mask, uint32_t& gw) const
                              count, 1, &data, length);
     if (data == nullptr) return false;
 
-    uint8_t method = (length >= 1) ? data[0] : 0;
+    /*
+     * The stack declares all four of these without a default, so until ETS
+     * writes them they hold no element at all. propertyValueRead() still
+     * hands back a buffer of the full size - allocated with new[], never
+     * cleared - and only count says that nothing went into it.
+     *
+     * Reading it anyway took whatever the heap had left there. The three
+     * addresses below then came out identical, since each read gets the same
+     * block back, and on an unlucky boot the method byte had bit 0 set and
+     * the octets passed as an address: 1.120.86.173 for address, mask and
+     * gateway, and the device was unreachable over Ethernet until the next
+     * restart rolled the heap differently.
+     */
+    uint8_t method = (count == 1 && length >= 1) ? data[0] : 0;
     delete[] data;
 
-    // Bit 0 is manual assignment. An unprogrammed device reads 0xFF here, so
-    // the address has to be plausible as well before we believe it.
+    // Bit 0 is manual assignment. The plausibility checks below stay: a
+    // written value can still be nonsense.
     if ((method & 0x01) == 0) return false;
 
     ip = readIpParamLong(PID_IP_ADDRESS);
