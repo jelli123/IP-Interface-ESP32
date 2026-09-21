@@ -208,6 +208,7 @@ small{color:var(--dim)} small.warn{color:var(--warn)}
     <div class="row"><span>Laufzeit</span><span id="uptime">-</span></div>
     <div class="row"><span>Betriebsstunden</span><span id="hours">-</span></div>
     <div class="row"><span>Physikalische Adresse</span><span id="pa">-</span></div>
+    <div class="row"><span title="Zur Adressvergabe ohne Programmierknopf: diese Nummer in der ETS oder in SB-Project angeben.">Seriennummer (KNX)</span><span id="knxSn">-</span></div>
     <div class="row"><span>Name in der ETS</span><span id="knxName">-</span></div>
     <div class="row"><span>ETS-Konfiguration</span><span id="cfg">-</span></div>
     <div class="row"><span>Tunnel (max.)</span><span id="tun">-</span></div>
@@ -1826,6 +1827,11 @@ const EN = {
 'Spitzenwert zurücksetzen':'Clear the peak',
 'SB-Interface programmieren':'Program the SB-Interface',
 'SB-Interface ISP':'SB-Interface ISP', 'Seriennummer':'Serial number',
+'Seriennummer (KNX)':'Serial number (KNX)', 'nach Neustart':'after restart',
+['Zur Adressvergabe ohne Programmierknopf: diese Nummer in der ETS oder in '
++ 'SB-Project angeben.']:
+  'To assign the address without the programming button, give this number '
++ 'to ETS or SB-Project.',
 'Bootloader':'Boot loader', 'Flash-Inhalt':'Flash contents',
 'TP-UART-Emulation':'TP-UART emulation', 'Gewählte Datei':'Selected file',
 'Erkennen':'Identify', 'Datei wählen':'Choose a file',
@@ -2022,6 +2028,10 @@ async function refresh(){
     hrs.title = t('Keine RTC vorhanden.');
   }
   $('pa').textContent     = s.knx_pa;
+  // Die kommende Nummer nur als Zusatz: bis zum Neustart antwortet das
+  // Geraet noch unter der alten.
+  $('knxSn').textContent  = (s.knx_serial || '-')
+      + (s.knx_serial_next ? ' (' + t('nach Neustart') + ': ' + s.knx_serial_next + ')' : '');
   $('knxName').textContent = s.knx_name || t('nicht gesetzt');
   $('knxBadge').textContent = s.knx_name || s.device_name;
   $('cfg').innerHTML      = s.knx_configured ? dot(true)

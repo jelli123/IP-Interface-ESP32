@@ -187,6 +187,15 @@ static String uptimeString()
     return String(buffer);
 }
 
+/** "0083:12345678" - the way ETS writes a serial number. SB-Project takes it as is. */
+static String serialText(const uint8_t sn[6])
+{
+    char text[14];
+    snprintf(text, sizeof(text), "%02X%02X:%02X%02X%02X%02X",
+             sn[0], sn[1], sn[2], sn[3], sn[4], sn[5]);
+    return String(text);
+}
+
 /*
  * The parts of the status document that are expensive to produce.
  *
@@ -325,6 +334,26 @@ static String statusJson()
     json += "\"knx_pa\":\"" + String((pa >> 12) & 0x0F) + "." +
             String((pa >> 8) & 0x0F) + "." + String(pa & 0xFF) + "\",";
     json += "\"knx_max_tunnels\":" + String(KNX_TUNNELING) + ",";
+
+    /*
+     * The first two octets are the manufacturer, so a knxprod from another
+     * one changes the number - but only with the restart that activates it.
+     * Until then the old one is what answers on the bus, and that is the one
+     * shown; the coming one goes alongside so nobody types the wrong one into
+     * ETS and waits for a device that cannot answer yet.
+     */
+    uint8_t sn[6];
+    knxLink.serialNumber(sn);
+    json += "\"knx_serial\":\"" + serialText(sn) + "\",";
+
+    const uint16_t nextManufacturer = knxIdentity.stored().manufacturer;
+    if (knxIdentity.rebootPending() &&
+        nextManufacturer != (uint16_t)((sn[0] << 8) | sn[1]))
+    {
+        sn[0] = (uint8_t)(nextManufacturer >> 8);
+        sn[1] = (uint8_t)(nextManufacturer & 0xFF);
+        json += "\"knx_serial_next\":\"" + serialText(sn) + "\",";
+    }
 
     // The addresses clients appear under when they talk through us. Worth
     // showing: they are what ETS assigns, and there is no other way to see

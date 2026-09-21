@@ -1005,6 +1005,11 @@ uint16_t KnxLink::individualAddress() const
     return knx.individualAddress();
 }
 
+void KnxLink::serialNumber(uint8_t out[6]) const
+{
+    memcpy(out, knxBau.deviceObject().propertyData(PID_SERIAL_NUMBER), 6);
+}
+
 uint8_t KnxLink::tunnelAddresses(uint16_t* out, uint8_t max) const
 {
     if (out == nullptr || max == 0) return 0;

@@ -82,6 +82,18 @@ public:
     uint16_t individualAddress() const;
 
     /**
+     * PID_SERIAL_NUMBER: the manufacturer of the active identity, then four
+     * octets from the chip's eFuse MAC.
+     *
+     * What ETS and SB-Project take to assign the individual address without
+     * the programming button. Set once before knx.start() and never again,
+     * so reading it from the web server task is safe.
+     *
+     * @param out receives the six octets
+     */
+    void serialNumber(uint8_t out[6]) const;
+
+    /**
      * Read the tunnel addresses stored in the device.
      *
      * These are the addresses ETS and other clients appear under when they

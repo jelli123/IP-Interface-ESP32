@@ -1858,6 +1858,34 @@ reine Download-Inhalte.
 
 Tunneling ist davon nicht betroffen und funktioniert unprogrammiert.
 
+### Adresse per Seriennummer statt Programmiertaster
+
+Die physikalische Adresse lässt sich auch ohne Programmiermodus vergeben –
+über `A_IndividualAddress_SerialNumber_Write`, adressiert an die
+Seriennummer statt an „wer gerade im Programmiermodus ist". Praktisch, wenn
+das Gerät eingebaut ist und der Taster nicht erreichbar.
+
+Die Nummer steht im Dashboard auf der Karte *Status* unter
+**Seriennummer (KNX)**, in der Schreibweise der ETS, z. B. `00FA:1A2B3C4D`.
+SB-Project nimmt sie so, wie sie dasteht (*Seriennummer, 6 Byte hex* – der
+Doppelpunkt wird ignoriert).
+
+Sie besteht aus zwei Teilen:
+
+| Oktette | Herkunft |
+| --- | --- |
+| 1–2 | Hersteller der Geräteidentität, Vorgabe `00FA` |
+| 3–6 | aus der eFuse-MAC des ESP32 – je Chip verschieden, übersteht Werkseinstellungen und Firmware-Updates |
+
+Der erste Teil folgt also der knxprod: Wer eine für einen anderen Hersteller
+einliest, bekommt eine andere Seriennummer – aber erst mit dem Neustart, der
+die Identität aktiviert. Bis dahin antwortet das Gerät noch unter der alten,
+und genau die steht auch da; die kommende daneben als *(nach Neustart: …)*.
+
+Eine so gesetzte Adresse schreibt die Firmware selbst ins Flash, sobald sie
+zehn Sekunden unverändert steht – die ETS schickt danach keinen Neustart, der
+es sonst täte. Die Sperre der ETS-Zugriffe unten gilt für diesen Weg genauso.
+
 ### ETS-Zugriff pro Weg sperren
 
 Als Linienkoppler zu einer ungeschützten Linie – Garten, Garage, Carport – ist
