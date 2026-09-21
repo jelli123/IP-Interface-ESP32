@@ -42,6 +42,9 @@
                             Broken="false">
           <Static>
             <Code />
+            <!-- Leer, aber vorhanden: Kaenx-Creator liest die Liste beim
+                 Import, ohne zu pruefen, ob es sie gibt. -->
+            <ParameterTypes />
             <Parameters />
             <ParameterRefs />
             <ComObjectTable />
@@ -57,6 +60,24 @@
                 <LdCtrlCompareProp ObjIdx="0" PropId="12" InlineData="00FA" />
               </LoadProcedure>
             </LoadProcedures>
+            <!--
+              Ein Zugangspunkt je Tunneladresse, so viele wie
+              AdditionalAddressesCount oben ansagt. Ohne diese Liste bricht
+              der Import in Kaenx-Creator ab, sobald die Zahl nicht null ist.
+              make_knxprod.py schreibt sie passend zu dessen Wert neu.
+            -->
+            <BusInterfaces>
+              <BusInterface Id="M-00FA_A-0001-01-0000_BI-1" AddressIndex="1" AccessType="Tunneling" Text="Tunnel 1" />
+              <BusInterface Id="M-00FA_A-0001-01-0000_BI-2" AddressIndex="2" AccessType="Tunneling" Text="Tunnel 2" />
+              <BusInterface Id="M-00FA_A-0001-01-0000_BI-3" AddressIndex="3" AccessType="Tunneling" Text="Tunnel 3" />
+              <BusInterface Id="M-00FA_A-0001-01-0000_BI-4" AddressIndex="4" AccessType="Tunneling" Text="Tunnel 4" />
+              <BusInterface Id="M-00FA_A-0001-01-0000_BI-5" AddressIndex="5" AccessType="Tunneling" Text="Tunnel 5" />
+              <BusInterface Id="M-00FA_A-0001-01-0000_BI-6" AddressIndex="6" AccessType="Tunneling" Text="Tunnel 6" />
+              <BusInterface Id="M-00FA_A-0001-01-0000_BI-7" AddressIndex="7" AccessType="Tunneling" Text="Tunnel 7" />
+              <BusInterface Id="M-00FA_A-0001-01-0000_BI-8" AddressIndex="8" AccessType="Tunneling" Text="Tunnel 8" />
+              <BusInterface Id="M-00FA_A-0001-01-0000_BI-9" AddressIndex="9" AccessType="Tunneling" Text="Tunnel 9" />
+              <BusInterface Id="M-00FA_A-0001-01-0000_BI-10" AddressIndex="10" AccessType="Tunneling" Text="Tunnel 10" />
+            </BusInterfaces>
             <Options LineCoupler0912NewProgrammingStyle="true" />
           </Static>
           <Dynamic />

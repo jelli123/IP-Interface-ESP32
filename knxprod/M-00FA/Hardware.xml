@@ -6,6 +6,10 @@
   prueft (PID_VERSION); SerialNumber ist hier - wie in jeder knxprod - keine
   Seriennummer, sondern die Typbezeichnung. OrderNumber landet im Geraet in
   PID_ORDER_INFO und ist deshalb hoechstens zehn Zeichen lang.
+
+  In den Ids steht die Bestellnummer kodiert, wie ETS und Kaenx-Creator sie
+  bilden: jedes Sonderzeichen als Punkt plus Hexcode, "-" also als ".2D".
+  Kaenx-Creator findet den Katalogeintrag beim Import genau darueber.
 -->
 <KNX xmlns="http://knx.org/xml/project/14">
   <ManufacturerData>
@@ -23,7 +27,7 @@
                   IsPowerSupply="false"
                   NoDownloadWithoutPlugin="false">
           <Products>
-            <Product Id="M-00FA_H-SBIP1-1_P-SBIP-1"
+            <Product Id="M-00FA_H-SBIP1-1_P-SBIP.2D1"
                      Text="Selfbus KNX/IP Interface"
                      OrderNumber="SBIP-1"
                      IsRailMounted="false"

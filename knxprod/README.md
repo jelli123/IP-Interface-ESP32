@@ -14,7 +14,24 @@ python3 ../scripts/make_knxprod.py --identity sbip-identity.json
 Die Kennungen darin müssen zu denen im Gerät passen (Dashboard, Karte
 *Geräteidentität*). Vorgabe ist Hersteller `0x00FA`, Applikation 1 Version 1,
 Maske `MV-091A`, zehn Tunneladressen – dieselben Werte, die
-`include/interface_config.h` für `SBIP_KNX_PRODUCT=0` einkompiliert.
+`include/interface_config.h` als Vorgabe einkompiliert.
+
+**Import in Kaenx-Creator.** Der Import greift auf einige Elemente zu, ohne
+zu prüfen, ob es sie gibt; fehlt eines, endet er mit „Object reference not
+set to an instance of an object“. Deshalb stehen hier auch Dinge, die für
+das Gerät bedeutungslos sind:
+
+* `Static/ParameterTypes`, auch wenn die Liste leer ist.
+* `Static/BusInterfaces` mit einem Eintrag je Tunneladresse, sobald
+  `AdditionalAddressesCount` nicht null ist. `make_knxprod.py` schreibt die
+  Liste passend zu `--tunnels` neu.
+* Die Bestellnummer **kodiert** in den Ids von Produkt und Katalogeintrag
+  (`SBIP-1` als `SBIP.2D1`) – über genau diese Form findet der Import den
+  Katalogeintrag.
+
+Die Frage, ob die Hersteller-ID des Projekts auf `00FA` umgestellt werden
+soll, mit *Ja* beantworten. Sonst exportiert Kaenx-Creator unter einer
+anderen Kennung, und die ETS findet zum Gerät keine passende Datenbank.
 
 **Unsigniert.** Die ETS nimmt eine knxprod erst nach dem Signieren an; das
 verlangt ihre eigenen Bibliotheken und kann dieses Skript nicht. Zum Signieren

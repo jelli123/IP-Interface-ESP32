@@ -46,6 +46,33 @@ BASE_APP_VERSION = 0x01
 MASK = 0x091A
 
 
+#: Bestellnummer, die in den mitgelieferten Ids steckt - kodiert, siehe
+#: encode().
+BASE_ORDER = "SBIP-1"
+
+
+def encode(text):
+    """Kodiert Text für eine Id, wie ETS und Kaenx-Creator es tun.
+
+    Jedes Sonderzeichen wird zu einem Punkt und seinem Hexcode, "-" also zu
+    ".2D". Der Punkt zuerst, sonst würde er in den bereits eingesetzten
+    Codes noch einmal ersetzt. Kaenx-Creator sucht den Katalogeintrag beim
+    Import über genau diese Form der Bestellnummer.
+    """
+    out = text.replace(".", ".2E")
+    for char in "% !\"#$&()+,-/:;<=>?@[\\]{|}":
+        out = out.replace(char, ".%02X" % ord(char))
+    return out.replace("^", ".5E").replace("_", ".5F")
+
+
+def bus_interfaces(app_id, count):
+    """Ein Tunnel-Zugangspunkt je verwalteter Tunneladresse."""
+    lines = ['              <BusInterface Id="%s_BI-%d" AddressIndex="%d" '
+             'AccessType="Tunneling" Text="Tunnel %d" />' % (app_id, i, i, i)
+             for i in range(1, count + 1)]
+    return "<BusInterfaces>\n%s\n            </BusInterfaces>" % "\n".join(lines)
+
+
 def attribute(text, name, value):
     """Ersetzt jedes name="..." durch den neuen Wert."""
     pattern = re.compile(r'(\b%s=")[^"]*(")' % re.escape(name))
@@ -85,9 +112,18 @@ def build(args):
         text = attribute(text, "AdditionalAddressesCount", args.tunnels)
         text = attribute(text, "VersionNumber", args.device_version)
 
-        if args.order:
-            text = attribute(text, "OrderNumber", args.order)
-            text = attribute(text, "Number", args.order)
+        # Die Liste der Zugangspunkte muss so lang sein, wie
+        # AdditionalAddressesCount ansagt.
+        app_id = "%s_A-%04X-%02X-0000" % (folder, args.app, args.app_version)
+        text = re.sub(r"<BusInterfaces>.*?</BusInterfaces>",
+                      lambda m: bus_interfaces(app_id, args.tunnels),
+                      text, flags=re.S)
+
+        # Die Bestellnummer steht einmal im Klartext und mehrfach kodiert in
+        # den Ids von Produkt und Katalogeintrag. Nur OrderNumber, nicht
+        # jedes Number=: das der Katalogsektion ist deren eigene Nummer.
+        text = attribute(text, "OrderNumber", args.order)
+        text = text.replace(encode(BASE_ORDER), encode(args.order))
 
         target = name.replace("M-%04X" % BASE_MANUFACTURER, folder)
         files["%s/%s" % (folder, target)] = text
