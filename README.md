@@ -2374,6 +2374,38 @@ in `sendFrameToTunnel()` erstmals etwas bewirkt.
 > ein Zeitproblem. Und eine Funktion, die einen Fehler meldet und danach
 > Erfolg zurückgibt, verhindert jede Reaktion darauf.
 
+#### Die andere Hälfte: Multicast
+
+Derselbe Fehler, umgekehrt ausgelöst. Die ETS programmierte über
+KNXnet/IP-Routing, und der Download scheiterte genau dann, wenn im Dashboard
+der Busmonitor mitlief. Ohne ihn kam sie weiter.
+
+`sendBytesMultiCast()` sah sich das Ergebnis gar nicht erst an:
+
+```cpp
+_udp.beginMulticastPacket();
+_udp.write(buffer, len);
+_udp.endPacket();
+return true;
+```
+
+Der Monitor lud beim Mitverfolgen alle anderthalb Sekunden seine neuesten
+400 Telegramme komplett neu, rund 100 KB, so schnell der ESP32 senden konnte.
+Das füllte die Sendepuffer, `sendto()` wies die Antworten an die ETS ab, und
+die ETS wartete, bis sie aufgab. Sichtbar war davon nichts: Der Busmonitor
+trägt einen Rahmen **vor** dem Senden ein, er stand also als „TX“ da, und die
+Ablehnung meldete das Framework über `log_e()` nur auf der seriellen
+Schnittstelle.
+
+Behoben ist es an beiden Enden. Patch 9b wiederholt einen abgelehnten
+Multicast-Rahmen wie Patch 9 einen Unicast und schreibt ins Protokoll, wenn
+auch das scheitert. Und Busmonitor wie Protokollfenster holen beim
+Mitverfolgen nur noch, was seit dem letzten Abruf dazugekommen ist.
+
+> Ein „TX“ im Busmonitor heißt: Die Firmware hat den Rahmen abgeschickt, nicht
+> dass er das Gerät verlassen hat. Steht im Protokoll `sbip: a multicast frame
+> was refused three times and is lost`, ist genau das passiert.
+
 ### Den KNX-Stack mitlesen: `*_trace`
 
 Der Stack entscheidet vieles im Stillen – an welchen Tunnel ein Rahmen geht,

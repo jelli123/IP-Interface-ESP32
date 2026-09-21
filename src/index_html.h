@@ -2451,9 +2451,82 @@ function setFollow(on){
 
 function toggleFollow(){ setFollow(!logFollow); }
 
+/*
+ * Mitverfolgen haengt nur an, was seit dem letzten Abruf geschrieben wurde.
+ *
+ * Vorher lud jede Runde das ganze Fenster neu, 48 KB alle drei Sekunden -
+ * dieselbe Art Verkehr, mit der der Busmonitor dem ESP32 die Sendepuffer
+ * gefuellt hat, siehe monAppend().
+ *
+ * Gerechnet wird in Byte, weil logFrom und logWritten Positionen im Ring des
+ * Geraets sind; ein Umlaut ist dort zwei davon.
+ */
+async function logAppend(){
+  if(logBusy) return;
+
+  const box = $('logText');
+  const enc = new TextEncoder();
+  const shown = enc.encode(box.textContent);
+
+  // Das Fensterende steht im gezeigten Text, nicht in X-Log-Written: den
+  // Kopf rechnet das Geraet vor dem Streamen aus, und solange das Protokoll
+  // kuerzer als das Fenster ist, kann der Text weiter reichen als er.
+  const end = logFrom + shown.length;
+
+  // Nur anhaengen, wenn das Fenster wirklich bis zum Ende reicht.
+  if(!shown.length || end < logWritten){
+    await loadWindow(null, 'end');
+    return;
+  }
+
+  logBusy = true;
+  let r, text;
+  try {
+    r = await fetch('/api/log?bytes=' + LOG_WIN + '&from=' + end);
+    text = await r.text();
+  }
+  catch(e){ return; }
+  finally { logBusy = false; }
+
+  // Hat der Ring das Fensterende inzwischen ueberschrieben, fehlt ein Stueck
+  // - dann einmal ganz neu laden, statt eine Luecke zu zeigen.
+  if(Number(r.headers.get('X-Log-From') || 0) !== end){
+    await loadWindow(null, 'end');
+    return;
+  }
+
+  logWritten = end;
+  logOldest  = Number(r.headers.get('X-Log-Oldest') || 0);
+
+  if(text){
+    const added = enc.encode(text);
+    let buf = new Uint8Array(shown.length + added.length);
+    buf.set(shown);
+    buf.set(added, shown.length);
+
+    // Vorne kuerzen, an einer Zeilengrenze: ein Zeilenumbruch ist in UTF-8
+    // immer ein ganzes Zeichen, dort wird nichts zerschnitten.
+    let from = logFrom;
+    if(buf.length > LOG_WIN){
+      let cut = buf.length - LOG_WIN;
+      const nl = buf.indexOf(10, cut);
+      if(nl >= 0) cut = nl + 1;
+      buf = buf.subarray(cut);
+      from += cut;
+    }
+
+    box.textContent = new TextDecoder().decode(buf);
+    box.scrollTop = box.scrollHeight;
+    logFrom = from;
+    logWritten = from + buf.length;
+  }
+
+  logInfoUpdate();
+}
+
 async function logTick(){
   if(!logDlg.open || !logFollow){ logTimer = null; return; }
-  await loadWindow(null, 'end');
+  await logAppend();
   logTimer = setTimeout(logTick, 3000);
 }
 
@@ -2955,9 +3028,48 @@ function monSetFollow(on){
 
 function monToggleFollow(){ monSetFollow(!monFollow); }
 
+/*
+ * Mitverfolgen holt nur, was seit dem letzten Telegramm dazugekommen ist.
+ *
+ * Vorher lud jede Runde die neuesten 400 Telegramme komplett neu - rund
+ * 100 KB alle anderthalb Sekunden, so schnell der ESP32 senden kann. Das hat
+ * ihm die Sendepuffer gefuellt, und genau dann lehnte der Treiber die
+ * Antworten an eine ETS ab, die ueber Routing programmierte: offener Monitor,
+ * abgebrochener Download.
+ */
+async function monAppend(){
+  if(monBusy) return;
+
+  const s = await monRefresh();
+  if(!s || !s.available) return;
+
+  const next = monRows.length ? monRows[monRows.length - 1].s + 1 : -1;
+
+  // Leer, geleert oder vom Ring ueberholt: dann einmal ganz laden.
+  if(next < 0 || next < s.oldest || next > s.written){ await monLoad(1); return; }
+  if(next === s.written) return;   // nichts Neues, keine Anfrage
+
+  monBusy = true;
+  const gen = monGen;
+  try {
+    const rows = await (await fetch('/api/monitor/frames?max=' + MON_WIN
+                                    + '&from=' + next)).json();
+    if(gen !== monGen) return;
+
+    const fresh = rows.filter(r => r.s >= next);
+    if(!fresh.length) return;
+
+    monRows = monRows.concat(fresh);
+    if(monRows.length > MON_WIN) monRows = monRows.slice(monRows.length - MON_WIN);
+    monRender('end');
+  }
+  catch(e){}
+  finally { monBusy = false; }
+}
+
 async function monTick(){
   if(!monDlg.open || !monFollow){ monTimer = null; return; }
-  await monLoad(1);
+  await monAppend();
   monTimer = setTimeout(monTick, 1500);
 }
 

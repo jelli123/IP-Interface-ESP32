@@ -41,7 +41,7 @@ E-Mail sind Platzhalter – vor dem Einreichen `git commit --amend --reset-autho
 | 1 | Antwort geht an einen geschlossenen Tunnelkanal | Fehler | `0001` |
 | 2 | Zeiger auf ein totes Stack-Array | undefiniertes Verhalten | `0002` |
 | 3 | `isTunnelingPA()` dereferenziert einen Nullzeiger | Absturz | `0003` |
-| 4 | `sendBytesUniCast()` meldet Erfolg nach einem Fehlschlag | Fehler | `0004` |
+| 4 | `sendBytesUniCast()` und `sendBytesMultiCast()` melden Erfolg nach einem Fehlschlag | Fehler | `0004` (nur Unicast) |
 | 5 | `propertyValueRead()` gibt uninitialisierten Heap heraus | Fehler | `0005` |
 | 6 | `_couplerType` ohne definierten Wert | undefiniertes Verhalten | `0006` |
 | 7 | Unprogrammiert unbrauchbar als reine Schnittstelle | Entwurf | – |
@@ -183,6 +183,23 @@ Paket überhaupt beginnt.
 Diese Firmware geht über den Patch hinaus und wiederholt bis zu dreimal im
 Abstand von 400 µs, bevor sie aufgibt – das ist eine Anwendungsentscheidung und
 steht bewusst nicht im Vorschlag.
+
+**Multicast hat denselben Fehler, stiller.** `sendBytesMultiCast()` in
+`esp32_platform.cpp` wertet `endPacket()` gar nicht aus:
+
+```cpp
+_udp.beginMulticastPacket();
+_udp.write(buffer, len);
+_udp.endPacket();
+return true;
+```
+
+Aufgefallen beim Download über KNXnet/IP-Routing, während ein großer
+HTTP-Transfer die Sendepuffer belegte: Die Antworten an die ETS wurden
+abgewiesen, und nichts meldete es. Diese Firmware wiederholt auch hier
+(Patch 9b in `scripts/patch_knx.py`). Der Vorschlag `0004` deckt bisher nur
+Unicast ab; die Multicast-Hälfte gehört mit hinein, bevor er eingereicht
+wird.
 
 ---
 

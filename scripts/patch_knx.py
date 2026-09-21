@@ -1081,6 +1081,101 @@ patch_udp_retry()
 
 
 # --------------------------------------------------------------------------
+# 9b. The same for the routing multicast
+# --------------------------------------------------------------------------
+#
+# Patch 9 covered the tunnel. sendBytesMultiCast() had the same flaw in an
+# even quieter form - it did not look at endPacket() at all:
+#
+#     _udp.beginMulticastPacket();
+#     _udp.write(buffer, len);
+#     _udp.endPacket();
+#     return true;
+#
+# Found with ETS downloading over KNXnet/IP routing while the dashboard's bus
+# monitor was open. The monitor streamed its window every one and a half
+# seconds, that filled the transmit buffers, and the answers to ETS were
+# refused by sendto(). The bus monitor still listed them as sent - its hook
+# runs before sendFrame() - and the refusal went to log_e() on the serial
+# port only, so nothing in the dashboard showed it. ETS waited for an answer
+# that never left and gave up: "device not reachable".
+#
+# Same remedy, same pause, and the loss now reaches the log.
+
+MCAST_MARKER = "// sbip: the multicast is refused under a burst as well"
+
+MCAST_ANCHOR = (
+    "bool Esp32Platform::sendBytesMultiCast(uint8_t* buffer, uint16_t len)\n"
+    "{\n"
+    "    //printHex(\"<- \",buffer, len);\n"
+    "    _udp.beginMulticastPacket();\n"
+    "    _udp.write(buffer, len);\n"
+    "    _udp.endPacket();\n"
+    "    return true;\n"
+    "}\n"
+)
+
+MCAST_NEW = (
+    "bool Esp32Platform::sendBytesMultiCast(uint8_t* buffer, uint16_t len)\n"
+    "{\n"
+    "    " + MCAST_MARKER + "\n"
+    "    // - see patch 9b in scripts/patch_knx.py.\n"
+    "    for (uint8_t sbipTry = 0; sbipTry < 3; sbipTry++)\n"
+    "    {\n"
+    "        if (sbipTry > 0)\n"
+    "            delayMicroseconds(400);\n"
+    "\n"
+    "        if (_udp.beginMulticastPacket() != 1)\n"
+    "            continue;\n"
+    "\n"
+    "        _udp.write(buffer, len);\n"
+    "\n"
+    "        if (_udp.endPacket() != 0)\n"
+    "            return true;\n"
+    "    }\n"
+    "\n"
+    '    println("sbip: a multicast frame was refused three times and is lost");\n'
+    "    return false;\n"
+    "}\n"
+)
+
+
+def patch_mcast_retry():
+    platform_c = os.path.join(
+        env["PROJECT_LIBDEPS_DIR"],  # noqa: F821
+        env["PIOENV"],  # noqa: F821
+        "knx",
+        "src",
+        "esp32_platform.cpp",
+    )
+
+    if not os.path.isfile(platform_c):
+        return
+
+    with open(platform_c, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if MCAST_MARKER in source:
+        return
+
+    if source.count(MCAST_ANCHOR) != 1:
+        sys.stderr.write(
+            "patch_knx.py: anchor no longer unique, a multicast frame the "
+            "network driver refuses stays lost - ETS over routing will miss "
+            "answers under load:\n  %s\n" % MCAST_ANCHOR.strip().splitlines()[0]
+        )
+        return
+
+    with open(platform_c, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source.replace(MCAST_ANCHOR, MCAST_NEW))
+
+    print("patch_knx.py: UDP multicast retry applied to esp32_platform.cpp")
+
+
+patch_mcast_retry()
+
+
+# --------------------------------------------------------------------------
 # 10. Reach devices outside our own line while unprogrammed
 # --------------------------------------------------------------------------
 #
