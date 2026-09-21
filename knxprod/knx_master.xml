@@ -1,0 +1,256 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Auszug aus den KNX-Stammdaten: nur die Maske MV-091A, unveraendert aus
+  knx_master.xml (MasterData Version 1225, Schema project/14).
+
+  Ein Applikationsprogramm mit LoadProcedureStyle="MergedProcedure" bringt
+  seine Ladeprozedur nicht selbst mit - sie steht in der Maskendefinition,
+  und die Applikation steuert nur die Fragmente fuer deren LdCtrlMerge-
+  Stellen bei. Die ETS hat die Stammdaten eingebaut, andere Werkzeuge
+  (SB-Project etwa) lesen sie aus dem Archiv, so wie jede knxprod eines
+  Herstellers sie mitbringt. Ohne diese Datei gibt es dort keine
+  Ladeprozedur und damit auch keine Filtertabelle.
+
+  Der Rest der Stammdaten - Medien, DPTs, Hersteller, Sprachen - wird fuer
+  dieses Produkt nicht gebraucht und bliebe ein halbes Megabyte Ballast.
+  Ein Werkzeug, das signiert, legt ohnehin seine eigene Fassung bei.
+
+  Die Maske kennt zwei Fassungen. Welche gilt, entscheidet die Option
+  LineCoupler0912NewProgrammingStyle der Applikation: diese Firmware braucht
+  die neue, die Filtertabelle und Kopplereinstellungen ueber das
+  Router-Objekt (Objekttyp 6) laedt. Die alte schreibt BCU1-Speicher an
+  270h und 282h, den es hier nicht gibt.
+-->
+<KNX xmlns="http://knx.org/xml/project/14">
+  <MasterData Id="MD-1" Version="1225">
+    <MaskVersions>
+      <MaskVersion Id="MV-091A" MaskVersion="2330" Name="Coupler 091A" ManagementModel="Bcu1" MediumTypeRefId="MT-0">
+        <DownwardCompatibleMasks>
+          <DownwardCompatibleMask RefId="MV-0910" />
+          <DownwardCompatibleMask RefId="MV-0911" />
+          <DownwardCompatibleMask RefId="MV-0912" />
+        </DownwardCompatibleMasks>
+        <!-- This version is for application programs with LineCoupler0912NewProgrammingStyle = false.
+        -->
+        <HawkConfigurationData LegacyVersion="1">
+          <Features>
+            <Feature Name="RestartTime" Value="5000" />
+            <Feature Name="UnloadedIndividualAddress" Value="65280" />
+            <Feature Name="VerifyMode" Value="1" />
+          </Features>
+          <Resources>
+            <Resource Name="ManagementStyle" Access="remote local2">
+              <Location AddressSpace="Constant" StartAddress="1" />
+              <ResourceType Length="1" />
+              <AccessRights Read="Runtime" Write="None" />
+            </Resource>
+            <Resource Name="GroupFilterTable" Access="remote local2">
+              <Location AddressSpace="LcFilterMemory" StartAddress="512" />
+              <ResourceType Length="3584" />
+              <AccessRights Read="Runtime" Write="Configuration" />
+            </Resource>
+            <Resource Name="ProgrammingMode" Access="remote local2">
+              <Location AddressSpace="StandardMemory" StartAddress="96" />
+              <ResourceType Length="1" Flavour="ProgrammingMode_Bcu1" />
+              <AccessRights Read="Runtime" Write="Configuration" />
+            </Resource>
+            <Resource Name="IndividualAddress" Access="local1">
+              <Location AddressSpace="StandardMemory" StartAddress="279" />
+              <ResourceType Length="2" />
+              <AccessRights Read="Runtime" Write="Configuration" />
+            </Resource>
+            <Resource Name="MaxRoutingApduLength" Access="remote">
+              <Location AddressSpace="Property" InterfaceObjectRef="6" PropertyID="58" StartAddress="0" />
+              <ResourceType Length="2" />
+              <AccessRights Read="Runtime" Write="None" />
+            </Resource>
+          </Resources>
+          <Procedures>
+            <Procedure ProcedureType="Load" ProcedureSubType="all" Access="remote local2">
+              <LdCtrlConnect />
+              <LdCtrlSetControlVariable Name="EnableVerifyOnWriteDirect" Value="true" />
+              <LdCtrlWriteMem Address="270" Size="8" Verify="true" />
+              <LdCtrlWriteMem Address="282" Size="229" Verify="true" />
+              <LdCtrlWriteMem AddressSpace="LcSlave" Address="270" Size="8" Verify="true" />
+              <LdCtrlWriteMem AddressSpace="LcSlave" Address="282" Size="229" Verify="true" />
+              <LdCtrlWriteMem Address="269" Size="1" Verify="true" InlineData="FF" />
+              <LdCtrlWriteMem Address="269" Size="1" Verify="true" InlineData="FF" AddressSpace="LcSlave" />
+              <LdCtrlClearLCFilterTable />
+              <LdCtrlWriteMem AddressSpace="LcFilter" Address="512" Size="3584" Verify="true" />
+              <LdCtrlDisconnect />
+              <LdCtrlDelay MilliSeconds="400" />
+            </Procedure>
+            <Procedure ProcedureType="Load" ProcedureSubType="par" Access="remote local2">
+              <LdCtrlConnect />
+              <LdCtrlSetControlVariable Name="EnableVerifyOnWriteDirect" Value="true" />
+              <LdCtrlWriteMem Address="270" Size="8" Verify="true" />
+              <LdCtrlWriteMem Address="282" Size="229" Verify="true" />
+              <LdCtrlWriteMem AddressSpace="LcSlave" Address="270" Size="8" Verify="true" />
+              <LdCtrlWriteMem AddressSpace="LcSlave" Address="282" Size="229" Verify="true" />
+              <LdCtrlWriteMem Address="269" Size="1" Verify="true" InlineData="FF" />
+              <LdCtrlWriteMem Address="269" Size="1" Verify="true" InlineData="FF" AddressSpace="LcSlave" />
+              <LdCtrlDisconnect />
+            </Procedure>
+          </Procedures>
+          <MemorySegments>
+            <MemorySegment MemoryType="EEPROM" Length="256">
+              <Location AddressSpace="StandardMemory" StartAddress="256" />
+              <AccessRights Read="Configuration" Write="Configuration" />
+            </MemorySegment>
+            <MemorySegment MemoryType="EEPROM" Length="256">
+              <Location AddressSpace="LcSlaveMemory" StartAddress="256" />
+              <AccessRights Read="Configuration" Write="Configuration" />
+            </MemorySegment>
+            <MemorySegment MemoryType="EEPROM" Length="3584">
+              <Location AddressSpace="LcFilterMemory" StartAddress="512" />
+              <AccessRights Read="Configuration" Write="Configuration" />
+            </MemorySegment>
+          </MemorySegments>
+        </HawkConfigurationData>
+        <!-- This version is for application programs with LineCoupler0912NewProgrammingStyle = true.
+        -->
+        <HawkConfigurationData>
+          <Features>
+            <Feature Name="RestartTime" Value="5000" />
+            <Feature Name="UnloadedIndividualAddress" Value="65280" />
+            <Feature Name="PropertyMappedLsms" Value="1" />
+            <Feature Name="VerifyMode" Value="1" />
+          </Features>
+          <Resources>
+            <Resource Name="ManagementStyle" Access="remote local2">
+              <Location AddressSpace="Constant" StartAddress="2" />
+              <ResourceType Length="1" />
+              <AccessRights Read="Runtime" Write="None" />
+            </Resource>
+            <Resource Name="GroupFilterTable" Access="remote local2">
+              <Location AddressSpace="LcFilterMemory" StartAddress="512" />
+              <ResourceType Length="8192" />
+              <AccessRights Read="Runtime" Write="Configuration" />
+            </Resource>
+            <Resource Name="ProgrammingMode" Access="remote local2">
+              <Location AddressSpace="SystemProperty" InterfaceObjectRef="0" PropertyID="54" StartAddress="0" />
+              <ResourceType Length="1" Flavour="ProgrammingMode_Prop" />
+              <AccessRights Read="Runtime" Write="Configuration" />
+            </Resource>
+            <Resource Name="DeviceSerialNumber" Access="remote local2">
+              <Location AddressSpace="SystemProperty" InterfaceObjectRef="0" PropertyID="11" StartAddress="0" />
+              <ResourceType Length="6" />
+              <AccessRights Read="Runtime" Write="Manufacturer" />
+            </Resource>
+            <Resource Name="MaxApduLength" Access="remote local2">
+              <Location AddressSpace="SystemProperty" InterfaceObjectRef="0" PropertyID="56" StartAddress="0" />
+              <ResourceType Length="2" />
+              <AccessRights Read="Runtime" Write="None" />
+            </Resource>
+            <Resource Name="RunError" Access="remote local2">
+              <Location AddressSpace="SystemProperty" InterfaceObjectRef="0" PropertyID="53" StartAddress="0" />
+              <ResourceType Length="1" Flavour="Runerror_Bcu1" />
+              <AccessRights Read="Runtime" Write="Configuration" />
+            </Resource>
+            <Resource Name="GroupFilterTableLoadControl" Access="remote local2">
+              <Location AddressSpace="Property" InterfaceObjectRef="6" PropertyID="5" StartAddress="0" />
+              <ResourceType Length="10" Flavour="LoadControl_Bcu2" />
+              <AccessRights Read="None" Write="Configuration" />
+            </Resource>
+            <Resource Name="GroupFilterTableLoadStatus" Access="remote local2">
+              <Location AddressSpace="Property" InterfaceObjectRef="6" PropertyID="5" StartAddress="0" />
+              <ResourceType Length="1" Flavour="LoadControl_Bcu2" />
+              <AccessRights Read="Runtime" Write="None" />
+            </Resource>
+            <Resource Name="MainLcConfig" Access="remote local2">
+              <Location AddressSpace="Property" InterfaceObjectRef="6" PropertyID="52" StartAddress="0" />
+              <ResourceType Length="1" Flavour="Lc_12" />
+              <AccessRights Read="Runtime" Write="Configuration" />
+            </Resource>
+            <Resource Name="SubLcConfig" Access="remote local2">
+              <Location AddressSpace="Property" InterfaceObjectRef="6" PropertyID="53" StartAddress="0" />
+              <ResourceType Length="1" Flavour="Lc_12" />
+              <AccessRights Read="Runtime" Write="Configuration" />
+            </Resource>
+            <Resource Name="MainLcGrpConfig" Access="remote local2">
+              <Location AddressSpace="Property" InterfaceObjectRef="6" PropertyID="54" StartAddress="0" />
+              <ResourceType Length="1" Flavour="Lc_12" />
+              <AccessRights Read="Runtime" Write="Configuration" />
+            </Resource>
+            <Resource Name="SubLcGrpConfig" Access="remote local2">
+              <Location AddressSpace="Property" InterfaceObjectRef="6" PropertyID="55" StartAddress="0" />
+              <ResourceType Length="1" Flavour="Lc_12" />
+              <AccessRights Read="Runtime" Write="Configuration" />
+            </Resource>
+            <Resource Name="CouplServControl" Access="remote local2">
+              <Location AddressSpace="Property" InterfaceObjectRef="6" PropertyID="57" StartAddress="0" />
+              <ResourceType Length="1" Flavour="Lc_12" />
+              <AccessRights Read="Runtime" Write="Configuration" />
+            </Resource>
+            <Resource Name="MaxRoutingApduLength" Access="remote local2">
+              <Location AddressSpace="Property" InterfaceObjectRef="6" PropertyID="58" StartAddress="0" />
+              <ResourceType Length="2" />
+              <AccessRights Read="Runtime" Write="None" />
+            </Resource>
+          </Resources>
+          <Procedures>
+            <Procedure ProcedureType="Load" ProcedureSubType="all" Access="remote local2">
+              <LdCtrlConnect />
+              <LdCtrlMerge MergeId="1" />
+              <LdCtrlUnload ObjType="6" />
+              <LdCtrlMerge MergeId="2" />
+              <LdCtrlLoad ObjType="6" />
+              <LdCtrlWriteProp ObjType="6" PropId="52" Verify="true" InlineData="77" />
+              <LdCtrlWriteProp ObjType="6" PropId="53" Verify="true" InlineData="77" />
+              <LdCtrlWriteProp ObjType="6" PropId="54" Verify="true" InlineData="17" />
+              <LdCtrlWriteProp ObjType="6" PropId="55" Verify="true" InlineData="17" />
+              <LdCtrlMerge MergeId="3" />
+              <LdCtrlClearLCFilterTable UseFunctionProp="true" />
+              <LdCtrlWriteMem AddressSpace="LcFilter" Address="512" Size="8192" Verify="true" />
+              <LdCtrlLoadCompleted ObjType="6" />
+              <LdCtrlMerge MergeId="4" />
+              <LdCtrlRestart />
+            </Procedure>
+            <Procedure ProcedureType="Load" ProcedureSubType="par" Access="remote local2">
+              <LdCtrlConnect />
+              <LdCtrlMerge MergeId="1" />
+              <LdCtrlLoad ObjType="6" />
+              <LdCtrlWriteProp ObjType="6" PropId="52" Verify="true" InlineData="77" />
+              <LdCtrlWriteProp ObjType="6" PropId="53" Verify="true" InlineData="77" />
+              <LdCtrlWriteProp ObjType="6" PropId="54" Verify="true" InlineData="17" />
+              <LdCtrlWriteProp ObjType="6" PropId="55" Verify="true" InlineData="17" />
+              <LdCtrlMerge MergeId="3" />
+              <LdCtrlLoadCompleted ObjType="6" />
+              <LdCtrlMerge MergeId="4" />
+              <LdCtrlRestart />
+            </Procedure>
+            <Procedure ProcedureType="Load" ProcedureSubType="grp" Access="remote local2">
+              <LdCtrlConnect />
+              <LdCtrlMerge MergeId="1" />
+              <LdCtrlLoad ObjType="6" />
+              <LdCtrlClearLCFilterTable UseFunctionProp="true" />
+              <LdCtrlWriteMem AddressSpace="LcFilter" Address="512" Size="8192" Verify="true" />
+              <LdCtrlLoadCompleted ObjType="6" />
+              <LdCtrlDisconnect />
+            </Procedure>
+            <Procedure ProcedureType="Load" ProcedureSubType="cfg" Access="remote local2">
+              <LdCtrlConnect />
+              <LdCtrlMerge MergeId="1" />
+              <LdCtrlLoad ObjType="6" />
+              <LdCtrlMerge MergeId="3" />
+              <LdCtrlLoadCompleted ObjType="6" />
+              <LdCtrlMerge MergeId="4" />
+              <LdCtrlRestart />
+            </Procedure>
+            <Procedure ProcedureType="Unload" ProcedureSubType="all" Access="remote local2">
+              <LdCtrlConnect />
+              <LdCtrlMerge MergeId="5" />
+              <LdCtrlDisconnect />
+            </Procedure>
+          </Procedures>
+          <MemorySegments>
+            <MemorySegment MemoryType="EEPROM" Length="8192">
+              <Location AddressSpace="LcFilterMemory" StartAddress="512" />
+              <AccessRights Read="Configuration" Write="Configuration" />
+            </MemorySegment>
+          </MemorySegments>
+        </HawkConfigurationData>
+      </MaskVersion>
+    </MaskVersions>
+  </MasterData>
+</KNX>

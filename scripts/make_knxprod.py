@@ -6,9 +6,12 @@ Kein PlatformIO-Skript - von Hand aufzurufen:
     python3 scripts/make_knxprod.py
     python3 scripts/make_knxprod.py --tunnels 5 --identity sbip-identity.json
 
-Eine .knxprod ist ein ZIP-Archiv mit den XML-Dateien eines Herstellers. Mehr
-braucht es nicht, damit das Gerät und die Datei zueinander passen - und mehr
-kann dieses Skript auch nicht: Eine **Signatur** kann es nicht erzeugen, die
+Eine .knxprod ist ein ZIP-Archiv mit den XML-Dateien eines Herstellers und,
+im Wurzelverzeichnis, den Stammdaten (knx_master.xml). Von denen liegt hier
+nur die Maske MV-091A bei: Sie trägt die Ladeprozedur, die das
+Applikationsprogramm per MergedProcedure übernimmt. Mehr braucht es nicht,
+damit das Gerät und die Datei zueinander passen - und mehr kann dieses Skript
+auch nicht: Eine **Signatur** kann es nicht erzeugen, die
 verlangt die ETS-Bibliotheken. Ohne Signatur nimmt die ETS die Datei nicht an;
 Werkzeuge wie SB-Project prüfen sie nicht und kommen damit zurecht. Zum
 Signieren die XML-Dateien in Kaenx-Creator oder OpenKNXproducer geben.
@@ -28,6 +31,10 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 SOURCE = os.path.join(ROOT, "knxprod")
+
+#: Stammdaten, unverändert in die Wurzel des Archivs. Ohne sie findet ein
+#: Werkzeug außer der ETS keine Ladeprozedur für die Maske.
+MASTER = "knx_master.xml"
 
 # Was in den mitgelieferten XML-Dateien steht. Alles andere leitet sich per
 # Ersetzung daraus ab, damit die drei Dateien untereinander stimmig bleiben.
@@ -65,6 +72,14 @@ def build(args):
             "-%04X-%02X-0000" % (args.app, args.app_version),
         )
 
+        # Die Herstellerprüfung der Ladeprozedur vergleicht mit dem
+        # Hersteller, für den gebaut wird - sonst lehnt der Download genau
+        # das Gerät ab, zu dem die Datei gehört.
+        text = re.sub(r'(<LdCtrlCompareProp ObjIdx="0" PropId="12" InlineData=")'
+                      r'[0-9A-Fa-f]{4}(")',
+                      lambda m: m.group(1) + "%04X" % args.manufacturer + m.group(2),
+                      text)
+
         text = attribute(text, "ApplicationNumber", args.app)
         text = attribute(text, "ApplicationVersion", args.app_version)
         text = attribute(text, "AdditionalAddressesCount", args.tunnels)
@@ -76,6 +91,10 @@ def build(args):
 
         target = name.replace("M-%04X" % BASE_MANUFACTURER, folder)
         files["%s/%s" % (folder, target)] = text
+
+    # Herstellerunabhängig, also ohne jede Ersetzung.
+    with open(os.path.join(SOURCE, MASTER), encoding="utf-8") as handle:
+        files[MASTER] = handle.read()
 
     return files
 

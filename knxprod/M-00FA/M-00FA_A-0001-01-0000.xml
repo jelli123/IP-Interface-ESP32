@@ -11,8 +11,15 @@
   ueber ihr Web-Dashboard eingestellt, nicht ueber die ETS. Was die ETS an
   einem Koppler der Maske 091A einstellt - Filtertabelle und Weiterleitung -
   schreibt sie ueber das Kopplerobjekt, nicht ueber Applikationsparameter.
-  Die Ladeprozedur schreibt deshalb keine einzige Property; jede, die sie
-  schreiben wuerde, muesste es im Stack geben.
+
+  Die Ladeprozedur dafuer steht in der Maske, nicht hier (MergedProcedure,
+  siehe ../knx_master.xml): Router-Objekt entladen, LCCONFIG setzen,
+  Filtertabelle loeschen und schreiben, Laden abschliessen, Neustart.
+  LineCoupler0912NewProgrammingStyle waehlt die Fassung, die das ueber das
+  Router-Objekt tut - die andere schreibt BCU1-Speicher, den dieser Stack
+  nicht hat. Das Programm selbst steuert nur ein Fragment bei: die Pruefung,
+  dass der Download ein Geraet dieses Herstellers trifft. Jede weitere
+  Property, die es schriebe, muesste es im Stack geben.
 -->
 <KNX xmlns="http://knx.org/xml/project/14">
   <ManufacturerData>
@@ -40,11 +47,17 @@
             <ComObjectTable />
             <ComObjectRefs />
             <LoadProcedures>
-              <LoadProcedure MergeId="2">
-                <LdCtrlConnect />
-                <LdCtrlDisconnect />
+              <!--
+                MergeId 1 steht direkt hinter dem Verbindungsaufbau, vor dem
+                ersten Schreibzugriff. PID_MANUFACTURER_ID des Geraeteobjekts;
+                make_knxprod.py setzt den Wert passend zu dem Hersteller, fuer
+                den es baut.
+              -->
+              <LoadProcedure MergeId="1">
+                <LdCtrlCompareProp ObjIdx="0" PropId="12" InlineData="00FA" />
               </LoadProcedure>
             </LoadProcedures>
+            <Options LineCoupler0912NewProgrammingStyle="true" />
           </Static>
           <Dynamic />
         </ApplicationProgram>

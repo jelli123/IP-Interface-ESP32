@@ -1,9 +1,11 @@
 # Produktdatenbank des Selfbus KNX/IP Interface
 
 Die drei XML-Dateien in `M-00FA/` sind eine vollständige Produktdatenbank:
-Applikationsprogramm, Hardware und Katalogeintrag. Zusammengepackt ergeben sie
-eine `.knxprod` – das Archiv selbst gehört nicht ins Repository, es entsteht
-aus diesen Quellen:
+Applikationsprogramm, Hardware und Katalogeintrag. Dazu kommt `knx_master.xml`,
+ein Auszug aus den KNX-Stammdaten mit der Maske MV-091A – er landet in der
+Wurzel des Archivs und trägt die Ladeprozedur, die das Applikationsprogramm
+übernimmt. Zusammengepackt ergeben sie eine `.knxprod` – das Archiv selbst
+gehört nicht ins Repository, es entsteht aus diesen Quellen:
 
 ```
 python3 ../scripts/make_knxprod.py --identity sbip-identity.json

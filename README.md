@@ -2534,7 +2534,8 @@ das der erste Wert, an dem zu drehen ist.
 
 In `knxprod/` liegt eine Produktdatenbank auf Selfbus-Basis, ohne Bezug auf
 einen fremden Hersteller. Sie besteht aus den drei XML-Dateien, aus denen eine
-knxprod besteht, und einem Skript, das sie zusammenpackt:
+knxprod besteht, einem Auszug aus den KNX-Stammdaten und einem Skript, das sie
+zusammenpackt:
 
 ```
 python3 scripts/make_knxprod.py --identity sbip-identity.json
@@ -2555,10 +2556,32 @@ gemeinsam umgeschrieben. Wichtig ist allein, dass `--tunnels` zu
 gleichzeitig über beide Wege pflegbar zu machen, erzeugte nur
 Zustandskonflikte. Und was die ETS an einem Koppler der Maske 091A tatsächlich
 einstellt – Filtertabelle und Weiterleitung – schreibt sie über das
-Kopplerobjekt, nicht über Applikationsparameter. Die Ladeprozedur schreibt
-deshalb keine einzige Property: Was nicht geschrieben wird, kann auch nicht
-fehlschlagen. Die Prüfung im Dashboard meldet zu dieser Datei entsprechend
-nichts.
+Kopplerobjekt, nicht über Applikationsparameter.
+
+**Die Ladeprozedur kommt aus der Maske.** Das Applikationsprogramm ist eine
+`MergedProcedure`: Den Ablauf gibt die Definition von MV-091A in den
+Stammdaten vor, die Applikation füllt nur deren `LdCtrlMerge`-Stellen. Für
+den Download heißt das: Router-Objekt entladen, `LCCONFIG` setzen,
+Filtertabelle löschen und an 200h schreiben, Laden abschließen, Neustart.
+Die Firmware legt die Tabelle genau dort an (`bau091A.cpp`, 200h, 2000h Byte).
+
+Zwei Dinge sind dafür nötig, und beide fehlten anfangs:
+
+* **`knx_master.xml` im Archiv.** Die ETS hat die Stammdaten eingebaut, andere
+  Werkzeuge lesen sie aus der knxprod – jede Herstellerdatei bringt sie mit.
+  Ohne sie meldet SB-Project *„Die Produktdatei enthält keine Ladeprozedur für
+  diese Maske."* Beigelegt ist nur die Maske MV-091A (Stammdaten Version 1225,
+  unverändert), rund 14 KB statt eines halben Megabytes.
+* **`LineCoupler0912NewProgrammingStyle="true"`.** MV-091A hat zwei Fassungen.
+  Ohne die Option gilt die alte, die BCU1-Speicher an 270h und 282h beschreibt
+  – den gibt es in diesem Stack nicht. Die neue lädt alles über das
+  Router-Objekt (Objekttyp 6).
+
+Das Programm selbst steuert ein einziges Fragment bei, an MergeId 1 vor dem
+ersten Schreibzugriff: die Prüfung, dass `PID_MANUFACTURER_ID` des Geräts zum
+Hersteller der Datei passt. `make_knxprod.py` setzt den Wert passend zu
+`--manufacturer`. Die Prüfung im Dashboard sieht nur diesen Schritt – die
+Schritte aus der Maske stehen nicht in der Applikation.
 
 Zwei Einschränkungen, offen benannt:
 
@@ -2574,8 +2597,9 @@ Zwei Einschränkungen, offen benannt:
    Signatur nicht.
 
 > Diese Dateien sind bisher **nicht gegen einen ETS-Import verprobt** worden.
-> Geprüft ist, dass sie wohlgeformt sind, dass das Dashboard sie liest und
-> dass die Werte darin zur Vorgabekennung der Firmware passen. Wenn die ETS
+> Geprüft ist, dass sie wohlgeformt sind, dass das Dashboard sie liest, dass
+> die Werte darin zur Vorgabekennung der Firmware passen und dass die
+> Ladeprozedur der Maske nur Schritte enthält, die SB-Project übersetzen kann. Wenn die ETS
 > beim Import meckert, ist das XML der Ort, an dem nachzubessern ist – eine
 > Datei, kein Firmwarebau.
 
