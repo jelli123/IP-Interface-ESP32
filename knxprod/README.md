@@ -25,6 +25,11 @@ das Gerät bedeutungslos sind:
 * `Static/BusInterfaces` mit einem Eintrag je Tunneladresse, sobald
   `AdditionalAddressesCount` nicht null ist. `make_knxprod.py` schreibt die
   Liste passend zu `--tunnels` neu.
+* Mindestens ein Element im `Dynamic`-Teil, sonst verweigert der Export
+  mit „Dynamic hat keine Elemente“. Hier ist es eine Parameterseite mit nur
+  einem Hinweis: dass das Gerät über sein Web-Dashboard eingestellt wird.
+  Ein Parameter ist das nicht, es bleibt dabei, dass die ETS hier nichts
+  einstellt.
 * Die Bestellnummer **kodiert** in den Ids von Produkt und Katalogeintrag
   (`SBIP-1` als `SBIP.2D1`) – über genau diese Form findet der Import den
   Katalogeintrag.

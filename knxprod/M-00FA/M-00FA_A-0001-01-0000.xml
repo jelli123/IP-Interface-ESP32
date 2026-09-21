@@ -80,7 +80,22 @@
             </BusInterfaces>
             <Options LineCoupler0912NewProgrammingStyle="true" />
           </Static>
-          <Dynamic />
+          <!--
+            Die Parameteransicht der ETS: eine einzige Seite, die sagt, wo
+            dieses Geraet eingestellt wird. Leer darf der Teil nicht bleiben -
+            Kaenx-Creator verweigert den Export ("Dynamic hat keine
+            Elemente"), und eine ETS-Seite ohne jeden Hinweis liesse den
+            Anwender nach Parametern suchen, die es nicht gibt.
+          -->
+          <Dynamic>
+            <ChannelIndependentBlock>
+              <ParameterBlock Id="M-00FA_A-0001-01-0000_PB-1" Name="General" Text="Allgemein">
+                <ParameterSeparator Id="M-00FA_A-0001-01-0000_PS-1"
+                                    Text="Dieses Gerät wird über sein Web-Dashboard eingestellt, erreichbar unter seiner IP-Adresse oder http://&lt;Gerätename&gt;.local. Die ETS vergibt Adressen und lädt die Filtertabelle."
+                                    UIHint="Information" />
+              </ParameterBlock>
+            </ChannelIndependentBlock>
+          </Dynamic>
         </ApplicationProgram>
       </ApplicationPrograms>
     </Manufacturer>
