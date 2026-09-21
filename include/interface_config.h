@@ -293,8 +293,8 @@
  *
  * 0 means "do not charge" and is the only safe default: the firmware cannot
  * see what is fitted on the backup pin, and charging a primary cell - a
- * plain CR2032 - is dangerous. Only 3000, 5000, 9000 and 15000 exist in the
- * chip; anything else falls back to off.
+ * plain CR2032 - is dangerous. The resistors sit inside the RV-3028 and only
+ * 3000, 5000, 9000 and 15000 exist; anything else falls back to off.
  *
  * Set this for a board that carries a supercap or a rechargeable cell, or
  * switch it on per device in the hardware profile.

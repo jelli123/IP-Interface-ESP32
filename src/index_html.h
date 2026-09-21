@@ -883,7 +883,7 @@ small{color:var(--dim)} small.warn{color:var(--warn)}
       <div><label>SDA</label><input id="hwSda" type="number" min="-1"></div>
       <div><label>SCL</label><input id="hwScl" type="number" min="-1"></div>
     </div>
-    <label>Pufferzelle laden (Ladewiderstand)</label>
+    <label>Pufferzelle laden (interner Ladewiderstand)</label>
     <select id="hwRtcChg" onchange="rtcChgPick()">
       <option value="0">aus</option>
       <option value="3000">3 kΩ – größter Ladestrom</option>
@@ -893,11 +893,12 @@ small{color:var(--dim)} small.warn{color:var(--warn)}
     </select>
     <p><small class="warn">Nur einschalten, wenn am Pufferanschluss der RTC
     ein Super-Cap oder ein Akku sitzt.</small></p>
-    <p><small>Die RTC legt VDD dann über den gewählten Widerstand auf diesen
-    Anschluss. Eine gewöhnliche Lithiumzelle (CR2032) ist nicht
-    wiederaufladbar und darf das nicht sehen. Ohne bestückten Puffer bleibt
-    die Einstellung wirkungslos und gehört trotzdem auf „aus“. Der Wert wirkt
-    nach dem nächsten Neustart.</small></p>
+    <p><small>Die RTC legt VDD dann über einen ihrer eingebauten Widerstände
+    auf diesen Anschluss; auf der Platine ist dafür nichts zu bestücken. Eine
+    gewöhnliche Lithiumzelle (CR2032) ist nicht wiederaufladbar und darf das
+    nicht sehen. Ohne bestückten Puffer bleibt die Einstellung wirkungslos
+    und gehört trotzdem auf „aus“. Der Wert wirkt nach dem nächsten
+    Neustart.</small></p>
   </div>
 
   <div class="grp">
@@ -1527,7 +1528,8 @@ const EN = {
 + 'tells the states apart by pattern alone.',
 'LED low-aktiv':'LED active low',
 'RTC über I2C aktivieren':'Enable the RTC on I2C',
-'Pufferzelle laden (Ladewiderstand)':'Charge the backup cell (series resistor)',
+'Pufferzelle laden (interner Ladewiderstand)':
+  'Charge the backup cell (built-in series resistor)',
 '3 kΩ – größter Ladestrom':'3 kΩ – largest charge current',
 '15 kΩ – kleinster Ladestrom':'15 kΩ – smallest charge current',
 'Ladung':'charging', 'ohne Ladung':'not charging',
@@ -1535,14 +1537,16 @@ const EN = {
 + 'Akku sitzt.']:
   'Switch this on only if a supercap or a rechargeable cell sits on the '
 + 'backup pin of the RTC.',
-['Die RTC legt VDD dann über den gewählten Widerstand auf diesen Anschluss. '
-+ 'Eine gewöhnliche Lithiumzelle (CR2032) ist nicht wiederaufladbar und darf '
-+ 'das nicht sehen. Ohne bestückten Puffer bleibt die Einstellung wirkungslos '
-+ 'und gehört trotzdem auf „aus“. Der Wert wirkt nach dem nächsten Neustart.']:
-  'The RTC then puts VDD on that pin through the resistor you pick. An '
-+ 'ordinary lithium cell (CR2032) cannot be recharged and must never see it. '
-+ 'With no backup fitted the setting does nothing, and still belongs on '
-+ '"off". It takes effect after the next restart.',
+['Die RTC legt VDD dann über einen ihrer eingebauten Widerstände auf diesen '
++ 'Anschluss; auf der Platine ist dafür nichts zu bestücken. Eine gewöhnliche '
++ 'Lithiumzelle (CR2032) ist nicht wiederaufladbar und darf das nicht sehen. '
++ 'Ohne bestückten Puffer bleibt die Einstellung wirkungslos und gehört '
++ 'trotzdem auf „aus“. Der Wert wirkt nach dem nächsten Neustart.']:
+  'The RTC then puts VDD on that pin through one of its built-in resistors; '
++ 'nothing has to be fitted on the board for it. An ordinary lithium cell '
++ '(CR2032) cannot be recharged and must never see it. With no backup fitted '
++ 'the setting does nothing, and still belongs on "off". It takes effect '
++ 'after the next restart.',
 ['Laden einschalten?\n\nNur zulässig, wenn am Pufferanschluss der RTC ein '
 + 'Super-Cap oder ein Akku sitzt. Eine nicht wiederaufladbare Zelle kann '
 + 'dabei auslaufen oder bersten.']:

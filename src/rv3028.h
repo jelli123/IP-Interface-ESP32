@@ -33,8 +33,10 @@ enum Rv3028Backup : uint8_t
 /**
  * Trickle charger series resistance, the TCR bit pattern.
  *
- * The charger feeds the backup pin from VDD through this resistor. It is for
- * a supercap or a rechargeable cell; on anything else it has to stay off.
+ * The resistors are inside the chip: the charger feeds the backup pin from
+ * VDD through the one this selects, and nothing is fitted on the board for
+ * it. Only for a supercap or a rechargeable cell; on anything else it has
+ * to stay off.
  */
 enum Rv3028Trickle : uint8_t
 {

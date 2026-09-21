@@ -214,10 +214,12 @@ struct HwProfile
     /**
      * Trickle charger series resistance in ohms, 0 = do not charge.
      *
-     * A property of the board, not of the time server: only the person who
-     * knows what hangs on the backup pin may switch this on. A supercap or a
-     * rechargeable cell wants it, a primary cell must never see it. The chip
-     * has 3000, 5000, 9000 and 15000; other values are rejected.
+     * Names one of the resistors inside the RTC, not one on the board. A
+     * property of the hardware all the same, not of the time server: only
+     * someone who knows what hangs on the backup pin may switch this on. A
+     * supercap or a rechargeable cell wants it, a primary cell must never
+     * see it. The chip has 3000, 5000, 9000 and 15000; other values are
+     * rejected.
      */
     uint16_t rtcChargeOhms = 0;
 

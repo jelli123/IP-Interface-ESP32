@@ -141,7 +141,7 @@ konfigurierbar. Das Dashboard bietet ein Formular, JSON-Upload und -Download.
 | `buttons[]`, `leds[]` | vorhandene Taster und LEDs, siehe *Taster und LEDs* |
 | `button_assign[]`, `led_assign[]` | wozu sie dienen |
 | `i2c_enabled`, `i2c_sda`, `i2c_scl` | RV-3028-C7 |
-| `rtc_charge_ohms` | Ladewiderstand für den Puffer der RTC, `0` = nicht laden |
+| `rtc_charge_ohms` | Ladewiderstand im RV-3028 für dessen Puffer, `0` = nicht laden |
 | `eth_enabled`, `eth_sck`, `eth_miso`, `eth_mosi`, `eth_cs`, `eth_irq`, `eth_rst`, `eth_spi_mhz` | W5500 |
 | `log_kib`, `monitor_kib` | PSRAM für Protokoll und Busmonitor, siehe *PSRAM aufteilen* |
 
@@ -1630,10 +1630,11 @@ Zwei Punkte, die in der Praxis Ärger machen:
 
 #### Puffer laden
 
-Der Trickle-Charger legt VDD über 3, 5, 9 oder 15 kΩ auf den Pufferanschluss.
-Er ist standardmäßig **aus** und gehört ins Hardware-Profil, nicht in die
-Zeitserver-Einstellungen: Ob geladen werden darf, hängt allein daran, was auf
-der Platine sitzt.
+Der Trickle-Charger legt VDD auf den Pufferanschluss – über einen der
+Widerstände **im RV-3028**, wählbar zwischen 3, 5, 9 und 15 kΩ. Auf der
+Platine ist dafür nichts zu bestücken. Er ist standardmäßig **aus** und
+gehört ins Hardware-Profil, nicht in die Zeitserver-Einstellungen: Ob geladen
+werden darf, hängt allein daran, was am Pufferanschluss sitzt.
 
 | Puffer | Einstellung |
 | --- | --- |
