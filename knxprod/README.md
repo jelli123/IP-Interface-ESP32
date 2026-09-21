@@ -29,6 +29,12 @@ das Gerät bedeutungslos sind:
   (`SBIP-1` als `SBIP.2D1`) – über genau diese Form findet der Import den
   Katalogeintrag.
 
+Nach dem Import unter *Allgemeines → Hardware* den Haken **„Gerät ist ein
+Koppler“** setzen. Die Datei trägt `IsCoupler="true"`, aber der Import von
+Kaenx-Creator liest dieses Flag nicht, und der Export schreibt es nur mit
+gesetztem Haken – ohne ihn fehlt es in der signierten knxprod, und die ETS
+sieht ein Endgerät statt eines Kopplers.
+
 Die Frage, ob die Hersteller-ID des Projekts auf `00FA` umgestellt werden
 soll, mit *Ja* beantworten. Sonst exportiert Kaenx-Creator unter einer
 anderen Kennung, und die ETS findet zum Gerät keine passende Datenbank.
