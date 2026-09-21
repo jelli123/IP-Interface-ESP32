@@ -50,8 +50,11 @@
 #endif
 
 /**
- * Manufacturer 0x00FA is the thelsing/knx default and belongs to no
- * registered vendor - fine for own use, not an official identifier.
+ * Manufacturer 0x00FA is the id of the KNX Association itself, which is why
+ * ETS lists such a device under "KNX Association". It is the thelsing/knx
+ * default and what open projects such as OpenKNX build on - there is no
+ * neutral "unknown vendor" id to use instead. The name ETS shows comes from
+ * its own master data, not from our knxprod, so only another id changes it.
  */
 #ifndef SBIP_KNX_MANUFACTURER_ID
 #define SBIP_KNX_MANUFACTURER_ID 0x00FA

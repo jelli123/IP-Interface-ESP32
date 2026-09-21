@@ -2613,9 +2613,15 @@ Schritte aus der Maske stehen nicht in der Applikation.
 
 Zwei Einschränkungen, offen benannt:
 
-1. **Die Herstellerkennung `0x00FA`** ist die Vorgabe des thelsing-Stacks und
-   bei der KNX Association auf niemanden eingetragen. Für den Eigengebrauch
-   reicht sie; ein offiziell registriertes Produkt wird daraus nicht.
+1. **Die Herstellerkennung `0x00FA`** ist die Kennung der KNX Association
+   selbst – deshalb zeigt die ETS als Hersteller „KNX Association“. Den Namen
+   liest sie aus ihren eigenen Stammdaten, nicht aus der knxprod; ändern
+   ließe er sich nur über eine andere Kennung. Eine neutrale Kennung für
+   „unbekannter Hersteller“ gibt es nicht. `0x00FA` ist die Vorgabe des
+   thelsing-Stacks und das, worauf offene Projekte wie OpenKNX aufbauen; für
+   den Eigengebrauch ist das gängig. Ein eigenes, registriertes Produkt wird
+   daraus nicht – dafür bräuchte es eine eigene Kennung, und die vergibt die
+   KNX Association an ihre Mitglieder.
 2. **Unsigniert nimmt die ETS die Datei nicht an.** Das Signieren verlangt die
    ETS-Bibliotheken; `make_knxprod.py` kann es nicht. Die XML-Dateien sind
    aber genau das, was
