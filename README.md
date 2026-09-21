@@ -1644,9 +1644,12 @@ werden darf, hängt allein daran, was am Pufferanschluss sitzt.
 | kein Puffer bestückt | aus |
 
 Eine nicht wiederaufladbare Zelle darf keinen Ladestrom sehen – sie kann
-auslaufen oder bersten. Deshalb fragt das Dashboard beim Einschalten zurück,
-`0` ist der Vorgabewert, und angenommen werden nur die vier Werte, die der
-Baustein wirklich kennt; alles andere wird abgelehnt statt auf den nächsten
+auslaufen oder bersten. Deshalb fragt das Dashboard beim Einschalten zurück:
+im Bearbeiten-Dialog, sobald ein Widerstand gewählt wird, und ebenso bei
+*JSON laden*, wenn die Datei eine Ladung mitbringt – die Platine, für die ein
+Profil geschrieben wurde, muss nicht die sein, auf der es landet. Wer dort
+ablehnt, bekommt das ganze Profil, nur ohne Ladung. `0` ist der Vorgabewert,
+und angenommen werden nur die vier Werte, die der Baustein wirklich kennt; alles andere wird abgelehnt statt auf den nächsten
 Widerstand gerundet. Für eine Platine, die den Puffer immer trägt, setzt
 `-DSBIP_RTC_CHARGE_OHMS=3000` die Vorgabe schon im Image. Das Protokoll nennt
 beim Start, was gilt:

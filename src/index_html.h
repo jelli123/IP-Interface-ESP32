@@ -1547,6 +1547,14 @@ const EN = {
 + '(CR2032) cannot be recharged and must never see it. With no backup fitted '
 + 'the setting does nothing, and still belongs on "off". It takes effect '
 + 'after the next restart.',
+'Die Datei schaltet das Laden der Pufferzelle ein: ':
+  'The file switches charging of the backup cell on: ',
+['Nur zulässig, wenn am Pufferanschluss der RTC ein Super-Cap oder ein Akku '
++ 'sitzt. Eine nicht wiederaufladbare Zelle kann dabei auslaufen oder '
++ 'bersten.\n\nAbbrechen lädt das Profil ohne Ladung.']:
+  'Only allowed if a supercap or a rechargeable cell sits on the backup pin '
++ 'of the RTC. A cell that cannot be recharged may leak or burst.\n\nCancel '
++ 'loads the profile with charging off.',
 ['Laden einschalten?\n\nNur zulässig, wenn am Pufferanschluss der RTC ein '
 + 'Super-Cap oder ein Akku sitzt. Eine nicht wiederaufladbare Zelle kann '
 + 'dabei auslaufen oder bersten.']:
@@ -3838,6 +3846,21 @@ async function hwUpload(){
   let p;
   try { p = JSON.parse(await f.text()); }
   catch(e){ alert(t('Keine gültige JSON-Datei.')); return; }
+
+  /* Eine Datei kann das Laden einschalten, ohne dass jemand den Dialog
+   * gesehen hat - und die Platine, fuer die sie geschrieben wurde, muss
+   * nicht die sein, auf der sie landet. Wer ablehnt, bekommt trotzdem das
+   * ganze Profil, nur eben ohne Ladung: alles andere daran ist harmlos. */
+  if(p.rtc_charge_ohms){
+    const ask = t('Die Datei schaltet das Laden der Pufferzelle ein: ')
+              + (p.rtc_charge_ohms / 1000) + ' kΩ.\n\n'
+              + t('Nur zulässig, wenn am Pufferanschluss der RTC ein Super-Cap '
+                + 'oder ein Akku sitzt. Eine nicht wiederaufladbare Zelle kann '
+                + 'dabei auslaufen oder bersten.\n\nAbbrechen lädt das Profil '
+                + 'ohne Ladung.');
+    if(!confirm(ask)) p.rtc_charge_ohms = 0;
+  }
+
   if(!await hwPost(p)) { hwDlg.showModal(); hwFill(p); }
 }
 
