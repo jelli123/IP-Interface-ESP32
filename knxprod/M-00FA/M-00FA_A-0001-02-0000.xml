@@ -4,8 +4,13 @@
 
   Die Kennungen hier muessen zu denen im Geraet passen - Dashboard, Karte
   "Geraeteidentitaet". Aus dem Dateinamen liest die ETS (und das Dashboard)
-  Hersteller 0x00FA, Applikation 0x0001, Version 0x01; dieselben Zahlen
+  Hersteller 0x00FA, Applikation 0x0001, Version 0x02; dieselben Zahlen
   stehen unten dezimal als ApplicationNumber und ApplicationVersion.
+
+  Version 2, weil sich der Inhalt geaendert hat: Version 1 trug die Liste
+  BusInterfaces (siehe unten). Eine neue Version ist der Weg, auf dem die
+  ETS alte und neue Fassung auseinanderhaelt - gleiche Nummer und Version
+  mit anderem Inhalt fuehrt sie als zwei gleichnamige Applikationen.
 
   Bewusst ohne Parameter und ohne Kommunikationsobjekte: Diese Firmware wird
   ueber ihr Web-Dashboard eingestellt, nicht ueber die ETS. Was die ETS an
@@ -30,12 +35,12 @@
   <ManufacturerData>
     <Manufacturer RefId="M-00FA">
       <ApplicationPrograms>
-        <ApplicationProgram Id="M-00FA_A-0001-01-0000"
+        <ApplicationProgram Id="M-00FA_A-0001-02-0000"
                             ApplicationNumber="1"
-                            ApplicationVersion="1"
+                            ApplicationVersion="2"
                             ProgramType="ApplicationProgram"
                             MaskVersion="MV-091A"
-                            Name="Selfbus KNX/IP 1.0"
+                            Name="Selfbus KNX/IP"
                             LoadProcedureStyle="MergedProcedure"
                             PeiType="0"
                             DefaultLanguage="de-DE"
@@ -66,23 +71,16 @@
               </LoadProcedure>
             </LoadProcedures>
             <!--
-              Ein Zugangspunkt je Tunneladresse, so viele wie
-              AdditionalAddressesCount oben ansagt. Ohne diese Liste bricht
-              der Import in Kaenx-Creator ab, sobald die Zahl nicht null ist.
-              make_knxprod.py schreibt sie passend zu dessen Wert neu.
+              Bewusst ohne Static/BusInterfaces. Mit dieser Liste fuehrt die
+              ETS 6 die Tunnel als Secure-Tunnel und bietet dafuer eine
+              Security-Einstellung an, die dieses Geraet nicht erfuellt.
+              Ohne sie beschreibt AdditionalAddressesCount die Tunnel allein,
+              und die ETS zeigt schlichte zusaetzliche physikalische Adressen
+              - wie bei aelteren Produktdaten derselben Maske.
+              Die Option bus-interfaces von make_knxprod.py fuegt die Liste
+              wieder ein, fuer den Import in Kaenx-Creator, der ohne sie
+              abbricht.
             -->
-            <BusInterfaces>
-              <BusInterface Id="M-00FA_A-0001-01-0000_BI-1" AddressIndex="1" AccessType="Tunneling" Text="Tunnel 1" />
-              <BusInterface Id="M-00FA_A-0001-01-0000_BI-2" AddressIndex="2" AccessType="Tunneling" Text="Tunnel 2" />
-              <BusInterface Id="M-00FA_A-0001-01-0000_BI-3" AddressIndex="3" AccessType="Tunneling" Text="Tunnel 3" />
-              <BusInterface Id="M-00FA_A-0001-01-0000_BI-4" AddressIndex="4" AccessType="Tunneling" Text="Tunnel 4" />
-              <BusInterface Id="M-00FA_A-0001-01-0000_BI-5" AddressIndex="5" AccessType="Tunneling" Text="Tunnel 5" />
-              <BusInterface Id="M-00FA_A-0001-01-0000_BI-6" AddressIndex="6" AccessType="Tunneling" Text="Tunnel 6" />
-              <BusInterface Id="M-00FA_A-0001-01-0000_BI-7" AddressIndex="7" AccessType="Tunneling" Text="Tunnel 7" />
-              <BusInterface Id="M-00FA_A-0001-01-0000_BI-8" AddressIndex="8" AccessType="Tunneling" Text="Tunnel 8" />
-              <BusInterface Id="M-00FA_A-0001-01-0000_BI-9" AddressIndex="9" AccessType="Tunneling" Text="Tunnel 9" />
-              <BusInterface Id="M-00FA_A-0001-01-0000_BI-10" AddressIndex="10" AccessType="Tunneling" Text="Tunnel 10" />
-            </BusInterfaces>
             <Options LineCoupler0912NewProgrammingStyle="true" />
           </Static>
           <!--
@@ -94,8 +92,8 @@
           -->
           <Dynamic>
             <ChannelIndependentBlock>
-              <ParameterBlock Id="M-00FA_A-0001-01-0000_PB-1" Name="General" Text="Allgemein">
-                <ParameterSeparator Id="M-00FA_A-0001-01-0000_PS-1"
+              <ParameterBlock Id="M-00FA_A-0001-02-0000_PB-1" Name="General" Text="Allgemein">
+                <ParameterSeparator Id="M-00FA_A-0001-02-0000_PS-1"
                                     Text="Dieses Gerät wird über sein Web-Dashboard eingestellt, erreichbar unter seiner IP-Adresse oder http://&lt;Gerätename&gt;.local. Die ETS vergibt Adressen und lädt die Filtertabelle."
                                     UIHint="Information" />
               </ParameterBlock>

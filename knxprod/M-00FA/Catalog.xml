@@ -15,11 +15,11 @@
                         Name="Selfbus"
                         Number="1"
                         DefaultLanguage="de-DE">
-          <CatalogItem Id="M-00FA_H-SBIP1-1_HP-0001-01-0000_CI-SBIP.2D1-1"
+          <CatalogItem Id="M-00FA_H-SBIP1-1_HP-0001-02-0000_CI-SBIP.2D1-1"
                        Name="KNX/IP Interface"
                        Number="1"
                        ProductRefId="M-00FA_H-SBIP1-1_P-SBIP.2D1"
-                       Hardware2ProgramRefId="M-00FA_H-SBIP1-1_HP-0001-01-0000"
+                       Hardware2ProgramRefId="M-00FA_H-SBIP1-1_HP-0001-02-0000"
                        DefaultLanguage="de-DE"
                        VisibleDescription="KNXnet/IP Router und Tunnelserver auf ESP32 mit Selfbus SB-Interface." />
         </CatalogSection>

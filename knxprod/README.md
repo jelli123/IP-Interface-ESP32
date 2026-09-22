@@ -12,7 +12,7 @@ python3 ../scripts/make_knxprod.py --identity sbip-identity.json
 ```
 
 Die Kennungen darin müssen zu denen im Gerät passen (Dashboard, Karte
-*Geräteidentität*). Vorgabe ist Hersteller `0x00FA`, Applikation 1 Version 1,
+*Geräteidentität*). Vorgabe ist Hersteller `0x00FA`, Applikation 1 Version 2,
 Maske `MV-091A`, zehn Tunneladressen – dieselben Werte, die
 `include/interface_config.h` als Vorgabe einkompiliert.
 
@@ -23,12 +23,12 @@ das Gerät bedeutungslos sind:
 
 * `Static/ParameterTypes`, auch wenn die Liste leer ist.
 * `Static/BusInterfaces` mit einem Eintrag je Tunneladresse, sobald
-  `AdditionalAddressesCount` nicht null ist. `make_knxprod.py` schreibt die
-  Liste passend zu `--tunnels` neu. Mit ihr bietet die ETS 6 für die Tunnel
-  eine Security-Einstellung an, die dieses Gerät nicht erfüllt; ältere
-  Produktdaten ohne die Liste zeigen schlichte Tunnel. `--no-bus-interfaces`
-  lässt sie weg – für den Weg über OpenKNXproducer, den Kaenx-Import
-  verbaut das.
+  `AdditionalAddressesCount` nicht null ist. In den Quellen steht die Liste
+  **nicht**: Mit ihr führt die ETS 6 die Tunnel als Secure-Tunnel, die dieses
+  Gerät nicht erfüllt; ohne sie zeigt sie zusätzliche physikalische
+  Adressen. Für den Kaenx-Import setzt `make_knxprod.py --bus-interfaces`
+  sie wieder ein, so lang wie `--tunnels` ansagt. Zum Signieren über
+  OpenKNXproducer die Datei ohne diese Option erzeugen.
 * Mindestens ein Element im `Dynamic`-Teil, sonst verweigert der Export
   mit „Dynamic hat keine Elemente“. Hier ist es eine Parameterseite mit nur
   einem Hinweis: dass das Gerät über sein Web-Dashboard eingestellt wird.
@@ -51,12 +51,12 @@ anderen Kennung, und die ETS findet zum Gerät keine passende Datenbank.
 **Unsigniert.** Die ETS nimmt eine knxprod erst nach dem Signieren an; das
 verlangt ihre eigenen Bibliotheken und kann dieses Skript nicht. Es schreibt
 aber neben die knxprod dieselbe Datenbank als eine Datei,
-`M-00FA_A-0001-01.xml`, und die signiert
+`M-00FA_A-0001-02.xml`, und die signiert
 [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer) auf einem
 Rechner mit ETS:
 
 ```
-OpenKNXproducer knxprod M-00FA_A-0001-01.xml
+OpenKNXproducer knxprod M-00FA_A-0001-02.xml
 ```
 
 OpenKNXproducer teilt die Datei selbst wieder auf, signiert und legt die

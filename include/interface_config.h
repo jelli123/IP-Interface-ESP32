@@ -61,16 +61,19 @@
 #endif
 
 /*
- * Application 1 version 1, which is what knxprod/ declares. Zero would be a
- * legal value for the device but no product data can carry it: an ETS
- * application id is built from this number, so the file would have no name
- * to be found under.
+ * Application 1 version 2, which is what knxprod/ declares. Version 1 was
+ * the same product with a list of bus interfaces, which makes ETS 6 treat
+ * the tunnels as secure ones.
+ *
+ * Application number zero would be a legal value for the device but no
+ * product data can carry it: an ETS application id is built from this
+ * number, so the file would have no name to be found under.
  */
 #ifndef SBIP_KNX_APP_NUMBER
 #define SBIP_KNX_APP_NUMBER      0x0001
 #endif
 #ifndef SBIP_KNX_APP_VERSION
-#define SBIP_KNX_APP_VERSION     0x01
+#define SBIP_KNX_APP_VERSION     0x02
 #endif
 
 /** PID_VERSION, the VersionNumber of the hardware in the product data. */

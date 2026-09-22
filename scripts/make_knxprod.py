@@ -19,7 +19,7 @@ Zum Signieren schreibt das Skript daneben dieselbe Produktdatenbank als
 **eine** XML-Datei, wie OpenKNXproducer sie erwartet:
 
     cd knxprod
-    OpenKNXproducer knxprod M-00FA_A-0001-01.xml
+    OpenKNXproducer knxprod M-00FA_A-0001-02.xml
 
 Das teilt die Datei wieder auf, signiert mit den Bibliotheken der
 installierten ETS und legt die offiziellen Stammdaten bei. Kaenx-Creator
@@ -53,7 +53,7 @@ MASTER = "knx_master.xml"
 # Ersetzung daraus ab, damit die drei Dateien untereinander stimmig bleiben.
 BASE_MANUFACTURER = 0x00FA
 BASE_APP = 0x0001
-BASE_APP_VERSION = 0x01
+BASE_APP_VERSION = 0x02
 
 #: Maske dieser Firmware. Nicht einstellbar - siehe src/knx_identity.h.
 MASK = 0x091A
@@ -131,17 +131,14 @@ def build(args):
         text = attribute(text, "RegistrationNumber",
                          "0001/%d%d" % (args.device_version, args.app_version))
 
-        # Die Liste der Zugangspunkte muss so lang sein, wie
-        # AdditionalAddressesCount ansagt - oder ganz fehlen, siehe
-        # --no-bus-interfaces. Mitsamt ihrem Kommentar, der sonst von einer
-        # Liste spräche, die es nicht gibt.
-        app_id = "%s_A-%04X-%02X-0000" % (folder, args.app, args.app_version)
-        if args.no_bus_interfaces:
-            text = re.sub(r"[ \t]*<!--(?:(?!-->).)*?Zugangspunkt.*?-->\s*"
-                          r"<BusInterfaces>.*?</BusInterfaces>\n",
-                          "", text, flags=re.S)
-        else:
-            text = re.sub(r"<BusInterfaces>.*?</BusInterfaces>",
+        # Ohne BusInterfaces führt die ETS 6 die Tunnel als schlichte
+        # zusätzliche Adressen; mit ihnen als Secure-Tunnel. Nur für den
+        # Kaenx-Import kommt die Liste zurück, an die Stelle des Kommentars,
+        # der ihr Fehlen begründet - so lang, wie AdditionalAddressesCount
+        # ansagt.
+        if args.bus_interfaces:
+            app_id = "%s_A-%04X-%02X-0000" % (folder, args.app, args.app_version)
+            text = re.sub(r"<!--(?:(?!-->).)*?Bewusst ohne Static/BusInterfaces.*?-->",
                           lambda m: bus_interfaces(app_id, args.tunnels),
                           text, flags=re.S)
 
@@ -229,11 +226,11 @@ def main():
     parser.add_argument("--name", default="Selfbus KNX/IP",
                         help="Produktname für die Identitätsdatei")
     parser.add_argument("--out", help="Zieldatei, Vorgabe knxprod/<name>.knxprod")
-    parser.add_argument("--no-bus-interfaces", action="store_true",
-                        help="Static/BusInterfaces weglassen. Die ETS 6 bietet "
-                             "dann für die Tunnel keine Security-Einstellung "
-                             "an, wie bei älteren Produktdaten; Kaenx-Creator "
-                             "kann die Datei so aber nicht importieren")
+    parser.add_argument("--bus-interfaces", action="store_true",
+                        help="Static/BusInterfaces einfügen - nur für den "
+                             "Import in Kaenx-Creator, der ohne sie abbricht. "
+                             "Die ETS 6 führt die Tunnel damit als "
+                             "Secure-Tunnel, die dieses Gerät nicht erfüllt")
     parser.add_argument("--identity", help="zusätzlich die passende JSON-Kennung "
                                            "für das Dashboard schreiben")
     args = parser.parse_args()

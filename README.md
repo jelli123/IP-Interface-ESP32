@@ -2601,7 +2601,7 @@ zusammenpackt:
 python3 scripts/make_knxprod.py --identity sbip-identity.json
 ```
 
-Das erzeugt `knxprod/M-00FA_A-0001-01.knxprod` und daneben die JSON-Datei mit
+Das erzeugt `knxprod/M-00FA_A-0001-02.knxprod` und daneben die JSON-Datei mit
 genau denselben Werten, die sich im Dashboard über *JSON laden* einspielen
 lässt. Beide Wege führen zum selben Ergebnis – die knxprod lässt sich ebenso
 im Bearbeiten-Dialog einlesen.
@@ -2662,7 +2662,7 @@ Zwei Einschränkungen, offen benannt:
 
    ```
    cd knxprod
-   OpenKNXproducer knxprod M-00FA_A-0001-01.xml
+   OpenKNXproducer knxprod M-00FA_A-0001-02.xml
    ```
 
    [Kaenx-Creator](https://github.com/OpenKNX/Kaenx-Creator) eignet sich dafür
@@ -2672,11 +2672,13 @@ Zwei Einschränkungen, offen benannt:
    Managementprozedur 'LoadLCConfigApp' nicht“ ab. Ohne ETS bleibt der
    unsignierte Weg: SB-Project prüft die Signatur nicht.
 
-> **Stand:** Eine mit Kaenx-Creator signierte Fassung ließ sich in die ETS 6
-> importieren, und die ETS vergab darüber die physikalische Adresse. Der
-> Applikationsdownload scheiterte an dem fehlenden Schalter oben; ein Download
-> mit der über OpenKNXproducer signierten Fassung steht noch aus. Geprüft ist
-> außerdem, dass die Dateien wohlgeformt sind, dass das Dashboard sie liest,
+> **Stand:** Mit OpenKNXproducer signiert, lässt sich die Datei in die ETS 6
+> importieren, und die ETS vergibt die physikalische Adresse und lädt die
+> Applikation. Die Tunnel erscheinen als zusätzliche physikalische Adressen,
+> seit die Liste `BusInterfaces` fehlt – mit ihr führte die ETS sie als
+> Secure-Tunnel. Deshalb Applikationsversion 2: Version 1 trug die Liste, und
+> ein anderer Inhalt unter gleicher Version steht in der ETS als zweite
+> gleichnamige Applikation da. Geprüft ist außerdem, dass die Dateien wohlgeformt sind, dass das Dashboard sie liest,
 > dass die Werte darin zur Vorgabekennung der Firmware passen und dass die
 > Ladeprozedur der Maske nur Schritte enthält, die SB-Project übersetzen kann.
 > Wenn die ETS meckert, ist das XML der Ort, an dem nachzubessern ist – eine

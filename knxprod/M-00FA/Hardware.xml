@@ -44,10 +44,10 @@
             </Product>
           </Products>
           <Hardware2Programs>
-            <Hardware2Program Id="M-00FA_H-SBIP1-1_HP-0001-01-0000"
+            <Hardware2Program Id="M-00FA_H-SBIP1-1_HP-0001-02-0000"
                               MediumTypes="MT-0 MT-5">
-              <ApplicationProgramRef RefId="M-00FA_A-0001-01-0000" />
-              <RegistrationInfo RegistrationStatus="Registered" RegistrationNumber="0001/11" />
+              <ApplicationProgramRef RefId="M-00FA_A-0001-02-0000" />
+              <RegistrationInfo RegistrationStatus="Registered" RegistrationNumber="0001/12" />
             </Hardware2Program>
           </Hardware2Programs>
         </Hardware>
