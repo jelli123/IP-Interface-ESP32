@@ -12,6 +12,11 @@
   einem Koppler der Maske 091A einstellt - Filtertabelle und Weiterleitung -
   schreibt sie ueber das Kopplerobjekt, nicht ueber Applikationsparameter.
 
+  IPConfig="Tool": Die ETS bietet die IP-Einstellungen in den
+  Geraeteeigenschaften an und schreibt sie ins KNXnet/IP-Parameterobjekt.
+  Eine dort eingetragene feste Adresse uebernimmt die Firmware, sonst bleibt
+  es bei DHCP. So setzt es auch Kaenx-Creator fuer IP-faehige Hardware.
+
   Die Ladeprozedur dafuer steht in der Maske, nicht hier (MergedProcedure,
   siehe ../knx_master.xml): Router-Objekt entladen, LCCONFIG setzen,
   Filtertabelle loeschen und schreiben, Laden abschliessen, Neustart.
@@ -38,7 +43,7 @@
                             Linkable="false"
                             MinEtsVersion="5.7"
                             AdditionalAddressesCount="10"
-                            IsIpEnabled="true"
+                            IPConfig="Tool"
                             Broken="false">
           <Static>
             <Code />

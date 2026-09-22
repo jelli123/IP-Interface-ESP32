@@ -57,7 +57,10 @@ OpenKNXproducer knxprod M-00FA_A-0001-01.xml
 
 OpenKNXproducer teilt die Datei selbst wieder auf, signiert und legt die
 offiziellen KNX-Stammdaten bei; dafür braucht es beim ersten Lauf
-Internetzugang.
+Internetzugang. Anders als Kaenx-Creator ergänzt es nichts: Was die ETS
+erwartet, muss schon in den Quellen stehen. Dazu gehört `RegistrationInfo`
+an Produkt und Hardware2Program – ohne es meldet die ETS beim Import, es
+fehle eine Lizenz, um nicht registrierte Produkte zu testen.
 
 **Kaenx-Creator zum Signieren nicht verwenden.** Sein Datenmodell kennt
 `Options/LineCoupler0912NewProgrammingStyle` nicht und verwirft den Schalter

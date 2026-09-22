@@ -125,6 +125,12 @@ def build(args):
         text = attribute(text, "AdditionalAddressesCount", args.tunnels)
         text = attribute(text, "VersionNumber", args.device_version)
 
+        # Wie Kaenx-Creator und OpenKNXproducer: "0001/" und dahinter
+        # Geräte- und Applikationsversion. Ohne RegistrationInfo verlangt die
+        # ETS beim Import eine Testlizenz für Hersteller.
+        text = attribute(text, "RegistrationNumber",
+                         "0001/%d%d" % (args.device_version, args.app_version))
+
         # Die Liste der Zugangspunkte muss so lang sein, wie
         # AdditionalAddressesCount ansagt.
         app_id = "%s_A-%04X-%02X-0000" % (folder, args.app, args.app_version)

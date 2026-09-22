@@ -10,6 +10,14 @@
   In den Ids steht die Bestellnummer kodiert, wie ETS und Kaenx-Creator sie
   bilden: jedes Sonderzeichen als Punkt plus Hexcode, "-" also als ".2D".
   Kaenx-Creator findet den Katalogeintrag beim Import genau darueber.
+
+  RegistrationInfo an Produkt und Hardware2Program: Fehlt es, gilt das
+  Produkt der ETS als nicht registriert, und sie verlangt beim Import eine
+  Testlizenz fuer Hersteller. Kaenx-Creator und OpenKNXproducer setzen es
+  genauso; eine Zertifizierung durch die KNX Association ist das nicht,
+  sondern die Angabe, die die ETS fuer ein fertiges Produkt erwartet. Die
+  Nummer bildet sich wie dort aus Geraete- und Applikationsversion,
+  make_knxprod.py rechnet sie mit.
 -->
 <KNX xmlns="http://knx.org/xml/project/14">
   <ManufacturerData>
@@ -31,12 +39,15 @@
                      Text="Selfbus KNX/IP Interface"
                      OrderNumber="SBIP-1"
                      IsRailMounted="false"
-                     DefaultLanguage="de-DE" />
+                     DefaultLanguage="de-DE">
+              <RegistrationInfo RegistrationStatus="Registered" />
+            </Product>
           </Products>
           <Hardware2Programs>
             <Hardware2Program Id="M-00FA_H-SBIP1-1_HP-0001-01-0000"
                               MediumTypes="MT-0 MT-5">
               <ApplicationProgramRef RefId="M-00FA_A-0001-01-0000" />
+              <RegistrationInfo RegistrationStatus="Registered" RegistrationNumber="0001/11" />
             </Hardware2Program>
           </Hardware2Programs>
         </Hardware>
