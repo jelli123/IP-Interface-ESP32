@@ -1,0 +1,4 @@
+# Patches fuer den Upstream-Stack: Zeilenenden nie umwandeln. Sie beruehren
+# Dateien mit LF und eine mit CRLF (src/esp_platform.cpp); eine Umwandlung beim
+# Auschecken - core.autocrlf unter Windows - macht sie unbrauchbar.
+upstream/*.patch -text

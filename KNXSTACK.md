@@ -19,15 +19,20 @@ Fertige Patches liegen in [upstream/](upstream/). Sie sind mit
 # Windows
 git clone https://github.com/thelsing/knx.git
 cd knx
-git am ..\IP-Interface-ESP32\upstream\0001-*.patch
+git am --keep-cr ..\IP-Interface-ESP32\upstream\0001-*.patch
 ```
 
 ```bash
 # Linux
 git clone https://github.com/thelsing/knx.git
 cd knx
-git am ../IP-Interface-ESP32/upstream/0001-*.patch
+git am --keep-cr ../IP-Interface-ESP32/upstream/0001-*.patch
 ```
+
+`--keep-cr` ist nötig, weil `src/esp_platform.cpp` upstream CRLF-Zeilenenden
+hat und `git am` die CRs sonst beim Zerlegen der Mail entfernt – dann findet
+es die Stelle nicht. `.gitattributes` schützt die Patchdateien davor, dass
+Git ihre Zeilenenden beim Auschecken umwandelt.
 
 Jeder Patch steht für sich und lässt sich einzeln einreichen. Autor und
 E-Mail sind Platzhalter – vor dem Einreichen `git commit --amend --reset-author`.
@@ -41,7 +46,7 @@ E-Mail sind Platzhalter – vor dem Einreichen `git commit --amend --reset-autho
 | 1 | Antwort geht an einen geschlossenen Tunnelkanal | Fehler | `0001` |
 | 2 | Zeiger auf ein totes Stack-Array | undefiniertes Verhalten | `0002` |
 | 3 | `isTunnelingPA()` dereferenziert einen Nullzeiger | Absturz | `0003` |
-| 4 | `sendBytesUniCast()` und `sendBytesMultiCast()` melden Erfolg nach einem Fehlschlag | Fehler | `0004` (nur Unicast) |
+| 4 | `sendBytesUniCast()` und `sendBytesMultiCast()` melden Erfolg nach einem Fehlschlag | Fehler | `0004` |
 | 5 | `propertyValueRead()` gibt uninitialisierten Heap heraus | Fehler | `0005` |
 | 6 | `_couplerType` ohne definierten Wert | undefiniertes Verhalten | `0006` |
 | 7 | Unprogrammiert unbrauchbar als reine Schnittstelle | Entwurf | – |
@@ -198,9 +203,9 @@ return true;
 Aufgefallen beim Download über KNXnet/IP-Routing, während ein großer
 HTTP-Transfer die Sendepuffer belegte: Die Antworten an die ETS wurden
 abgewiesen, und nichts meldete es. Diese Firmware wiederholt auch hier
-(Patch 9b in `scripts/patch_knx.py`). Der Vorschlag `0004` deckt bisher nur
-Unicast ab; die Multicast-Hälfte gehört mit hinein, bevor er eingereicht
-wird.
+(Patch 9b in `scripts/patch_knx.py`). `0004` deckt beide Funktionen auf allen
+vier Arduino-Plattformen ab; `esp_platform.cpp`, `libretiny_platform.cpp` und
+`rp2040_arduino_platform.cpp` haben denselben Multicast-Fehler.
 
 ---
 
@@ -375,9 +380,11 @@ aus – das `?` ist fest verdrahtet, obwohl der Aufrufer den Index kennt.
 
 **Dateien:** `src/knx/router_object.cpp`, `src/knx/ip_parameter_object.cpp`
 
-Die Ladeprozedur der Maske 091A (`knx_master.xml`) schreibt
-`PID_COUPL_SERV_CONTROL` (57) im Router-Objekt und die IP-Router-Applikation
-`PID_ROUTING_BUSY_WAIT_TIME` (78) im KNXnet/IP-Parameterobjekt. Beide fehlen:
+Produktdaten für KNXnet/IP-Router der Maske 091A fügen in deren Ladeprozedur
+ein Fragment ein (`MergedProcedure`), das `PID_COUPL_SERV_CONTROL` (57) im
+Router-Objekt und `PID_ROUTING_BUSY_WAIT_TIME` (78) im
+KNXnet/IP-Parameterobjekt schreibt. Die Maske selbst schreibt dort nur
+`LCCONFIG` (52 bis 55). Beide fehlen im Stack:
 
 - `RouterObject::initialize()` legt PID 57 nur für Koppler-Modell 2.0 an,
   `Bau091A` nutzt aber Modell 1.x. Laut 06 Profiles A.3.3 gehört die Property

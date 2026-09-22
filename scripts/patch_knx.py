@@ -1443,12 +1443,11 @@ patch_tunnel_ack()
 # Mandatory properties a mask 091A download writes
 # --------------------------------------------------------------------------
 #
-# The load procedure of mask 091A (knx_master.xml, merged with whatever
-# application is downloaded) writes PID_COUPL_SERV_CONTROL in the router
-# object and
-# PID_ROUTING_BUSY_WAIT_TIME in the KNXnet/IP parameter object. The stack has
-# neither for this mask, so the device answers the write with zero elements
-# and the download stops.
+# Product data for KNXnet/IP routers of mask 091A merge a fragment into the
+# mask's load procedure that writes PID_COUPL_SERV_CONTROL in the router
+# object and PID_ROUTING_BUSY_WAIT_TIME in the KNXnet/IP parameter object.
+# The stack has neither for this mask, so the device answers the write with
+# zero elements and the download stops.
 #
 # PID 57: RouterObject creates it only for coupler model 2.0, but 06 Profiles
 # A.3.3 lists it for mask 091A as well (read level 3, write level 0). Default
