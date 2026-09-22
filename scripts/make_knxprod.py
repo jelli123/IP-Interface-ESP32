@@ -132,11 +132,18 @@ def build(args):
                          "0001/%d%d" % (args.device_version, args.app_version))
 
         # Die Liste der Zugangspunkte muss so lang sein, wie
-        # AdditionalAddressesCount ansagt.
+        # AdditionalAddressesCount ansagt - oder ganz fehlen, siehe
+        # --no-bus-interfaces. Mitsamt ihrem Kommentar, der sonst von einer
+        # Liste spräche, die es nicht gibt.
         app_id = "%s_A-%04X-%02X-0000" % (folder, args.app, args.app_version)
-        text = re.sub(r"<BusInterfaces>.*?</BusInterfaces>",
-                      lambda m: bus_interfaces(app_id, args.tunnels),
-                      text, flags=re.S)
+        if args.no_bus_interfaces:
+            text = re.sub(r"[ \t]*<!--(?:(?!-->).)*?Zugangspunkt.*?-->\s*"
+                          r"<BusInterfaces>.*?</BusInterfaces>\n",
+                          "", text, flags=re.S)
+        else:
+            text = re.sub(r"<BusInterfaces>.*?</BusInterfaces>",
+                          lambda m: bus_interfaces(app_id, args.tunnels),
+                          text, flags=re.S)
 
         # Die Bestellnummer steht einmal im Klartext und mehrfach kodiert in
         # den Ids von Produkt und Katalogeintrag. Nur OrderNumber, nicht
@@ -222,6 +229,11 @@ def main():
     parser.add_argument("--name", default="Selfbus KNX/IP",
                         help="Produktname für die Identitätsdatei")
     parser.add_argument("--out", help="Zieldatei, Vorgabe knxprod/<name>.knxprod")
+    parser.add_argument("--no-bus-interfaces", action="store_true",
+                        help="Static/BusInterfaces weglassen. Die ETS 6 bietet "
+                             "dann für die Tunnel keine Security-Einstellung "
+                             "an, wie bei älteren Produktdaten; Kaenx-Creator "
+                             "kann die Datei so aber nicht importieren")
     parser.add_argument("--identity", help="zusätzlich die passende JSON-Kennung "
                                            "für das Dashboard schreiben")
     args = parser.parse_args()

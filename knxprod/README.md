@@ -24,7 +24,11 @@ das Gerät bedeutungslos sind:
 * `Static/ParameterTypes`, auch wenn die Liste leer ist.
 * `Static/BusInterfaces` mit einem Eintrag je Tunneladresse, sobald
   `AdditionalAddressesCount` nicht null ist. `make_knxprod.py` schreibt die
-  Liste passend zu `--tunnels` neu.
+  Liste passend zu `--tunnels` neu. Mit ihr bietet die ETS 6 für die Tunnel
+  eine Security-Einstellung an, die dieses Gerät nicht erfüllt; ältere
+  Produktdaten ohne die Liste zeigen schlichte Tunnel. `--no-bus-interfaces`
+  lässt sie weg – für den Weg über OpenKNXproducer, den Kaenx-Import
+  verbaut das.
 * Mindestens ein Element im `Dynamic`-Teil, sonst verweigert der Export
   mit „Dynamic hat keine Elemente“. Hier ist es eine Parameterseite mit nur
   einem Hinweis: dass das Gerät über sein Web-Dashboard eingestellt wird.
