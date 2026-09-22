@@ -183,9 +183,12 @@ fill:none;stroke:currentColor;stroke-width:1.5;
 stroke-linecap:round;stroke-linejoin:round}
 button.ico svg .sol{fill:currentColor;stroke:none}
 /* Klein, in einer Statuszeile vor dem Wert: dieselbe Art Knopf wie in den
- * Dialogen, nur so hoch wie die Schrift, damit die Zeile nicht springt. */
-button.ico.mini{width:22px;padding:2px 0;margin-right:6px;vertical-align:middle;
-border-radius:5px}
+ * Dialogen, nur so hoch wie die Schrift, damit die Zeile nicht springt.
+ * Knopf und Wert per Flexbox gegeneinander zentriert - vertical-align:middle
+ * richtet an der Mitte der Kleinbuchstaben aus, und der Knopf sass tiefer
+ * als die Ziffern. */
+.row .withbtn{display:inline-flex;align-items:center;gap:6px}
+button.ico.mini{width:22px;padding:2px 0;border-radius:5px}
 button.ico.mini svg{width:13px;height:13px}
 /* Eine Checkbox-Zeile direkt unter einer Schaltflaechenreihe oder einem
  * Absatz klebte am Vorgaenger - sie braucht denselben Luftraum wie ein
@@ -213,7 +216,7 @@ small{color:var(--dim)} small.warn{color:var(--warn)}
     <div class="row"><span>Laufzeit</span><span id="uptime">-</span></div>
     <div class="row"><span>Betriebsstunden</span><span id="hours">-</span></div>
     <div class="row"><span>Physikalische Adresse</span><span id="pa">-</span></div>
-    <div class="row"><span title="Zur Adressvergabe ohne Programmierknopf: diese Nummer in der ETS oder in SB-Project angeben.">Seriennummer (KNX)</span><span><button class="sec ico mini" id="knxSnCopy" onclick="copySerial()"
+    <div class="row"><span title="Zur Adressvergabe ohne Programmierknopf: diese Nummer in der ETS oder in SB-Project angeben.">Seriennummer (KNX)</span><span class="withbtn"><button class="sec ico mini" id="knxSnCopy" onclick="copySerial()"
       title="Seriennummer in die Zwischenablage" style="display:none"></button><span
       id="knxSn">-</span></span></div>
     <div class="row"><span>Name in der ETS</span><span id="knxName">-</span></div>
