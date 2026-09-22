@@ -182,6 +182,11 @@ button.ico svg{display:block;width:16px;height:16px;margin:0 auto;
 fill:none;stroke:currentColor;stroke-width:1.5;
 stroke-linecap:round;stroke-linejoin:round}
 button.ico svg .sol{fill:currentColor;stroke:none}
+/* Klein, in einer Statuszeile vor dem Wert: dieselbe Art Knopf wie in den
+ * Dialogen, nur so hoch wie die Schrift, damit die Zeile nicht springt. */
+button.ico.mini{width:22px;padding:2px 0;margin-right:6px;vertical-align:middle;
+border-radius:5px}
+button.ico.mini svg{width:13px;height:13px}
 /* Eine Checkbox-Zeile direkt unter einer Schaltflaechenreihe oder einem
  * Absatz klebte am Vorgaenger - sie braucht denselben Luftraum wie ein
  * eigener Abschnitt. */
@@ -208,7 +213,9 @@ small{color:var(--dim)} small.warn{color:var(--warn)}
     <div class="row"><span>Laufzeit</span><span id="uptime">-</span></div>
     <div class="row"><span>Betriebsstunden</span><span id="hours">-</span></div>
     <div class="row"><span>Physikalische Adresse</span><span id="pa">-</span></div>
-    <div class="row"><span title="Zur Adressvergabe ohne Programmierknopf: diese Nummer in der ETS oder in SB-Project angeben.">Seriennummer (KNX)</span><span id="knxSn">-</span></div>
+    <div class="row"><span title="Zur Adressvergabe ohne Programmierknopf: diese Nummer in der ETS oder in SB-Project angeben.">Seriennummer (KNX)</span><span><button class="sec ico mini" id="knxSnCopy" onclick="copySerial()"
+      title="Seriennummer in die Zwischenablage" style="display:none"></button><span
+      id="knxSn">-</span></span></div>
     <div class="row"><span>Name in der ETS</span><span id="knxName">-</span></div>
     <div class="row"><span>ETS-Konfiguration</span><span id="cfg">-</span></div>
     <div class="row"><span>Tunnel (max.)</span><span id="tun">-</span></div>
@@ -1827,7 +1834,7 @@ const EN = {
 'Spitzenwert zurücksetzen':'Clear the peak',
 'SB-Interface programmieren':'Program the SB-Interface',
 'SB-Interface ISP':'SB-Interface ISP', 'Seriennummer':'Serial number',
-'Seriennummer (KNX)':'Serial number (KNX)', 'nach Neustart':'after restart',
+'Seriennummer (KNX)':'Serial number (KNX)', 'Seriennummer in die Zwischenablage':'Copy the serial number', 'nach Neustart':'after restart',
 ['Zur Adressvergabe ohne Programmierknopf: diese Nummer in der ETS oder in '
 + 'SB-Project angeben.']:
   'To assign the address without the programming button, give this number '
@@ -2032,6 +2039,12 @@ async function refresh(){
   // Geraet noch unter der alten.
   $('knxSn').textContent  = (s.knx_serial || '-')
       + (s.knx_serial_next ? ' (' + t('nach Neustart') + ': ' + s.knx_serial_next + ')' : '');
+  // Kopiert wird die Nummer, unter der das Geraet jetzt antwortet - die
+  // kommende gilt erst nach dem Neustart.
+  knxSerial = s.knx_serial || '';
+  const snBtn = $('knxSnCopy');
+  snBtn.style.display = knxSerial ? '' : 'none';
+  if(!snBtn.innerHTML) snBtn.innerHTML = ICO_CLIP;
   $('knxName').textContent = s.knx_name || t('nicht gesetzt');
   $('knxBadge').textContent = s.knx_name || s.device_name;
   $('cfg').innerHTML      = s.knx_configured ? dot(true)
@@ -2424,6 +2437,20 @@ async function saveName(){
 
   nameDlg.close();
   if(confirm(t('Name gespeichert. Jetzt neu starten?'))) doReboot();
+}
+
+let knxSerial = '';
+
+// Wie copyLog(): das Piktogramm quittiert selbst, die Zeile bleibt ruhig.
+async function copySerial(){
+  if(!knxSerial) return;
+  const ok = await copyText(knxSerial);
+
+  const btn = $('knxSnCopy');
+  btn.innerHTML = ok ? ICO_DONE : ICO_CLIP;
+  btn.title = t(ok ? 'Kopiert' : 'Seriennummer in die Zwischenablage');
+  setTimeout(() => { btn.innerHTML = ICO_CLIP;
+                     btn.title = t('Seriennummer in die Zwischenablage'); }, 1500);
 }
 
 function showLog(){
