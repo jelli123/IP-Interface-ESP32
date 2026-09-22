@@ -1,0 +1,253 @@
+From 3d1ea9b627a6a7f0e0c7a3e58aa00c33cf730565 Mon Sep 17 00:00:00 2001
+From: Selfbus IP interface <noreply@example.invalid>
+Date: Tue, 22 Sep 2026 13:46:28 +0200
+Subject: [PATCH] Report a refused UDP frame instead of returning true
+
+sendBytesUniCast() logs a failed beginPacket() or endPacket() and
+then returns true. sendBytesMultiCast() does not even look at the
+result. Every caller that checks the return value is told the frame
+went out, so nothing retries and nothing reports an error - the
+frame is simply gone.
+
+This is not theoretical. On an ESP32 the transmit buffers run dry
+when telegrams follow each other closely, which is exactly what an
+ETS download does, or when other traffic - a large HTTP transfer -
+shares the interface. Unicast loses the answers to a tunnel client,
+multicast the answers to ETS programming over routing. The symptom
+is a download that fails at a random point and, because the failure
+is timing dependent, one that disappears as soon as tracing is
+switched on.
+
+esp_platform.cpp and libretiny_platform.cpp additionally print
+"sendBytesUniCast endPacket fail" unconditionally, before the
+packet is even started.
+
+esp32_idf_platform.cpp and linux_platform.cpp already return false
+on failure; the four Arduino platforms now do the same for both
+functions.
+---
+ src/esp32_platform.cpp          | 31 +++++++++++++++++++++++--------
+ src/esp_platform.cpp            | 32 +++++++++++++++++++++++---------
+ src/libretiny_platform.cpp      | 32 +++++++++++++++++++++++---------
+ src/rp2040_arduino_platform.cpp | 31 +++++++++++++++++++++++--------
+ 4 files changed, 92 insertions(+), 34 deletions(-)
+
+diff --git a/src/esp32_platform.cpp b/src/esp32_platform.cpp
+index 2f0bfd9..f30f8f6 100644
+--- a/src/esp32_platform.cpp
++++ b/src/esp32_platform.cpp
+@@ -103,9 +103,20 @@ void Esp32Platform::closeMultiCast()
+ bool Esp32Platform::sendBytesMultiCast(uint8_t* buffer, uint16_t len)
+ {
+     //printHex("<- ",buffer, len);
+-    _udp.beginMulticastPacket();
++    if (_udp.beginMulticastPacket() != 1)
++    {
++        println("sendBytesMultiCast beginPacket fail");
++        return false;
++    }
++
+     _udp.write(buffer, len);
+-    _udp.endPacket();
++
++    if (_udp.endPacket() == 0)
++    {
++        println("sendBytesMultiCast endPacket fail");
++        return false;
++    }
++
+     return true;
+ }
+ 
+@@ -149,15 +160,19 @@ bool Esp32Platform::sendBytesUniCast(uint32_t addr, uint16_t port, uint8_t* buff
+     if (!port)
+         port = _remotePort;
+ 
+-    if (_udp.beginPacket(ucastaddr, port) == 1)
++    if (_udp.beginPacket(ucastaddr, port) != 1)
+     {
+-        _udp.write(buffer, len);
++        println("sendBytesUniCast beginPacket fail");
++        return false;
++    }
++
++    _udp.write(buffer, len);
+ 
+-        if (_udp.endPacket() == 0)
+-            println("sendBytesUniCast endPacket fail");
++    if (_udp.endPacket() == 0)
++    {
++        println("sendBytesUniCast endPacket fail");
++        return false;
+     }
+-    else
+-        println("sendBytesUniCast beginPacket fail");
+ 
+     return true;
+ }
+diff --git a/src/esp_platform.cpp b/src/esp_platform.cpp
+index 1674e83..65421db 100644
+--- a/src/esp_platform.cpp
++++ b/src/esp_platform.cpp
+@@ -73,9 +73,20 @@ void EspPlatform::closeMultiCast()
+ bool EspPlatform::sendBytesMultiCast(uint8_t* buffer, uint16_t len)
+ {
+     //printHex("<- ",buffer, len);
+-    _udp.beginPacketMulticast(_multicastAddr, _multicastPort, WiFi.localIP());
++    if (_udp.beginPacketMulticast(_multicastAddr, _multicastPort, WiFi.localIP()) != 1)
++    {
++        println("sendBytesMultiCast beginPacket fail");
++        return false;
++    }
++
+     _udp.write(buffer, len);
+-    _udp.endPacket();
++
++    if (_udp.endPacket() == 0)
++    {
++        println("sendBytesMultiCast endPacket fail");
++        return false;
++    }
++
+     return true;
+ }
+ 
+@@ -100,17 +111,20 @@ int EspPlatform::readBytesMultiCast(uint8_t* buffer, uint16_t maxLen)
+ bool EspPlatform::sendBytesUniCast(uint32_t addr, uint16_t port, uint8_t* buffer, uint16_t len)
+ {
+     IPAddress ucastaddr(htonl(addr));
+-    println("sendBytesUniCast endPacket fail");
+ 
+-    if (_udp.beginPacket(ucastaddr, port) == 1)
++    if (_udp.beginPacket(ucastaddr, port) != 1)
+     {
+-        _udp.write(buffer, len);
++        println("sendBytesUniCast beginPacket fail");
++        return false;
++    }
++
++    _udp.write(buffer, len);
+ 
+-        if (_udp.endPacket() == 0)
+-            println("sendBytesUniCast endPacket fail");
++    if (_udp.endPacket() == 0)
++    {
++        println("sendBytesUniCast endPacket fail");
++        return false;
+     }
+-    else
+-        println("sendBytesUniCast beginPacket fail");
+ 
+     return true;
+ }
+diff --git a/src/libretiny_platform.cpp b/src/libretiny_platform.cpp
+index f0a67f6..8f1b7f9 100644
+--- a/src/libretiny_platform.cpp
++++ b/src/libretiny_platform.cpp
+@@ -84,9 +84,20 @@ void LibretinyPlatform::closeMultiCast()
+ 
+ bool LibretinyPlatform::sendBytesMultiCast(uint8_t * buffer, uint16_t len)
+ {
+-    _udp.beginMulticastPacket();
++    if (_udp.beginMulticastPacket() != 1)
++    {
++        println("sendBytesMultiCast beginPacket fail");
++        return false;
++    }
++
+     _udp.write(buffer, len);
+-    _udp.endPacket();
++
++    if (_udp.endPacket() == 0)
++    {
++        println("sendBytesMultiCast endPacket fail");
++        return false;
++    }
++
+     return true;
+ }
+ 
+@@ -110,17 +121,20 @@ int LibretinyPlatform::readBytesMultiCast(uint8_t * buffer, uint16_t maxLen)
+ bool LibretinyPlatform::sendBytesUniCast(uint32_t addr, uint16_t port, uint8_t* buffer, uint16_t len)
+ {
+     IPAddress ucastaddr(htonl(addr));
+-    println("sendBytesUniCast endPacket fail");
+ 
+-    if(_udp.beginPacket(ucastaddr, port) == 1)
++    if(_udp.beginPacket(ucastaddr, port) != 1)
+     {
+-        _udp.write(buffer, len);
++        println("sendBytesUniCast beginPacket fail");
++        return false;
++    }
++
++    _udp.write(buffer, len);
+ 
+-        if(_udp.endPacket() == 0)
+-            println("sendBytesUniCast endPacket fail");
++    if(_udp.endPacket() == 0)
++    {
++        println("sendBytesUniCast endPacket fail");
++        return false;
+     }
+-    else
+-        println("sendBytesUniCast beginPacket fail");
+ 
+     return true;
+ }
+diff --git a/src/rp2040_arduino_platform.cpp b/src/rp2040_arduino_platform.cpp
+index 1145a37..2f3250b 100644
+--- a/src/rp2040_arduino_platform.cpp
++++ b/src/rp2040_arduino_platform.cpp
+@@ -504,9 +504,20 @@ bool RP2040ArduinoPlatform::sendBytesMultiCast(uint8_t* buffer, uint16_t len)
+     // printHex("<- ",buffer, len);
+ 
+     // ToDo: check if Ethernet is able to receive, return false if not
+-    _udp.beginPacket(mcastaddr, _port);
++    if (_udp.beginPacket(mcastaddr, _port) != 1)
++    {
++        println("sendBytesMultiCast beginPacket fail");
++        return false;
++    }
++
+     _udp.write(buffer, len);
+-    _udp.endPacket();
++
++    if (_udp.endPacket() == 0)
++    {
++        println("sendBytesMultiCast endPacket fail");
++        return false;
++    }
++
+     return true;
+ }
+ 
+@@ -561,15 +572,19 @@ bool RP2040ArduinoPlatform::sendBytesUniCast(uint32_t addr, uint16_t port, uint8
+ 
+ #endif
+ 
+-    if (UDP_UNICAST.beginPacket(ucastaddr, port) == 1)
++    if (UDP_UNICAST.beginPacket(ucastaddr, port) != 1)
+     {
+-        UDP_UNICAST.write(buffer, len);
++        println("sendBytesUniCast beginPacket fail");
++        return false;
++    }
++
++    UDP_UNICAST.write(buffer, len);
+ 
+-        if (UDP_UNICAST.endPacket() == 0)
+-            println("sendBytesUniCast endPacket fail");
++    if (UDP_UNICAST.endPacket() == 0)
++    {
++        println("sendBytesUniCast endPacket fail");
++        return false;
+     }
+-    else
+-        println("sendBytesUniCast beginPacket fail");
+ 
+     return true;
+ }
+-- 
+2.55.0
+
