@@ -48,6 +48,7 @@ E-Mail sind Platzhalter – vor dem Einreichen `git commit --amend --reset-autho
 | 8 | Tunnel-Quittungen werden verworfen | Lücke | – |
 | 9 | Busmonitor-Verbindung wird wortlos abgelehnt | Diagnose | – |
 | 10 | Pflicht-Properties für Maske 091A fehlen | Lücke | – |
+| 11 | Suchantworten versprechen Core 2 und damit TCP | Fehler | – |
 
 ---
 
@@ -408,6 +409,34 @@ Elementzahlen, reserviert Speicher dafür, und das Gerät startet nicht mehr.
 Ein Upstream-Patch sollte deshalb `apiVersion` erhöhen. Dann verwirft der Stack
 den alten Flashinhalt, und das Gerät muss neu programmiert werden, statt beim
 Start abzustürzen.
+
+---
+
+## 11 – Suchantworten versprechen Core 2 und damit TCP
+
+**Dateien:** `src/knx/knx_ip_search_response.cpp`,
+`src/knx/knx_ip_search_response_extended.cpp`
+
+```cpp
+_supportedServices.serviceVersion(Core, KNX_SERVICE_FAMILY_CORE);
+```
+
+`KNX_SERVICE_FAMILY_CORE` schaltet zwei Dinge zugleich: ob der Stack
+`SEARCH_REQUEST_EXTENDED` beantwortet, und welche Core-Version er in der
+Liste der unterstützten Dienste ankündigt. Core 2 umfasst aber auch
+KNXnet/IP über TCP, und das implementiert der Stack nicht – jeder Endpunkt,
+den er herausgibt, ist `IPV4_UDP`. Die Beschreibungsantwort meldet dagegen
+fest Core 1, das Gerät widerspricht sich also selbst.
+
+Die ETS 6 liest die 2 aus der Suche und baut ihren Tunnel über TCP auf. Das
+Gerät weist die Verbindung ab („der Zielcomputer verweigerte die
+Verbindung“), und kein einziger KNXnet/IP-Rahmen kommt an. Über Routing geht
+es, weil dafür keine Verbindung aufgebaut wird.
+
+Diese Firmware kündigt in beiden Suchantworten Core 1 an und beantwortet die
+erweiterte Suche trotzdem (Patch 18 in `scripts/patch_knx.py`). Upstream
+gehören die beiden Bedeutungen getrennt: die angekündigte Version darf nur
+so hoch sein wie das, was der Stack tatsächlich kann.
 
 ---
 

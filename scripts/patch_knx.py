@@ -2233,3 +2233,71 @@ def patch_management_lock():
 
 
 patch_management_lock()
+
+
+# --------------------------------------------------------------------------
+# 18. Announce the core version the device really implements
+# --------------------------------------------------------------------------
+#
+# ETS 6 could program the device over routing but not through its own
+# tunnel: "the target computer refused the connection 192.168.179.113:3671",
+# and not a single frame in the bus monitor. That is a refused TCP connect.
+#
+# TCP transport belongs to KNXnet/IP Core version 2, and both search
+# responses announce exactly that - they put KNX_SERVICE_FAMILY_CORE into the
+# supported service families, which platformio.ini sets to 2 so that the
+# stack answers SEARCH_REQUEST_EXTENDED. ETS reads the 2 and opens its tunnel
+# over TCP. The stack has no TCP at all: every endpoint it hands out is
+# IPV4_UDP, so lwIP answers the connect with a reset.
+#
+# The description response already says core 1, hard coded. Both search
+# responses now say the same. The extended search stays compiled in and
+# answered - ETS needs it to find a device in programming mode - it just no
+# longer promises a transport the device cannot provide.
+
+CORE_MARKER = "// sbip: core 1 - no TCP here, see patch 18 in scripts/patch_knx.py"
+
+CORE_ANCHOR = "    _supportedServices.serviceVersion(Core, KNX_SERVICE_FAMILY_CORE);\n"
+
+CORE_NEW = (
+    "    " + CORE_MARKER + "\n"
+    "    _supportedServices.serviceVersion(Core, 1);\n"
+)
+
+
+def patch_core_version():
+    base = os.path.join(
+        env["PROJECT_LIBDEPS_DIR"],  # noqa: F821
+        env["PIOENV"],  # noqa: F821
+        "knx", "src", "knx",
+    )
+
+    patched = []
+    for name in ("knx_ip_search_response.cpp", "knx_ip_search_response_extended.cpp"):
+        path = os.path.join(base, name)
+        if not os.path.isfile(path):
+            continue
+
+        with open(path, "r", encoding="utf-8") as handle:
+            source = handle.read()
+
+        if CORE_MARKER in source:
+            continue
+
+        if source.count(CORE_ANCHOR) != 1:
+            sys.stderr.write(
+                "patch_knx.py: anchor no longer unique in %s, the search "
+                "response keeps announcing core %s - ETS 6 will try its tunnel "
+                "over TCP and be refused\n" % (name, "2")
+            )
+            continue
+
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(source.replace(CORE_ANCHOR, CORE_NEW))
+        patched.append(name)
+
+    if patched:
+        print("patch_knx.py: core version 1 announced in %s" % ", ".join(patched))
+
+
+patch_core_version()
