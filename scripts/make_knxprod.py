@@ -28,6 +28,14 @@ Options/LineCoupler0912NewProgrammingStyle, und ohne diesen Schalter
 programmiert die ETS einen Koppler der Maske 091A über BCU1-Speicher, den
 dieser Stack nicht hat.
 
+Mit --secure entsteht die Fassung für KNX Secure (siehe SECURE.md): die
+Applikation trägt IsSecureEnabled, die Größen der Tabellen, die die ETS dann
+lädt, und die BusInterfaces, über die sie jedem Tunnel einen Benutzer mit
+Passwort zuordnet. Weil sich die Datenbanken damit unterscheiden, gehört sie
+unter eine eigene Applikationsversion:
+
+    python3 scripts/make_knxprod.py --secure --app-version 3
+
 Das Gegenstück im Gerät ist die Karte "Geräteidentität" im Dashboard. Mit
 --identity schreibt dieses Skript die JSON-Datei, die sich dort über "JSON
 laden" einspielen lässt; alternativ die erzeugte .knxprod im Bearbeiten-Dialog
@@ -86,6 +94,26 @@ def bus_interfaces(app_id, count):
     return "<BusInterfaces>\n%s\n            </BusInterfaces>" % "\n".join(lines)
 
 
+#: Größe der Sicherheits-IA-Tabelle im Stack (PID 54 des
+#: Sicherheitsobjekts, siehe security_interface_object.cpp).
+SECURITY_IA_ENTRIES = 32
+
+
+def secure_attributes(tunnels):
+    """Was die ETS über die Secure-Fähigkeiten des Geräts wissen muss.
+
+    MaxUserEntries: Management-Benutzer (1) und einer je Tunnel - so viele
+    Passwort-Hashes nimmt PID 93 auf. MaxTunnelingUserEntries: die Zuordnung
+    Benutzer - Tunnel in PID 97. Gruppenschlüssel braucht ein Koppler ohne
+    Gruppenobjekte keine; die Punkt-zu-Punkt-Tabelle des Stacks hat einen
+    Eintrag.
+    """
+    return (' IsSecureEnabled="true" MaxUserEntries="%d" MaxTunnelingUserEntries="%d"'
+            ' MaxSecurityIndividualAddressEntries="%d" MaxSecurityGroupKeyTableEntries="0"'
+            ' MaxSecurityP2PKeyTableEntries="1"'
+            % (tunnels + 1, tunnels, SECURITY_IA_ENTRIES))
+
+
 def attribute(text, name, value):
     """Ersetzt jedes name="..." durch den neuen Wert."""
     pattern = re.compile(r'(\b%s=")[^"]*(")' % re.escape(name))
@@ -136,11 +164,17 @@ def build(args):
         # Kaenx-Import kommt die Liste zurück, an die Stelle des Kommentars,
         # der ihr Fehlen begründet - so lang, wie AdditionalAddressesCount
         # ansagt.
-        if args.bus_interfaces:
+        if args.bus_interfaces or args.secure:
             app_id = "%s_A-%04X-%02X-0000" % (folder, args.app, args.app_version)
             text = re.sub(r"<!--(?:(?!-->).)*?Bewusst ohne Static/BusInterfaces.*?-->",
                           lambda m: bus_interfaces(app_id, args.tunnels),
                           text, flags=re.S)
+
+        # KNX Secure: Fähigkeiten an das Applikationsprogramm, einmal, und
+        # der Hinweis auf der Parameterseite, dass die ETS die Schlüssel lädt.
+        if args.secure and "IsSecureEnabled" not in text:
+            text = re.sub(r'(<ApplicationProgram\b[^>]*?AdditionalAddressesCount="\d+")',
+                          lambda m: m.group(1) + secure_attributes(args.tunnels), text)
 
         # Die Bestellnummer steht einmal im Klartext und mehrfach kodiert in
         # den Ids von Produkt und Katalogeintrag. Nur OrderNumber, nicht
@@ -227,10 +261,14 @@ def main():
                         help="Produktname für die Identitätsdatei")
     parser.add_argument("--out", help="Zieldatei, Vorgabe knxprod/<name>.knxprod")
     parser.add_argument("--bus-interfaces", action="store_true",
-                        help="Static/BusInterfaces einfügen - nur für den "
-                             "Import in Kaenx-Creator, der ohne sie abbricht. "
-                             "Die ETS 6 führt die Tunnel damit als "
-                             "Secure-Tunnel, die dieses Gerät nicht erfüllt")
+                        help="Static/BusInterfaces einfügen, für den Import "
+                             "in Kaenx-Creator, der ohne sie abbricht. Die "
+                             "ETS 6 führt die Tunnel damit als Secure-Tunnel; "
+                             "--secure setzt die Liste ohnehin")
+    parser.add_argument("--secure", action="store_true",
+                        help="Fassung für KNX Secure: IsSecureEnabled, "
+                             "Benutzer- und Tabellengrößen, BusInterfaces. "
+                             "Mit eigener Applikationsversion bauen")
     parser.add_argument("--identity", help="zusätzlich die passende JSON-Kennung "
                                            "für das Dashboard schreiben")
     args = parser.parse_args()
@@ -259,6 +297,12 @@ def main():
     print("  Hersteller 0x%04X, Applikation 0x%04X v0x%02X, Maske MV-%04X, "
           "%d Tunneladressen" % (args.manufacturer, args.app, args.app_version,
                                  MASK, args.tunnels))
+    if args.secure:
+        print("  KNX Secure: IsSecureEnabled, %d Benutzer, %d Tunnel-Benutzer"
+              % (args.tunnels + 1, args.tunnels))
+        if args.app_version == BASE_APP_VERSION:
+            print("  Hinweis: dieselbe Applikationsversion wie die Fassung ohne "
+                  "Secure - besser --app-version 3")
     print("  unsigniert - die ETS nimmt die Datei erst nach dem Signieren an")
 
     # Dieselbe Datenbank als eine Datei, zum Signieren mit OpenKNXproducer.
