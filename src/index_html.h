@@ -271,6 +271,34 @@ small{color:var(--dim)} small.warn{color:var(--warn)}
   </section>
 
   <section class="card">
+    <h2>KNX Secure</h2>
+    <div class="row"><span>Data Secure</span><span id="secMode">-</span></div>
+    <div class="row"><span>Tool-Key</span><span id="secTool">-</span></div>
+    <div class="row"><span>KNXnet/IP Secure</span><span id="secIp">-</span></div>
+    <div class="row"><span>Secure Routing</span><span id="secRt">-</span></div>
+    <div class="row"><span>Sessions</span><span id="secSess">-</span></div>
+    <div class="row"><span>TCP (Core v2)</span><span id="secTcp">-</span></div>
+    <div class="row"><span>Abgewiesen</span><span id="secRef">-</span></div>
+    <div class="row"><span>Krypto-Selbsttest</span><span id="secTest">-</span></div>
+    <label class="chk" style="margin-top:10px">
+      <input type="checkbox" id="secTcpOn" onchange="setTcp()">
+      KNXnet/IP über TCP (Core v2)</label>
+    <div class="actions">
+      <button class="sec" onclick="showCert()">Gerätezertifikat</button>
+      <button class="sec" onclick="resetSecure()">Secure-Konfiguration löschen</button>
+    </div>
+    <p><small>Die ETS nimmt dieses Gerät sicher in Betrieb, wenn die
+    Produktdatenbank KNX Secure vorsieht: Sie fragt nach dem
+    Gerätezertifikat, ersetzt den FDSK durch einen eigenen Tool-Key und lädt
+    die Schlüssel für KNXnet/IP Secure. Ab dann nimmt das Gerät
+    Programmierbefehle nur noch verschlüsselt an.</small></p>
+    <p><small>Löschen setzt nur KNX Secure in den Auslieferungszustand zurück
+    &ndash; der FDSK ist wieder der Tool-Key, Adresse und Filtertabelle
+    bleiben. Für den Fall, dass das ETS-Projekt mit den Schlüsseln verloren
+    ist.</small></p>
+  </section>
+
+  <section class="card">
     <h2>KNX TP1 &ndash; SB-Interface</h2>
     <div class="row"><span>Verbindung</span><span id="tpConn">-</span></div>
     <div class="row"><span>Schnittstelle</span><span id="tpType">-</span></div>
@@ -455,6 +483,27 @@ small{color:var(--dim)} small.warn{color:var(--warn)}
   Netz, nicht vor Mitlesen. Wirkt nach einem Neustart. Setzbar nur, wenn ein
   Taster auf Werkeinstellungen liegt: Das ist der einzige Weg zurück, wenn
   das Passwort verloren geht.</small></p>
+</dialog>
+
+<dialog id="certDlg">
+  <h2>Gerätezertifikat</h2>
+  <div class="row"><span>Seriennummer</span><span id="certSn" data-dyn>-</span></div>
+  <div class="row"><span>FDSK</span><span id="certKey" data-dyn style="font-family:monospace">-</span></div>
+  <label>Zertifikat (36 Zeichen)</label>
+  <input id="certTxt" readonly style="font-family:monospace">
+  <div class="actions">
+    <button onclick="copyText($('certTxt').value)">Kopieren</button>
+    <button class="sec" onclick="certDlg.close()">Schließen</button>
+  </div>
+  <p><small>Die ETS fragt beim Hinzufügen eines Secure-Geräts nach diesem
+  Zertifikat. Der FDSK ist der Schlüssel eines Geräts im
+  Auslieferungszustand &ndash; wer ihn kennt, kann es in Betrieb nehmen.
+  Deshalb zeigt das Dashboard ihn nur, solange er gilt: Nach der
+  Inbetriebnahme gilt der Tool-Key der ETS, bis die Secure-Konfiguration
+  gelöscht wird.</small></p>
+  <p><small>Die Kodierung des 36-stelligen Zertifikats ist öffentlich nicht
+  beschrieben; hier steht Base32 aus Seriennummer und FDSK. Nimmt die ETS
+  es nicht an, gelten Seriennummer und FDSK darüber.</small></p>
 </dialog>
 
 <dialog id="nameDlg">
@@ -1701,6 +1750,63 @@ const EN = {
 'Anfang':'Top', 'Ende':'Bottom',
 'GA-Filter deaktiviert':'Group address filter off',
 'ETS-Zugriff':'ETS access', 'Abgewiesen':'Refused',
+'Krypto-Selbsttest':'Crypto self test',
+'KNXnet/IP über TCP (Core v2)':'KNXnet/IP over TCP (core v2)',
+'Wirkt nach einem Neustart. Jetzt neu starten?':'Takes effect after a restart. Restart now?',
+'Speichern fehlgeschlagen.':'Saving failed.', 'Gerätezertifikat':'Device certificate',
+'Secure-Konfiguration löschen':'Clear the Secure configuration',
+'Sicherheitsobjekt nicht geladen':'security object not loaded',
+'FDSK (Auslieferungszustand)':'FDSK (delivery state)', 'von der ETS gesetzt':'set by ETS',
+'Management':'management', 'gesichert':'secured',
+'Passwörter':'passwords', 'nicht konfiguriert':'not configured',
+'Zeitgeber':'timekeeper', 'synchron':'in sync', 'synchronisiert':'synchronising',
+'veraltet':'stale', 'User':'user', 'nicht angemeldet':'not authenticated',
+'seit dem Start':'since start', 'Verbindungen':'connections', 'ungesichert':'plain',
+'Anmeldung':'authentication', 'Wiederholung':'replay',
+'Zertifikat (36 Zeichen)':'Certificate (36 characters)', 'Kopieren':'Copy',
+'Zertifikat nicht lesbar.':'Could not read the certificate.',
+['Der FDSK ist nicht mehr aktiv: Die ETS hat einen eigenen Tool-Key gesetzt. '
++ 'Das Zertifikat steht im ETS-Projekt. Erst nach „Secure-Konfiguration löschen“ '
++ 'gilt der FDSK wieder.']:
+  'The FDSK is no longer active: ETS has set a tool key of its own. The '
++ 'certificate is in the ETS project. Only after "Clear the Secure '
++ 'configuration" does the FDSK apply again.',
+'KNX Secure zurückgesetzt. Das Gerät startet neu.':'KNX Secure reset. The device restarts.',
+['KNX Secure zurücksetzen?\n\nTool-Key, Sicherheitsobjekt und die Schlüssel '
++ 'für KNXnet/IP Secure werden gelöscht, der FDSK gilt wieder. Adresse und '
++ 'Filtertabelle bleiben. Das Gerät startet neu.']:
+  'Reset KNX Secure?\n\nTool key, security object and the KNXnet/IP Secure keys '
++ 'are deleted, the FDSK applies again. Address and filter table stay. The '
++ 'device restarts.',
+['Die ETS nimmt dieses Gerät sicher in Betrieb, wenn die Produktdatenbank KNX '
++ 'Secure vorsieht: Sie fragt nach dem Gerätezertifikat, ersetzt den FDSK durch '
++ 'einen eigenen Tool-Key und lädt die Schlüssel für KNXnet/IP Secure. Ab dann '
++ 'nimmt das Gerät Programmierbefehle nur noch verschlüsselt an.']:
+  'ETS commissions this device securely when its product database provides for '
++ 'KNX Secure: it asks for the device certificate, replaces the FDSK with a tool '
++ 'key of its own and loads the KNXnet/IP Secure keys. From then on the device '
++ 'accepts programming only encrypted.',
+['Löschen setzt nur KNX Secure in den Auslieferungszustand zurück – der FDSK ist '
++ 'wieder der Tool-Key, Adresse und Filtertabelle bleiben. Für den Fall, dass '
++ 'das ETS-Projekt mit den Schlüsseln verloren ist.']:
+  'Clearing resets KNX Secure alone to its delivery state - the FDSK is the tool '
++ 'key again, address and filter table stay. For when the ETS project with the '
++ 'keys is lost.',
+['Die ETS fragt beim Hinzufügen eines Secure-Geräts nach diesem Zertifikat. Der '
++ 'FDSK ist der Schlüssel eines Geräts im Auslieferungszustand – wer ihn kennt, '
++ 'kann es in Betrieb nehmen. Deshalb zeigt das Dashboard ihn nur, solange er gilt: '
++ 'Nach der Inbetriebnahme gilt der Tool-Key der ETS, bis die Secure-Konfiguration '
++ 'gelöscht wird.']:
+  'ETS asks for this certificate when a Secure device is added. The FDSK is the '
++ 'key of a device in delivery state - whoever knows it can commission it. So the '
++ 'dashboard shows it only while it applies: after commissioning the tool key of '
++ 'ETS applies, until the Secure configuration is cleared.',
+['Die Kodierung des 36-stelligen Zertifikats ist öffentlich nicht beschrieben; '
++ 'hier steht Base32 aus Seriennummer und FDSK. Nimmt die ETS es nicht an, '
++ 'gelten Seriennummer und FDSK darüber.']:
+  'The encoding of the 36 character certificate is not publicly documented; this '
++ 'is Base32 of serial number and FDSK. Should ETS not accept it, serial number '
++ 'and FDSK above are what counts.',
 'Über welche Wege die ETS dieses Gerät programmieren darf.':
   'The paths over which ETS may program this device.',
 'über die TP-Linie':'over the TP line',
@@ -2071,6 +2177,7 @@ async function refresh(){
                          : t('Aktiv, weil die ETS das Gerät noch nicht programmiert hat.'))
       : t('Die Filtertabelle der ETS entscheidet.');
   showEts(s.ets_access);
+  showSecure(s.secure);
 
   $('beatRow').style.display = s.led_beat_available ? '' : 'none';
   $('beat').checked          = s.led_heartbeat;
@@ -3399,6 +3506,90 @@ async function switchPart(){
   let why = '';
   try { why = (await r.json()).error || ''; } catch(e){}
   alert(t('Umschalten nicht möglich.') + (why ? '\n\n' + why : ''));
+}
+
+/* KNX Secure - see SECURE.md. */
+function showSecure(x){
+  if(!x) return;
+  $('secMode').innerHTML = x.mode
+      ? '<span class="dot ok"></span>' + t('aktiv') + (x.loaded ? '' : ' \u2013 ' + t('Sicherheitsobjekt nicht geladen'))
+      : '<span class="dot off"></span>' + t('aus');
+  $('secTool').textContent = t(x.factory ? 'FDSK (Auslieferungszustand)' : 'von der ETS gesetzt');
+
+  const fam = [], F = x.families || 0;
+  if(F & (1 << 3)) fam.push(t('Management'));
+  if(F & (1 << 4)) fam.push(t('Tunnel'));
+  if(F & (1 << 5)) fam.push(t('Routing'));
+  $('secIp').innerHTML = fam.length
+      ? '<span class="dot ok"></span>' + t('gesichert') + ': ' + fam.join(', ')
+        + ' \u00b7 ' + x.passwords + ' ' + t('Passwörter')
+      : '<span class="dot off"></span>' + t('nicht konfiguriert');
+
+  const r = x.routing || {};
+  $('secRt').innerHTML = r.on
+      ? '<span class="dot ' + (r.synced ? 'ok' : 'warn') + '"></span>'
+        + t(r.synced ? (r.keeper ? 'Zeitgeber' : 'synchron') : 'synchronisiert')
+        + ' \u00b7 ' + r.in + ' / ' + r.out + ' ' + t('Telegramme')
+        + (r.stale ? ' \u00b7 ' + r.stale + ' ' + t('veraltet') : '')
+      : '<span class="dot off"></span>' + t('aus');
+
+  const ss = (x.sessions || []).filter(e => e.session);
+  $('secSess').textContent = ss.length
+      ? ss.map(e => e.ip + ' ' + t('User') + ' ' + e.user + (e.auth ? '' : ' (' + t('nicht angemeldet') + ')')).join(', ')
+      : t('keine') + (x.opened ? ' \u00b7 ' + x.opened + ' ' + t('seit dem Start') : '');
+
+  $('secTcp').innerHTML = x.tcp
+      ? '<span class="dot ok"></span>' + x.tcp_conn + ' ' + t('Verbindungen')
+      : '<span class="dot off"></span>' + t('aus');
+
+  const refused = (x.plain_refused || 0) + (x.auth_fail || 0) + (x.mac_fail || 0) + (x.replays || 0) + (x.hijack || 0);
+  $('secRef').textContent = refused
+      ? refused + ' (' + t('ungesichert') + ' ' + x.plain_refused + ', ' + t('Anmeldung') + ' ' + x.auth_fail
+        + ', MAC ' + x.mac_fail + ', ' + t('Wiederholung') + ' ' + x.replays + ')'
+      : t('keine');
+
+  if(document.activeElement !== $('secTcpOn')) $('secTcpOn').checked = x.tcp_enabled;
+  $('secTest').innerHTML = dot(x.test_ok);
+  $('secTest').title = x.test || '';
+}
+
+async function setTcp(){
+  const on = $('secTcpOn').checked;
+  const body = new URLSearchParams({tcp: on ? '1' : '0'});
+  try {
+    const r = await fetch('/api/knx/tcp', {method:'POST', body});
+    if(!r.ok) throw 0;
+    if(confirm(t('Wirkt nach einem Neustart. Jetzt neu starten?')))
+      await fetch('/api/reboot', {method:'POST'});
+  } catch(e){ alert(t('Speichern fehlgeschlagen.')); }
+}
+
+async function showCert(){
+  try {
+    const r = await fetch('/api/knx/secure/certificate');
+    if(r.status === 409){
+      alert(t('Der FDSK ist nicht mehr aktiv: Die ETS hat einen eigenen Tool-Key gesetzt. '
+            + 'Das Zertifikat steht im ETS-Projekt. Erst nach „Secure-Konfiguration löschen“ '
+            + 'gilt der FDSK wieder.'));
+      return;
+    }
+    const c = await r.json();
+    $('certSn').textContent  = c.serial.replace(/(....)(....)(....)/, '$1:$2:$3');
+    $('certKey').textContent = c.fdsk.replace(/(....)(?!$)/g, '$1 ');
+    $('certTxt').value       = c.certificate;
+    certDlg.showModal();
+  } catch(e){ alert(t('Zertifikat nicht lesbar.')); }
+}
+
+async function resetSecure(){
+  if(!confirm(t('KNX Secure zurücksetzen?\n\nTool-Key, Sicherheitsobjekt und die Schlüssel '
+            + 'für KNXnet/IP Secure werden gelöscht, der FDSK gilt wieder. Adresse und '
+            + 'Filtertabelle bleiben. Das Gerät startet neu.'))) return;
+  try {
+    const r = await fetch('/api/knx/secure/reset', {method:'POST'});
+    if(!r.ok){ alert(t('Zurücksetzen fehlgeschlagen.')); return; }
+    alert(t('KNX Secure zurückgesetzt. Das Gerät startet neu.'));
+  } catch(e){ alert(t('Zurücksetzen fehlgeschlagen.')); }
 }
 
 async function resetKnx(){

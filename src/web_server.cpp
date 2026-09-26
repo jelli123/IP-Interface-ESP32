@@ -16,6 +16,7 @@
 #include "cpu_load.h"
 #include "eth_interface.h"
 #include "ets_access.h"
+#include "knxip_shim.h"
 #include "fw_hash.h"
 #include "hour_meter.h"
 #include "hw_config.h"
@@ -320,6 +321,7 @@ static String statusJson()
         }
         json += "},";
     }
+    json += "\"secure\":" + knxLink.secureJson() + ",";
     json += "\"led_present\":" + String(statusLed.present() ? "true" : "false") + ",";
     json += "\"led_beat_available\":" + String(statusLed.hasHeartbeat() ? "true" : "false") + ",";
     json += "\"led_heartbeat\":" + String(statusLed.heartbeat() ? "true" : "false") + ",";
@@ -731,6 +733,53 @@ static void registerKnxRoutes()
 
         request->send(200, "application/json",
                       String("{\"unlock_left\":") + etsAccess.unlockRemaining() + "}");
+    });
+
+    /*
+     * The device certificate for ETS: serial number and FDSK. Only on
+     * request, never in the status poll - it is the tool key of a device in
+     * delivery state.
+     */
+    server.on("/api/knx/secure/certificate", HTTP_GET, [](AsyncWebServerRequest* request) {
+        String json = knxLink.certificateJson();
+        if (json.length() == 0)
+        {
+            request->send(409, "application/json",
+                          "{\"error\":\"the FDSK is inactive - ETS has set its own tool key\"}");
+            return;
+        }
+        request->send(200, "application/json", json);
+    });
+
+    /*
+     * Back to KNX Secure delivery state without touching the rest of the ETS
+     * configuration: tool key = FDSK, no security object, no KNXnet/IP Secure
+     * keys. The way out when the ETS project with the keys is lost.
+     */
+    /*
+     * KNXnet/IP over TCP on or off (tcp=1|0). Stored, effective after a
+     * restart: the listener and the core version in every discovery answer
+     * change together, and ETS remembers what it found.
+     */
+    server.on("/api/knx/tcp", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        if (!request->hasParam("tcp", true))
+        {
+            request->send(400, "application/json", "{\"error\":\"parameter 'tcp' missing\"}");
+            return;
+        }
+
+        knxIpShim.tcpEnabled(request->getParam("tcp", true)->value() == "1");
+        request->send(200, "application/json", "{\"status\":\"ok\",\"restart\":true}");
+    });
+
+    server.on("/api/knx/secure/reset", HTTP_POST, [](AsyncWebServerRequest* request) {
+        if (!mutationAllowed(request)) return;
+
+        knxLink.requestSecureReset();
+        request->send(200, "application/json", "{\"status\":\"ok\",\"reboot\":true}");
+        netManager.scheduleReboot();
     });
 
     /* --------------------------------------------------------------------- *
