@@ -54,6 +54,12 @@ E-Mail sind Platzhalter – vor dem Einreichen `git commit --amend --reset-autho
 | 9 | Busmonitor-Verbindung wird wortlos abgelehnt | Diagnose | – |
 | 10 | Pflicht-Properties für Maske 091A fehlen | Lücke | – |
 | 11 | Suchantworten versprechen Core 2 und damit TCP | Fehler | – |
+| 12 | Data Secure: FDSK und Zufallszahl sind Konstanten | Sicherheitslücke | – |
+| 13 | Data Secure: Folgenummern beginnen nach jedem Neustart von vorn | Fehler | – |
+| 14 | Data Secure: MAC bei reiner Authentifizierung falsch berechnet | Fehler | – |
+| 15 | Data Secure: Sicherheit wird entschlüsselt, aber nie geprüft | Sicherheitslücke | – |
+| 16 | Data Secure im Koppler verschiebt das Speicherabbild | Entwurf | – |
+| 17 | `PID_KNXNETIP_DEVICE_CAPABILITIES` meldet nur Device Management | Fehler | – |
 
 ---
 
@@ -445,6 +451,147 @@ erweiterte Suche trotzdem (Patch 18 in `scripts/patch_knx.py`). Upstream
 gehören die beiden Bedeutungen getrennt: die angekündigte Version darf nur
 so hoch sein wie das, was der Stack tatsächlich kann.
 
+Seit KNXnet/IP über TCP außerhalb des Stacks läuft (`src/knxip_shim.cpp`),
+kündigt die Firmware wieder Core 2 an – aber nur, solange der TCP-Listener
+tatsächlich läuft.
+
+---
+
+## 12 – FDSK und Zufallszahl sind Konstanten
+
+**Dateien:** `src/knx/security_interface_object.cpp`,
+`src/knx/secure_application_layer.cpp`
+
+```cpp
+const uint8_t SecurityInterfaceObject::_fdsk[] = { 0x00, 0x01, 0x02, ... 0x0F };
+...
+uint64_t SecureApplicationLayer::getRandomNumber()
+{
+    return 0x000102030405; // TODO: generate random number
+}
+```
+
+Der FDSK ist der Tool-Key eines Geräts im Auslieferungszustand und steht
+auf seinem Aufkleber. Im Stack ist er für jedes jemals gebaute Gerät derselbe
+– wer ihn kennt, kennt ihn für alle, und die sichere Inbetriebnahme schützt
+vor niemandem. Die „Zufallszahl“ ist die Challenge jedes `S-A_Sync_Req` und
+die Maske jedes `S-A_Sync_Res`.
+
+Diese Firmware erzeugt den FDSK je Gerät beim ersten Start und hält ihn im
+NVS (`src/knx_secure_store.cpp`), setzt ihn nach dem Start und nach einem
+Master-Reset als Tool-Key ein und liefert Zufallszahlen aus einem mit
+Hardware-Entropie geimpften CTR-DRBG (Patch 21 und 22). Upstream bräuchte es
+eine Plattformfunktion für beides.
+
+---
+
+## 13 – Folgenummern beginnen nach jedem Neustart von vorn
+
+**Datei:** `src/knx/secure_application_layer.h`
+
+```cpp
+uint64_t _sequenceNumberToolAccess = 50;
+uint64_t _sequenceNumber = 0;
+```
+
+Data Secure verwirft jeden Rahmen, dessen Folgenummer nicht über der zuletzt
+angenommenen desselben Absenders liegt. Die Zähler leben nur im RAM; nach
+einem Neustart sendet das Gerät Nummern, die die ETS längst gesehen hat, und
+seine Antworten werden verworfen. Dasselbe gilt für die zuletzt angenommene
+Nummer des Tools – nach einem Neustart ließe sich ein aufgezeichneter Rahmen
+wiederholen. Und was die ETS bei der Inbetriebnahme in
+`PID_SEQUENCE_NUMBER_SENDING` schreibt, liest der Stack nie zurück.
+
+Nebenbei führt der Stack zwei Sendezähler (für Tool-Zugriff mit einer
+nicht genormten PID 250); AN158 kennt einen.
+
+Diese Firmware hält Hochwassermarken im NVS, reserviert in Blöcken zu 1000
+und lässt beide Zähler vom höchsten bekannten Wert weiterzählen, die
+geschriebenen Properties eingeschlossen (Patch 22).
+
+---
+
+## 14 – MAC bei reiner Authentifizierung falsch berechnet
+
+**Datei:** `src/knx/secure_application_layer.cpp`, `calcAuthOnlyMac()` und
+`decrypt()`
+
+Drei Abweichungen von AN158, die sich gegenseitig nicht aufheben:
+
+* Die Zusatzdaten sind SCF und APDU; der Stack lässt das SCF weg.
+* B0 kündigt bei reiner Authentifizierung keine Nutzdaten an (Längenoktett
+  0); der Stack trägt die APDU-Länge ein.
+* Der MAC ist der **letzte** Chiffreblock; der Stack nimmt den ersten.
+
+Dazu überschreibt `decrypt()` die empfangene APDU danach mit
+`memcpy(plainApdu, secureAsdu, …)` – `secureAsdu` zeigt auf das SCF, nicht
+auf die APDU.
+
+Geprüft gegen den Referenzvektor aus bussard (Schlüssel `00..0F`,
+Folgenummer 42, 1.1.1 → 1/2/3, APDU `00 81`): richtig ist `2e51ca4a`, die
+Rechnung des Stacks ergibt `b2f48e88` (`test/secure_crypto_test.cpp`). Die
+ETS nutzt für Tool-Zugriff Authentifizierung mit Verschlüsselung, deshalb
+fällt es beim Programmieren nicht auf; gesicherte Gruppentelegramme mit
+reiner Authentifizierung scheitern. Behoben in Patch 22.
+
+---
+
+## 15 – Sicherheit wird entschlüsselt, aber nie geprüft
+
+**Dateien:** `src/knx/application_layer.cpp`, `src/knx/bau_systemB.cpp`
+
+Der Secure Application Layer entschlüsselt `S-A_Data` und reicht die
+gefundene Sicherheit (`SecurityControl`) weiter – ausgewertet wird sie nur
+für Gruppenobjekte. Im Secure-Modus nimmt das Gerät ein ungesichertes
+`A_PropertyValue_Write` genauso an wie ein gesichertes, und Tool-Key,
+Gruppenschlüssel und Passwort-Hashes lassen sich von jedem lesen.
+
+3/5/1 ordnet jedem Dienst und jeder Property eine Access Policy zu, je Rolle
+und Sicherheitsstufe, getrennt für Secure-Modus an und aus. Diese Firmware
+prüft sie an den drei Stellen, an denen der Application Layer eingehende
+Dienste an die BAU übergibt, und im cEMI-Server (Patch 23,
+`src/knx_access_policy.cpp`). Eine abgewiesene Property-Anfrage wird mit
+0 Elementen bzw. `AccessDenied` beantwortet.
+
+Nebenbefund: der Secure Application Layer schreibt jeden Rahmen ins Log,
+entschlüsselte im Klartext – bei der Inbetriebnahme also auch den Tool-Key,
+den die ETS schreibt. Seine Ausgaben sind hier abgeschaltet.
+
+---
+
+## 16 – Data Secure im Koppler verschiebt das Speicherabbild
+
+**Dateien:** `src/knx/bau_systemB_coupler.cpp`, `src/knx/bau091A.cpp`
+
+Mit `USE_DATASECURE` meldet `BauSystemBCoupler` sein Sicherheitsobjekt direkt
+hinter dem Geräteobjekt für das Speicherabbild an. Alles dahinter rutscht,
+und ein Gerät, das mit einer Firmware ohne Data Secure programmiert wurde,
+liest seine Tabellen nach dem Update vom falschen Ort. Eine Versionskennung,
+die das erkennen ließe, hat das Abbild nicht.
+
+Außerdem verlangt `Bau091A::configured()` ein geladenes Sicherheitsobjekt.
+Ein Gerät, das die ETS ohne Secure programmiert, lädt es nie und gilt damit
+für immer als unprogrammiert.
+
+Diese Firmware hält das Sicherheitsobjekt im NVS statt im Abbild und verlangt
+es nur im Secure-Modus (Patch 21). Upstream wäre eine Versionskennung des
+Abbilds der bessere Weg.
+
+---
+
+## 17 – `PID_KNXNETIP_DEVICE_CAPABILITIES` meldet nur Device Management
+
+**Datei:** `src/knx/ip_parameter_object.cpp`
+
+PID 68 ist nach 03_08_03 2.5.19 ein Bitfeld der unterstützten Dienstfamilien:
+Bit 0 Device Management, Bit 1 Tunnelling, Bit 2 Routing, Bit 6 Security. Der
+Stack liefert fest `0001h`, obwohl er tunnelt und routet. 03_08_09 2.6.2.1
+verlangt bei einem Secure-Gerät zusätzlich das Security-Bit.
+
+Diese Firmware liefert `0047h` (Patch 24). Upstream gehört der Wert aus den
+tatsächlich übersetzten Familien zusammengesetzt, also mindestens Bit 1 und 2
+bei `KNX_TUNNELING` bzw. Routing und Bit 6 bei KNXnet/IP Secure.
+
 ---
 
 ## Was hier bleibt und nicht nach oben gehört
@@ -459,3 +606,7 @@ so hoch sein wie das, was der Stack tatsächlich kann.
 | Messpunkte hinter `SBIP_KNX_TRACE` | Diagnose für dieses Projekt |
 | Zähler für unquittierte Tunnelrahmen | Behelf; die saubere Lösung wäre Punkt 8 |
 | Management-Sperre pro Weg (`sbipManagementHook`) | Einstellung dieser Firmware; der Standard sieht dafür KNX Data Secure vor |
+| KNXnet/IP über TCP und KNXnet/IP Secure (`src/knxip_shim.cpp`) | Liegt außerhalb des Stacks, der beides nicht kennt; er sieht weiter nur UDP. Upstream wäre das eine eigene Transportschicht |
+| Keine Extended Frames an den TP-UART (Patch 25) | Der Emulator auf dem SB-Interface kann sie noch nicht; eine Eigenschaft dieser Hardware, nicht des Stacks |
+| IP-Secure-Properties als Callback-Properties (Patch 19) | Halten das Speicherabbild programmierter Geräte gültig; die Werte liegen im NVS der Firmware |
+| Tunnelwahl je Secure-Benutzer (Patch 20) | Gehört upstream in `loopHandleConnectRequest()`, sobald der Stack Secure Sessions kennt |

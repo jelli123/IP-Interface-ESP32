@@ -24,6 +24,8 @@ NCN5130-Transceiver; hier sitzt stattdessen ein Selfbus-Interface am UART.
 | WLAN-Einrichtung | Captive Portal (offener AP) **oder** Improv über USB |
 | Programmiermodus | per Klick im Dashboard, kein Tastendruck am Gerät nötig |
 | **ETS-Zugriff** | pro Weg sperrbar (TP, Tunnel, Routing), Freigabe auf Zeit per Taster |
+| **KNX Secure** | KNXnet/IP Secure (Tunnel, Device Management, Routing) und Data Secure für das Management, siehe [unten](#knx-secure) |
+| KNXnet/IP über TCP | Core v2, wie die ETS 6 Tunnel und Secure Sessions aufbaut; abschaltbar |
 | **Geräteidentität** | im Dashboard einstellbar oder aus einer knxprod eingelesen, mit Prüfung der Ladeprozedur |
 | OTA-Update | Datei-Upload **und** Online-Pull aus einem Manifest |
 | **LPC-Programmierung** | SB-Interface über zwei GPIO erkennen und flashen |
@@ -1414,6 +1416,9 @@ das Passwort und ein zweiter Ort für Fehler.
 | POST | `/api/progmode` | `state=on\|off\|toggle` |
 | POST | `/api/knx/ets_access` | `tp=`, `tunnel=`, `routing=` je `1\|0` → ETS-Zugriff pro Weg |
 | POST | `/api/knx/ets_unlock` | `state=on\|off` → alle Wege auf Zeit öffnen oder das beenden |
+| GET | `/api/knx/secure/certificate` | Seriennummer, FDSK und Gerätezertifikat; 409, sobald die ETS einen Tool-Key gesetzt hat |
+| POST | `/api/knx/secure/reset` | KNX Secure in den Auslieferungszustand, Neustart |
+| POST | `/api/knx/tcp` | `tcp=1\|0` → KNXnet/IP über TCP, wirkt nach Neustart |
 | GET | `/api/hwconfig` | aktives, gespeichertes und Image-Profil |
 | POST | `/api/hwconfig` | JSON-Profil speichern (Teilfelder erlaubt) |
 | POST | `/api/hwconfig/reset` | gespeichertes Profil verwerfen |
@@ -1806,8 +1811,9 @@ Dort gibt es zwei Adressfelder:
 | *Host Individual Address* | Adresse des Geräts selbst – nur Anzeige |
 | *Individual Address* | Adresse der genutzten Tunnelverbindung |
 
-Das zweite Feld ist editierbar, weil dieses Gerät ein Plain-Device ohne KNX
-Secure ist; bei secure-fähigen Geräten ginge es nur im Projekt. Genau dieses
+Das zweite Feld ist editierbar, solange das Gerät mit der Produktdatenbank
+ohne Secure betrieben wird; mit der Secure-Fassung (siehe [KNX
+Secure](#knx-secure)) vergibt die ETS die Tunneladressen im Projekt. Genau dieses
 Feld schreibt in `PID_ADDITIONAL_INDIVIDUAL_ADDRESSES`. Empfehlung der
 KNX-Doku: Bereich und Linie an den Einbauort anpassen, als Gerätenummer eine
 im Projekt unbenutzte wählen – typischerweise 255.
@@ -2684,6 +2690,149 @@ Zwei Einschränkungen, offen benannt:
 > Wenn die ETS meckert, ist das XML der Ort, an dem nachzubessern ist – eine
 > Datei, kein Firmwarebau.
 
+## KNX Secure
+
+Das Gerät kann **KNXnet/IP Secure** – gesicherte Tunnel, gesichertes Device
+Management und gesichertes Routing – und **KNX Data Secure** für sein eigenes
+Management. Umsetzung, Belege und offene Punkte stehen in
+[SECURE.md](SECURE.md); hier geht es um die Bedienung.
+
+> **Stand:** Umgesetzt nach dem KNX Standard v3.0.0 (03_08_09 KNX IP Secure,
+> 03_08_02 Core für TCP, AN193 Access Policies). Die Kryptografie ist Byte für
+> Byte gegen die Beispiele in Annex A von 03_08_09 geprüft, und das Gerät
+> prüft sie bei jedem Start erneut. Eine Inbetriebnahme mit der ETS 6 und
+> Secure Routing gegen einen zweiten Secure-Router sind noch nicht getestet.
+> Was die Spezifikation für ein zertifizierbares Gerät außerdem verlangt –
+> Tunnelling v2, Device Management v2, KNX IP System Broadcast – fehlt noch,
+> siehe [SECURE.md](SECURE.md).
+
+### Was sich ohne Secure ändert – fast nichts
+
+Solange die ETS das Gerät nicht sicher in Betrieb nimmt, verhält es sich wie
+bisher. Zwei Dinge sind neu und auch dann wirksam:
+
+* **KNXnet/IP über TCP.** Das Gerät kündigt Core-Version 2 an, und die ETS 6
+  baut ihre Tunnel dann über TCP auf statt über UDP. Das war vorher
+  abgeschaltet, weil der Stack kein TCP kann; jetzt übernimmt es eine Schicht
+  zwischen Stack und Netz. Wer damit Probleme hat, schaltet es auf der Karte
+  *KNX Secure* ab – nach einem Neustart spricht das Gerät wieder nur UDP.
+  Dann gibt es allerdings auch **keine gesicherten Tunnel**: Secure Sessions
+  laufen laut Spezifikation ausschließlich über TCP.
+* **Die Schlüssel-Properties sind geschützt.** Tool-Key, Backbone-Key,
+  Passwort-Hashes und das Sicherheitsobjekt lassen sich nur mit dem Tool-Key
+  schreiben und gar nicht lesen – auch ohne Secure-Modus, so will es die
+  Spezifikation. Alles andere bleibt offen wie zuvor.
+
+### Der FDSK
+
+Jedes Secure-Gerät hat einen *Factory Default Setup Key*, der bis zur
+Inbetriebnahme sein Tool-Key ist. Die ETS erfährt ihn aus dem
+**Gerätezertifikat** auf dem Aufkleber. Dieses Gerät erzeugt ihn beim ersten
+Start aus dem Hardware-Zufallsgenerator und legt ihn im NVS ab; er übersteht
+Firmware-Updates, das Löschen der ETS-Programmierung und den Master-Reset,
+nicht aber *Werkseinstellungen* (die löschen das ganze NVS).
+
+Das Dashboard zeigt ihn auf der Karte *KNX Secure* unter
+**Gerätezertifikat**: Seriennummer, FDSK und die 36-stellige Form für die
+ETS – aber nur, solange er noch der Tool-Key ist. Die Spezifikation verbietet,
+den FDSK über irgendeine Schnittstelle auslesbar zu machen (03_05_01 6.1);
+das Dashboard ersetzt hier nur den Aufkleber, den dieses Gerät nicht hat, und
+schweigt, sobald die ETS einen eigenen Tool-Key gesetzt hat. Wie die ETS diese 36 Zeichen genau erwartet, ist öffentlich nicht
+beschrieben – hier steht Base32 aus Seriennummer und FDSK. Nimmt die ETS
+das Zertifikat nicht an, bitte melden; Seriennummer und FDSK darüber sind in
+jedem Fall die richtigen.
+
+Im Auslieferungszustand ist der FDSK auch der Geräte-Authentifizierungscode
+für KNXnet/IP Secure, und Benutzer 1 hat das leere Passwort (03_08_09
+2.3.1.3). Wer den FDSK kennt, kann ein Gerät im Auslieferungszustand in Betrieb
+nehmen. Deshalb steht er nicht im Statusdokument, sondern nur hinter der
+eigenen Anfrage – und der Zugangsschutz des Dashboards gilt auch hier.
+
+### KNX Secure in Betrieb nehmen
+
+1. Produktdatenbank in der Secure-Fassung bauen und signieren:
+
+   ```
+   python3 scripts/make_knxprod.py --secure --app-version 3 --identity sbip-identity.json
+   ```
+
+   und die Identitätsdatei im Dashboard einspielen (*Geräteidentität →
+   JSON laden*, Neustart). Die Fassung trägt `IsSecureEnabled`, die Zahl der
+   Benutzer (einer je Tunnel plus der Management-Benutzer) und die
+   BusInterfaces, über die die ETS jedem Tunnel ein Passwort gibt.
+2. In der ETS das Gerät einfügen, *Secure-Inbetriebnahme* aktivieren und
+   das Gerätezertifikat eingeben.
+3. Physikalische Adresse vergeben und herunterladen. Die ETS ersetzt dabei
+   den FDSK durch einen eigenen Tool-Key, schaltet den Secure-Modus ein und
+   lädt Backbone-Key, Geräte-Authentifizierungscode, Passwörter und die
+   Zuordnung von Benutzern zu Tunneln.
+4. Das Dashboard zeigt danach *Data Secure: aktiv*, *Tool-Key: von der ETS
+   gesetzt* und unter *KNXnet/IP Secure* die gesicherten Dienstfamilien.
+
+Ab dann gilt:
+
+| | ungesichert | gesichert |
+| --- | --- | --- |
+| Tunnel aufbauen | abgewiesen (`E_CONNECTION_TYPE`) | über eine Secure Session (TCP) mit Benutzer und Passwort |
+| Device Management (cEMI) | abgewiesen | nur Benutzer 1 (Management); `M_Prop`-Zugriffe gelten trotzdem als anonym und sehen nur die offenen Properties (03_08_09 2.2.1.4.3) |
+| Routing-Telegramme | verworfen | mit dem Backbone-Key, Zeitstempel synchronisiert |
+| Programmieren des Geräts | abgewiesen | nur mit dem Tool-Key der ETS |
+| Suche und Beschreibung | beantwortet | – |
+
+Jeder Benutzer über 1 bekommt nur die Tunnel, die die ETS ihm zuordnet;
+ist keiner davon frei, lehnt das Gerät mit `E_NO_MORE_CONNECTIONS` ab; fragt
+ein erweitertes CRI nach einer bestimmten Adresse, antwortet es mit
+`E_NO_TUNNELLING_ADDRESS`, `E_AUTHORISATION_ERROR` oder
+`E_CONNECTION_IN_USE`. Eine Session ohne gültigen Rahmen endet nach 60 s, eine
+unangemeldete nach 10 s. Eine TCP-Verbindung darf mehrere Sessions und
+Verbindungen tragen; ohne eine davon schließt das Gerät sie nach 10 s Stille.
+
+### Secure Routing
+
+Alle Router eines gesicherten Backbones führen einen gemeinsamen Zeitgeber
+in Millisekunden; er ist die Folgenummer jedes Routing-Telegramms und der
+Schutz gegen Wiederholungen. Er darf nie zurücklaufen, auch nicht über einen
+Stromausfall: das Gerät legt ihn stündlich im NVS ab und setzt ihn beim Start
+eine Stunde weiter. Nach dem Start sendet es nach einer zufälligen Pause von
+bis zu 10 s ein `TIMER_NOTIFY` und nimmt, bis ein anderer Router die Zeit
+bestätigt oder die Frist aus der Latenztoleranz abgelaufen ist, **keine**
+gesicherten Routing-Telegramme an – es übernimmt nur deren Zeitstempel. Was es
+in dieser Zeit selbst senden will, hält es zurück. Antwortet niemand, führt es
+die Zeit fortan selbst. Ein neuer Backbone-Key setzt den Zeitgeber auf 0. Die Karte zeigt, ob das Gerät *Zeitgeber* ist oder
+*synchron* einem anderen folgt, und wie viele Telegramme als veraltet
+verworfen wurden – eine wachsende Zahl dort heißt, dass die Latenztoleranz in
+der ETS zu knapp ist oder zwei Router sich nicht einig werden.
+
+### Zurücksetzen
+
+**Secure-Konfiguration löschen** auf der Karte setzt nur KNX Secure in den
+Auslieferungszustand: Tool-Key wieder der FDSK, Sicherheitsobjekt leer,
+keine KNXnet/IP-Secure-Schlüssel, keine gesicherten Dienste. Adresse und
+Filtertabelle bleiben. Das ist der Weg zurück, wenn das ETS-Projekt mit den
+Schlüsseln verloren ist – über KNX gibt es ihn absichtlich nicht, nur hier
+und per Master-Reset (der alles löscht).
+
+### Als Koppler
+
+Gesicherte Telegramme anderer Geräte leitet der Koppler unverändert weiter;
+Schlüssel braucht er dafür keine, und die Filtertabelle gilt wie für jedes
+andere Gruppentelegramm. Ein gesichertes Telegramm ist allerdings um
+13 Oktette länger als das ungesicherte; schon Gruppentelegramme mit wenigen
+Byte Nutzdaten und praktisch das ganze gesicherte Management brauchen einen
+*Extended Frame*.
+
+> **Einschränkung:** Der TP-UART-Emulator auf dem SB-Interface kann noch keine
+> Extended Frames, weil die SBLib sie nicht unterstützt. Der Router meldet
+> deshalb `PID_MAX_APDULENGTH_ROUTING` = 15 und gibt lange Rahmen nicht an den
+> Emulator weiter, sondern bestätigt sie negativ. Gesicherte Telegramme, die in
+> einen Standardrahmen passen, gehen durch; **Geräte hinter diesem Router lassen
+> sich aber nicht sicher programmieren**. Sobald die SBLib Extended Frames
+> kann: `-DSBIP_TP_EXTENDED_FRAMES=1`. Der Router selbst ist nicht betroffen –
+> er wird über IP programmiert.
+
+Die Funktion *Security Proxy* (AN192, Umsetzen zwischen gesicherter und
+ungesicherter Linie) ist nicht umgesetzt.
+
 ---
 
 ## Ethernet (W5500, optional)
@@ -3330,8 +3479,8 @@ zugeschnitten, ein anderer sind Fehler, die jeden treffen, der den Stack als
 KNXnet/IP-Schnittstelle betreibt.
 
 [KNXSTACK.md](KNXSTACK.md) trennt beides, hält die Belege fest und beschreibt
-neun Befunde in einer Form, aus der sich ohne weitere Arbeit Issues machen
-lassen. Für sechs davon liegen fertige, gegen den unveränderten Master geprüfte
+die Befunde – darunter fünf in der Data-Secure-Umsetzung des Stacks – in einer
+Form, aus der sich ohne weitere Arbeit Issues machen lassen. Für sechs davon liegen fertige, gegen den unveränderten Master geprüfte
 Patches in [upstream/](upstream/).
 
 ---
