@@ -10,6 +10,7 @@
 #include <knx/bau091A.h>
 #include <knx/cemi_frame.h>
 #include <knx/ip_data_link_layer.h>
+#include <knx/security_interface_object.h>
 #include <knx/tpuart_data_link_layer.h>
 
 #include <cstring>
@@ -17,8 +18,12 @@
 #include "eth_interface.h"
 #include "hw_config.h"
 #include "interface_config.h"
+#include "knx_access_policy.h"
 #include "knx_identity.h"
 #include "knx_link.h"
+#include "knx_secure_crypto.h"
+#include "knx_secure_store.h"
+#include "knxip_shim.h"
 
 #include "log_buffer.h"
 #include "net_manager.h"
@@ -48,6 +53,29 @@ void (*sbipLoopHook)(uint32_t fromIp, uint16_t source, bool ownIp) = nullptr;
  * is never assigned. Left unset, the stack confirms at once as upstream does.
  */
 bool (*sbipTunnelSourceHook)(uint16_t address) = nullptr;
+
+/*
+ * KNX Secure, see patches 21 to 23 in scripts/patch_knx.py and SECURE.md.
+ * Installed in KnxLink::begin(); a stack call before that finds them unset
+ * and falls back to what it did before.
+ */
+const uint8_t* (*sbipFdskHook)() = nullptr;
+void (*sbipRandomHook)(uint8_t* out, size_t length) = nullptr;
+uint64_t (*sbipSequenceHook)(uint8_t counter, uint64_t value, bool store) = nullptr;
+uint8_t (*sbipAccessHook)(uint16_t apduType, const uint8_t* data, uint16_t length,
+                          bool toolAccess, uint8_t dataSecurity) = nullptr;
+bool (*sbipCemiAccessHook)(uint16_t objectType, uint8_t propertyId, bool write) = nullptr;
+
+/*
+ * Whether the TP-UART sends extended frames, see patch 25. The TP-UART 2
+ * emulator on the SB-Interface cannot yet - the SBLib underneath has no
+ * support for them - so the stack refuses them rather than hand them over.
+ * Switch on with -DSBIP_TP_EXTENDED_FRAMES=1 once it can.
+ */
+#ifndef SBIP_TP_EXTENDED_FRAMES
+#define SBIP_TP_EXTENDED_FRAMES 0
+#endif
+bool sbipTpExtendedFrames = SBIP_TP_EXTENDED_FRAMES;
 
 static void reportRoutingLoop(uint32_t fromIp, uint16_t source, bool ownIp)
 {
@@ -103,6 +131,8 @@ static const char*  KEY_KEEPIA   = "keepia";  //!< set by a master reset without
  * bound to WiFi at all. Multicast reaches the right interface because
  * EthInterface::begin() claims the default route via ETH.setDefault().
  */
+static void saveSecurityObject();
+
 class SbipPlatform : public Esp32Platform
 {
 public:
@@ -213,6 +243,9 @@ public:
             sysLog.printf("KNX: writing the knxcfg partition failed: %s\n",
                           esp_err_to_name(err));
         }
+
+        // The security object is not part of the image, see patch 21.
+        if (!_wipe) saveSecurityObject();
     }
 
     uint32_t currentIpAddress() override
@@ -256,6 +289,42 @@ public:
         {
             Esp32Platform::macAddress(addr);
         }
+    }
+
+    /*
+     * KNXnet/IP goes through the shim, which adds TCP and KNXnet/IP Secure
+     * and hands the stack plain frames as if they had come over UDP - see
+     * src/knxip_shim.h. The plain UDP socket stays the base class's.
+     */
+    int readBytesMultiCast(uint8_t* buffer, uint16_t maxLen, uint32_t& src_addr,
+                           uint16_t& src_port) override
+    {
+        return knxIpShim.receive(buffer, maxLen, src_addr, src_port);
+    }
+
+    bool sendBytesUniCast(uint32_t addr, uint16_t port, uint8_t* buffer, uint16_t len) override
+    {
+        return knxIpShim.sendUnicast(addr, port, buffer, len);
+    }
+
+    bool sendBytesMultiCast(uint8_t* buffer, uint16_t len) override
+    {
+        return knxIpShim.sendMulticast(buffer, len);
+    }
+
+    int udpRead(uint8_t* buffer, uint16_t maxLen, uint32_t& ip, uint16_t& port)
+    {
+        return Esp32Platform::readBytesMultiCast(buffer, maxLen, ip, port);
+    }
+
+    bool udpSend(uint32_t ip, uint16_t port, const uint8_t* buffer, uint16_t len)
+    {
+        return Esp32Platform::sendBytesUniCast(ip, port, (uint8_t*)buffer, len);
+    }
+
+    bool udpMulticast(const uint8_t* buffer, uint16_t len)
+    {
+        return Esp32Platform::sendBytesMultiCast((uint8_t*)buffer, len);
     }
 
 private:
@@ -334,11 +403,138 @@ protected:
         sysLog.printf("KNX: master reset (%s), ETS configuration erased\n",
                       eraseCode == FactoryReset ? "factory" : "factory, keeping the address");
         knxPlatform.wipeOnCommit();
+        wipeSecure();
+    }
+
+public:
+    SecurityInterfaceObject& security() { return _secIfObj; }
+
+    /**
+     * Forget what ETS loaded for KNX Secure: the security object, stored
+     * apart from the image, and the KNXnet/IP Secure keys. The FDSK stays -
+     * it belongs to the device, not to the installation.
+     */
+    void wipeSecure()
+    {
+        Preferences prefs;
+        if (prefs.begin("sbip-sec", false))
+        {
+            prefs.remove("secobj");
+            prefs.end();
+        }
+        knxIpSecure.clearConfiguration();
     }
 };
 
 static SbipBau        knxBau(knxPlatform);
 KnxFacade<Esp32Platform, Bau091A> knx(knxBau);
+
+/*
+ * The security object lives in NVS rather than in the stack's image (patch
+ * 21): inserted into the image it would shift every object behind it, and an
+ * updated device would read its filter table from the wrong place. Saved
+ * whenever the stack saves its image, restored right after it.
+ */
+static void saveSecurityObject()
+{
+    SecurityInterfaceObject& sec = knxBau.security();
+    uint16_t size = sec.saveSize();
+
+    uint8_t* buffer = (uint8_t*)malloc(size);
+    if (buffer == nullptr) return;
+
+    uint16_t used = (uint16_t)(sec.save(buffer) - buffer);
+
+    Preferences prefs;
+    if (prefs.begin("sbip-sec", false))
+    {
+        prefs.putBytes("secobj", buffer, used);
+        prefs.end();
+    }
+
+    knxsec::wipe(buffer, size);
+    free(buffer);
+}
+
+static void loadSecurityObject()
+{
+    SecurityInterfaceObject& sec = knxBau.security();
+    Preferences prefs;
+
+    if (prefs.begin("sbip-sec", true))
+    {
+        size_t stored = prefs.getBytesLength("secobj");
+        size_t size   = sec.saveSize();
+
+        // A full-size buffer, zeroed beyond what was stored: restore() reads
+        // as far as the object's layout says, and zero there means "no
+        // elements" rather than whatever the heap held.
+        if (stored > 0 && stored <= size)
+        {
+            uint8_t* buffer = (uint8_t*)calloc(1, size);
+            if (buffer != nullptr)
+            {
+                prefs.getBytes("secobj", buffer, stored);
+                sec.restore(buffer);
+                knxsec::wipe(buffer, size);
+                free(buffer);
+            }
+        }
+        prefs.end();
+    }
+
+    /*
+     * The stack's placeholder FDSK - 00 01 02 .. 0F on every device - stands
+     * in the tool key until ETS writes its own. Replace it with this device's
+     * key, whether the object was restored or not.
+     */
+    static const uint8_t placeholder[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+    const uint8_t* tool = sec.toolKey();
+
+    if (tool == nullptr || memcmp(tool, placeholder, sizeof(placeholder)) == 0)
+    {
+        sec.property(PID_TOOL_KEY)->write(1, 1, knxSecureStore.fdsk());
+    }
+}
+
+static uint16_t objectTypeOf(uint8_t index)
+{
+    InterfaceObject* object = knxBau.interfaceObject(index);
+    if (object == nullptr) return 0xFFFF;
+
+    uint8_t objectType[2] = {0, 0};
+    uint8_t count         = 1;
+    object->readProperty(PID_OBJECT_TYPE, 1, count, objectType);
+    return count ? (uint16_t)((objectType[0] << 8) | objectType[1]) : 0xFFFF;
+}
+
+static uint8_t checkServiceAccess(uint16_t apduType, const uint8_t* data, uint16_t length,
+                                  bool toolAccess, uint8_t dataSecurity)
+{
+    knxaccess::Caller caller{knxBau.security().isSecurityModeEnabled(), toolAccess, dataSecurity};
+    knxaccess::Result result = knxaccess::service(apduType, data, length, caller, objectTypeOf);
+
+    if (result != knxaccess::ALLOWED)
+        sysLog.printf("SECURE: management service 0x%03X refused (%s)\n", (unsigned)apduType,
+                      dataSecurity == 0 ? "without security" : toolAccess ? "tool key" : "runtime key");
+    return (uint8_t)result;
+}
+
+/*
+ * 03_08_09 2.2.1.4.3: cEMI M_Prop services cannot carry Data Security, so
+ * local device management is always anonymous - no key, role "unlisted" -
+ * whatever session it came in.
+ */
+static bool checkCemiAccess(uint16_t objectType, uint8_t propertyId, bool write)
+{
+    knxaccess::Caller caller{knxBau.security().isSecurityModeEnabled(), false, 0};
+    bool ok = knxaccess::property(objectType, propertyId, write, caller);
+
+    if (!ok)
+        sysLog.printf("SECURE: cEMI %s of %u/%u refused\n", write ? "write" : "read",
+                      (unsigned)objectType, (unsigned)propertyId);
+    return ok;
+}
 
 static bool isTunnelSource(uint16_t address)
 {
@@ -532,6 +728,45 @@ bool KnxLink::begin()
     sbipLoopHook = &reportRoutingLoop;
     sbipTunnelSourceHook = &isTunnelSource;
 
+    sbipFdskHook      = []() -> const uint8_t* { return knxSecureStore.fdsk(); };
+    sbipRandomHook    = [](uint8_t* out, size_t length) { knxsec::random(out, length); };
+    sbipSequenceHook  = [](uint8_t counter, uint64_t value, bool store) -> uint64_t {
+        return knxSecureStore.sequence((KnxSecureStore::Counter)counter, value, store);
+    };
+    sbipAccessHook     = &checkServiceAccess;
+    sbipCemiAccessHook = &checkCemiAccess;
+
+    KnxIpShim::Udp udp = {
+        [](uint8_t* buffer, uint16_t max, uint32_t& ip, uint16_t& port) -> int {
+            return knxPlatform.udpRead(buffer, max, ip, port);
+        },
+        [](uint32_t ip, uint16_t port, const uint8_t* buffer, uint16_t length) -> bool {
+            return knxPlatform.udpSend(ip, port, buffer, length);
+        },
+        [](const uint8_t* buffer, uint16_t length) -> bool {
+            return knxPlatform.udpMulticast(buffer, length);
+        },
+        []() -> uint32_t {
+            // IPAddress keeps the octets in network order, the frames' source
+            // addresses are host order with the first octet on top.
+            uint32_t ip = knxPlatform.currentIpAddress();
+            return ((ip & 0xFF) << 24) | ((ip & 0xFF00) << 8) | ((ip >> 8) & 0xFF00) | (ip >> 24);
+        },
+    };
+    KnxIpShim::Tunnels tunnels = {
+        // Slot n of the stack uses PID 53 entry n + 1.
+        [](uint8_t slot) -> uint16_t {
+            uint16_t addresses[KNX_TUNNELING];
+            uint8_t  count = knxLink.tunnelAddresses(addresses, KNX_TUNNELING);
+            return slot < count ? addresses[slot] : 0;
+        },
+        [](uint16_t address) -> bool {
+            IpDataLinkLayer* ip = knxBau.getPrimaryDataLinkLayer();
+            return ip != nullptr && ip->isSentToTunnel(address, false);
+        },
+    };
+    knxIpShim.begin(udp, tunnels);
+
     applyIdentity();
 
     if (knxPrefs.begin(KNX_NS, false))
@@ -565,7 +800,34 @@ bool KnxLink::begin()
 #endif
 
     knx.readMemory();
+    loadSecurityObject();
+
+    /*
+     * PID_MAX_APDULENGTH_ROUTING tells ETS how long a frame this coupler
+     * routes. Without extended frames on TP that is the standard frame's 15
+     * octets - and since a KNX Data Secure frame adds 13, secured management
+     * of devices behind this router is then not possible. Saying so is
+     * better than routing frames the TP-UART loses.
+     */
+    {
+        RouterObject* router = (RouterObject*)knxBau.interfaceObject(OT_ROUTER, 1);
+        if (router != nullptr)
+            router->property(PID_MAX_APDU_LENGTH_ROUTER)->write((uint16_t)(sbipTpExtendedFrames ? 220 : 15));
+    }
+
     knx.start();
+
+    // The serial number is final once the stack has started; every secure
+    // wrapper carries it.
+    {
+        uint8_t sn[6];
+        serialNumber(sn);
+        knxIpSecure.serial(sn);
+    }
+    knxIpShim.startTcp();
+
+    if (knxBau.security().isSecurityModeEnabled())
+        sysLog.println("KNX: Data Secure active, management needs the tool key");
 
     _savedAddress = knx.individualAddress();
 
@@ -649,6 +911,8 @@ void KnxLink::loop()
     }
 
     knx.loop();
+    knxIpShim.loop();
+    knxSecureStore.loop();
 
     // Apply a web requested programming mode change from the main task.
     if (_progModePending)
@@ -656,6 +920,13 @@ void KnxLink::loop()
         bool value = _progModeValue;
         _progModePending = false;
         knx.progMode(value);
+    }
+
+    if (_secureResetPending)
+    {
+        _secureResetPending = false;
+        knxBau.wipeSecure();
+        sysLog.println("SECURE: KNX Secure configuration cleared, the FDSK is the tool key again");
     }
 
     if (_sendPending)
@@ -1249,6 +1520,7 @@ bool KnxLink::resetConfiguration()
     // with "DataObject api changed, any data stored in flash is invalid".
     memset(nvm, 0xFF, size);
     knxPlatform.commitNonVolatileMemory();
+    knxBau.wipeSecure();
 
     sysLog.printf("KNX: configuration cleared (%u bytes), restart required\n",
                   (unsigned)size);
@@ -1358,3 +1630,75 @@ bool KnxLink::queueGroupValue(uint16_t groupAddress, const uint8_t* payload,
     _sendPending = true;
     return true;
 }
+
+String KnxLink::secureJson() const
+{
+    SecurityInterfaceObject& sec = knxBau.security();
+    const KnxIpSecure::Stats& ips = knxIpSecure.stats();
+    const KnxIpShim::Stats&   shs = knxIpShim.stats();
+
+    const uint8_t* tool = sec.toolKey();
+    bool factory = tool != nullptr && memcmp(tool, knxSecureStore.fdsk(), 16) == 0;
+
+    String j = "{";
+    j += "\"mode\":" + String(sec.isSecurityModeEnabled() ? "true" : "false");
+    j += ",\"loaded\":" + String(sec.loadState() == LS_LOADED ? "true" : "false");
+    j += ",\"factory\":" + String(factory ? "true" : "false");
+    j += ",\"test_ok\":" + String(knxSecureStore.selfTestOk() ? "true" : "false");
+    j += ",\"test\":\"" + String(knxSecureStore.selfTestReport()) + "\"";
+    j += ",\"seq\":" + String((double)knxSecureStore.current(KnxSecureStore::SEND), 0);
+    j += ",\"tcp\":" + String(knxIpShim.tcpListening() ? "true" : "false");
+    j += ",\"tcp_enabled\":" + String(knxIpShim.tcpEnabled() ? "true" : "false");
+    j += ",\"tcp_conn\":" + String(knxIpShim.tcpConnections());
+    j += ",\"families\":" + String(knxIpSecure.securedFamilies());
+    j += ",\"backbone\":" + String(knxIpSecure.hasBackboneKey() ? "true" : "false");
+    j += ",\"auth\":" + String(knxIpSecure.authCodeFromEts() ? "true" : "false");
+    j += ",\"passwords\":" + String(knxIpSecure.passwordCount());
+    j += ",\"users\":" + String(knxIpSecure.userSlotCount());
+    j += ",\"latency\":" + String(knxIpSecure.latencyToleranceMs());
+    j += ",\"routing\":{\"on\":" + String(knxIpSecure.routingSecure() ? "true" : "false");
+    j += ",\"synced\":" + String(knxIpSecure.timerSynced() ? "true" : "false");
+    j += ",\"keeper\":" + String(knxIpSecure.timekeeper() ? "true" : "false");
+    j += ",\"in\":" + String(ips.routingIn) + ",\"out\":" + String(ips.routingOut);
+    j += ",\"stale\":" + String(ips.routingStale) + "}";
+    j += ",\"sessions\":" + knxIpShim.connectionsJson();
+    j += ",\"opened\":" + String(ips.sessionsOpened);
+    j += ",\"auth_fail\":" + String(ips.authFailures);
+    j += ",\"mac_fail\":" + String(ips.macFailures);
+    j += ",\"replays\":" + String(ips.replays);
+    j += ",\"plain_refused\":" + String(shs.plainConnectRefused + shs.plainRoutingDropped);
+    j += ",\"hijack\":" + String(shs.channelHijackDropped);
+    j += "}";
+    return j;
+}
+
+String KnxLink::certificateJson() const
+{
+    // 03_05_01 6.1.3: the FDSK is not to be readable over any interface of
+    // the device. A real one carries it on a label; this one has none, so the
+    // dashboard stands in - but only while the FDSK is the tool key. After
+    // commissioning it is inactive, and handing it out would only help
+    // whoever manages to reset the device later.
+    const uint8_t* tool = knxBau.security().toolKey();
+    if (tool == nullptr || memcmp(tool, knxSecureStore.fdsk(), 16) != 0) return String();
+
+    uint8_t sn[6];
+    serialNumber(sn);
+
+    char serial[13];
+    snprintf(serial, sizeof(serial), "%02X%02X%02X%02X%02X%02X",
+             sn[0], sn[1], sn[2], sn[3], sn[4], sn[5]);
+
+    char fdsk[33];
+    const uint8_t* key = knxSecureStore.fdsk();
+    for (int i = 0; i < 16; i++)
+        snprintf(fdsk + 2 * i, 3, "%02X", key[i]);
+
+    String j = "{\"serial\":\"" + String(serial) + "\"";
+    j += ",\"fdsk\":\"" + String(fdsk) + "\"";
+    j += ",\"certificate\":\"" + knxSecureStore.certificate(sn) + "\"}";
+
+    knxsec::wipe(fdsk, sizeof(fdsk));
+    return j;
+}
+

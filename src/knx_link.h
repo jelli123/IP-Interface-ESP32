@@ -190,6 +190,33 @@ public:
     String objectsJson() const;
 
     /**
+     * KNX Secure at a glance, for /api/status: Data Secure mode, whether the
+     * tool key is still the FDSK, the KNXnet/IP Secure configuration, open
+     * sessions, secure routing and the refusal counters. No key material.
+     *
+     * Read only, safe from the web server task.
+     */
+    String secureJson() const;
+
+    /**
+     * The device certificate ETS asks for when a secure device is added:
+     * KNX serial number and FDSK. Separate from the status poll on purpose -
+     * the FDSK is the tool key of a device in delivery state. Empty once ETS
+     * has set its own tool key (03_05_01 6.1.3).
+     */
+    String certificateJson() const;
+
+    /**
+     * Forget what ETS loaded for KNX Secure - keys, security object, secured
+     * service families - and start over with the FDSK as the tool key. Only
+     * from the dashboard; the device restarts afterwards.
+     *
+     * Safe from the web server task: carried out in loop(), where closing the
+     * open sessions may send.
+     */
+    void requestSecureReset() { _secureResetPending = true; }
+
+    /**
      * Park the individual address so it survives the next start.
      *
      * For a change of identity: the stack discards the whole flash image
@@ -319,6 +346,8 @@ private:
 
     volatile bool _suspendRequest = false;
     volatile bool _suspended      = false;
+
+    volatile bool _secureResetPending = false;
 
     volatile bool _sendPending = false;
     uint16_t      _sendAddress = 0;

@@ -2300,3 +2300,877 @@ def patch_core_version():
 
 
 patch_core_version()
+
+
+# ==========================================================================
+# KNX Secure, patches 19 - 23. See SECURE.md for the whole picture.
+# ==========================================================================
+#
+# All of them apply only with -DUSE_DATASECURE, which platformio.ini sets.
+# Each one is all-or-nothing per file, like patch 17: a security check that
+# covers some paths and not others is worse than none, because the dashboard
+# would claim otherwise.
+
+def apply_secure_edits(name, marker, edits, what):
+    path = knx_source(name)
+    if not os.path.isfile(path):
+        return False
+
+    with open(path, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if marker in source:
+        return False
+
+    for anchor, _ in edits:
+        if source.count(anchor) != 1:
+            sys.stderr.write(
+                "patch_knx.py: anchor no longer unique in %s, %s:\n  %s\n"
+                % (name, what, anchor.strip().splitlines()[0])
+            )
+            return False
+
+    for anchor, replacement in edits:
+        source = source.replace(anchor, replacement)
+
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source)
+
+    return True
+
+
+# --------------------------------------------------------------------------
+# 19. The KNXnet/IP Secure properties of the IP parameter object
+# --------------------------------------------------------------------------
+#
+# PID 79 tunnelling addresses, 91 backbone key, 92 device authentication
+# code, 93 password hashes, 94 secured service families, 95 multicast
+# latency tolerance, 96 sync latency fraction, 97 tunnelling users.
+#
+# They live in the firmware (src/knxip_secure.cpp), not in the property:
+# a DataProperty is part of the stack's memory image, and adding one shifts
+# every object after it - a device updated to this firmware would read its
+# filter table from the wrong offset. Callback properties save nothing, so
+# the image of an already programmed device stays valid.
+#
+# 94 is a function property (PDT_FUNCTION in the KNX property list): command
+# [0, service 0, family, on/off], state [0, service 0, family].
+
+SEC19_MARKER = "// sbip: KNXnet/IP Secure properties, see src/knxip_secure.cpp"
+
+SEC19_ANCHOR_INC = '#include "callback_property.h"\n'
+
+SEC19_INC = (
+    '#include "callback_property.h"\n'
+    '#include "function_property.h"\n'
+    "\n"
+    + SEC19_MARKER + "\n"
+    "extern uint8_t (*sbipIpSecureRead)(uint8_t pid, uint16_t start, uint8_t count, uint8_t* data);\n"
+    "extern uint8_t (*sbipIpSecureWrite)(uint8_t pid, uint16_t start, uint8_t count, const uint8_t* data);\n"
+    "extern void (*sbipIpSecureFunction)(bool command, uint8_t pid, uint8_t* data, uint8_t length,\n"
+    "                                    uint8_t* result, uint8_t& resultLength);\n"
+)
+
+SEC19_ANCHOR_PROPS = (
+    "        new DataProperty(PID_FRIENDLY_NAME, true, PDT_UNSIGNED_CHAR, 30, ReadLv3 | WriteLv3)\n"
+    "    };\n"
+)
+
+
+def sec19_property(pid, pdt, count):
+    return (
+        "        new CallbackProperty<IpParameterObject>(this, (PropertyID)%d, true, %s, %s, ReadLv3 | WriteLv3,\n"
+        "            [](IpParameterObject*, uint16_t start, uint8_t count, uint8_t* data) -> uint8_t\n"
+        "            { return sbipIpSecureRead ? sbipIpSecureRead(%d, start, count, data) : 0; },\n"
+        "            [](IpParameterObject*, uint16_t start, uint8_t count, const uint8_t* data) -> uint8_t\n"
+        "            { return sbipIpSecureWrite ? sbipIpSecureWrite(%d, start, count, data) : 0; }),\n"
+        % (pid, pdt, count, pid, pid)
+    )
+
+
+SEC19_PROPS = (
+    "        new DataProperty(PID_FRIENDLY_NAME, true, PDT_UNSIGNED_CHAR, 30, ReadLv3 | WriteLv3),\n"
+    "        " + SEC19_MARKER + "\n"
+    + sec19_property(79, "PDT_UNSIGNED_CHAR", "KNX_TUNNELING")
+    + sec19_property(91, "PDT_GENERIC_16", "1")
+    + sec19_property(92, "PDT_GENERIC_16", "1")
+    + sec19_property(93, "PDT_GENERIC_16", "(KNX_TUNNELING + 1)")
+    + "        new FunctionProperty<IpParameterObject>(this, (PropertyID)94,\n"
+    "            [](IpParameterObject*, uint8_t* data, uint8_t length, uint8_t* result, uint8_t& resultLength) -> void\n"
+    "            { if (sbipIpSecureFunction) sbipIpSecureFunction(true, 94, data, length, result, resultLength); else resultLength = 0; },\n"
+    "            [](IpParameterObject*, uint8_t* data, uint8_t length, uint8_t* result, uint8_t& resultLength) -> void\n"
+    "            { if (sbipIpSecureFunction) sbipIpSecureFunction(false, 94, data, length, result, resultLength); else resultLength = 0; }),\n"
+    + sec19_property(95, "PDT_UNSIGNED_INT", "1")
+    + sec19_property(96, "PDT_SCALING", "1")
+    + sec19_property(97, "PDT_GENERIC_02", "(2 * KNX_TUNNELING)").rstrip(",\n") + "\n"
+    "    };\n"
+)
+
+
+def patch_ipsecure_properties():
+    if apply_secure_edits(
+        "ip_parameter_object.cpp", SEC19_MARKER,
+        ((SEC19_ANCHOR_INC, SEC19_INC), (SEC19_ANCHOR_PROPS, SEC19_PROPS)),
+        "the KNXnet/IP Secure properties are MISSING - ETS cannot write the keys",
+    ):
+        print("patch_knx.py: KNXnet/IP Secure properties added to ip_parameter_object.cpp")
+
+
+patch_ipsecure_properties()
+
+
+# --------------------------------------------------------------------------
+# 20. Offer a connecting secure user only the tunnels assigned to it
+# --------------------------------------------------------------------------
+#
+# The stack hands the first free tunnel to whoever connects. With secure
+# tunnelling a user may only use the addresses PID 97 assigns to it; the
+# firmware knows which user sent the CONNECT_REQUEST and answers per slot.
+
+SEC20_MARKER = "// sbip: tunnel slots per secure user, see src/knxip_shim.cpp"
+
+SEC20_ANCHOR_DECL = (
+    "void IpDataLinkLayer::loopHandleConnectRequest(uint8_t* buffer, uint16_t length,"
+    " uint32_t& src_addr, uint16_t& src_port)\n"
+)
+
+SEC20_DECL = (
+    SEC20_MARKER + "\n"
+    "extern bool (*sbipTunnelSlotHook)(uint8_t slot);\n"
+    "\n"
+    + SEC20_ANCHOR_DECL
+)
+
+SEC20_ANCHOR_FREE = (
+    "            if (tunnels[i].ChannelId == 0 && firstFreeTunnel < 0)\n"
+    "                firstFreeTunnel = i;\n"
+)
+
+SEC20_FREE = (
+    "            if (tunnels[i].ChannelId == 0 && firstFreeTunnel < 0 &&\n"
+    "                    (sbipTunnelSlotHook == nullptr || sbipTunnelSlotHook(i)))\n"
+    "                firstFreeTunnel = i;\n"
+)
+
+
+def patch_tunnel_slots():
+    if apply_secure_edits(
+        "ip_data_link_layer.cpp", SEC20_MARKER,
+        ((SEC20_ANCHOR_DECL, SEC20_DECL), (SEC20_ANCHOR_FREE, SEC20_FREE)),
+        "secure users get ANY free tunnel",
+    ):
+        print("patch_knx.py: tunnel slot hook applied to ip_data_link_layer.cpp")
+
+
+patch_tunnel_slots()
+
+
+# --------------------------------------------------------------------------
+# 21. Keep the security object out of the memory image, give it a real FDSK
+# --------------------------------------------------------------------------
+#
+# The coupler BAU registers its security object with the memory image right
+# after the device object. Switching USE_DATASECURE on would therefore move
+# every object behind it, and a device updated from a firmware without it
+# would restore its filter table from the wrong place. The firmware keeps the
+# object in NVS instead (src/knx_link.cpp).
+#
+# configured() demanded a loaded security object as well. A device ETS
+# programs without security never loads it, so it would count as
+# unprogrammed forever - and the firmware then forwards every group telegram
+# unfiltered. Only a device in secure mode needs it.
+#
+# The FDSK was a constant, 00 01 02 .. 0F, on every device built with this
+# stack. The factory reset now restores the device's own one, and for the
+# erase codes that keep the address too.
+
+SEC21_MARKER = "// sbip: security object kept by the firmware, see scripts/patch_knx.py 21"
+
+SEC21_COUPLER_ANCHOR = (
+    "    _memory.addSaveRestore(&_deviceObj);\n"
+    "#ifdef USE_DATASECURE\n"
+    "    _memory.addSaveRestore(&_secIfObj);\n"
+    "#endif\n"
+)
+
+SEC21_COUPLER_NEW = (
+    "    _memory.addSaveRestore(&_deviceObj);\n"
+    "    " + SEC21_MARKER + "\n"
+)
+
+SEC21_CONF_ANCHOR = (
+    "    _configured = _routerObj.loadState() == LS_LOADED;\n"
+    "#ifdef USE_DATASECURE\n"
+    "    _configured &= _secIfObj.loadState() == LS_LOADED;\n"
+    "#endif\n"
+)
+
+SEC21_CONF_NEW = (
+    "    _configured = _routerObj.loadState() == LS_LOADED;\n"
+    "#ifdef USE_DATASECURE\n"
+    "    " + SEC21_MARKER + "\n"
+    "    // Only a device in secure mode was given a security object to load.\n"
+    "    _configured &= _secIfObj.loadState() == LS_LOADED || !_secIfObj.isSecurityModeEnabled();\n"
+    "#endif\n"
+)
+
+SEC21_SIO_ANCHOR_DECL = "SecurityInterfaceObject::SecurityInterfaceObject()\n"
+
+SEC21_SIO_DECL = (
+    SEC21_MARKER + "\n"
+    "extern const uint8_t* (*sbipFdskHook)();\n"
+    "\n"
+    + SEC21_SIO_ANCHOR_DECL
+)
+
+SEC21_SIO_ANCHOR_RESET = (
+    "    if (eraseCode == FactoryReset)\n"
+    "    {\n"
+    "        // TODO handle different erase codes\n"
+    "        println(\"Factory reset of security interface object requested.\");\n"
+    "        setSecurityMode(false);\n"
+    "        property(PID_TOOL_KEY)->write(1, 1, _fdsk);\n"
+    "    }\n"
+)
+
+SEC21_SIO_RESET = (
+    "    if (eraseCode == FactoryReset || eraseCode == FactoryResetWithoutIA)\n"
+    "    {\n"
+    "        println(\"Factory reset of security interface object requested.\");\n"
+    "        setSecurityMode(false);\n"
+    "        loadState(LS_UNLOADED);\n"
+    "        property(PID_TOOL_KEY)->write(1, 1, sbipFdskHook ? sbipFdskHook() : _fdsk);\n"
+    "    }\n"
+)
+
+
+def patch_security_object():
+    done = []
+
+    if apply_secure_edits(
+        "bau_systemB_coupler.cpp", SEC21_MARKER,
+        ((SEC21_COUPLER_ANCHOR, SEC21_COUPLER_NEW),),
+        "the memory image of programmed devices would be SHIFTED",
+    ):
+        done.append("bau_systemB_coupler.cpp")
+
+    if apply_secure_edits(
+        "bau091A.cpp", SEC21_MARKER,
+        ((SEC21_CONF_ANCHOR, SEC21_CONF_NEW),),
+        "a device without secure mode never counts as programmed",
+    ):
+        done.append("bau091A.cpp")
+
+    if apply_secure_edits(
+        "security_interface_object.cpp", SEC21_MARKER,
+        ((SEC21_SIO_ANCHOR_DECL, SEC21_SIO_DECL),
+         (SEC21_SIO_ANCHOR_RESET, SEC21_SIO_RESET)),
+        "the factory reset restores the stack's constant FDSK",
+    ):
+        done.append("security_interface_object.cpp")
+
+    if done:
+        print("patch_knx.py: security object patched in %s" % ", ".join(done))
+
+
+patch_security_object()
+
+
+# --------------------------------------------------------------------------
+# 22. Secure application layer: randomness, sequence numbers, auth-only MAC,
+#     no plain text in the log
+# --------------------------------------------------------------------------
+#
+# getRandomNumber() returned 0x000102030405. It is the challenge of every
+# S-A_Sync_Req and the mask of every S-A_Sync_Res.
+#
+# The sending sequence numbers lived in RAM only and started over after a
+# restart: 50 under the tool key. The ETS had long accepted higher ones and
+# discards everything the device sends. They now come from and go to the
+# firmware's high-water marks, and a value ETS writes into
+# PID_SEQUENCE_NUMBER_SENDING (secure commissioning does exactly that) is
+# honoured instead of ignored. The last number accepted from the tool is
+# kept as well - without it a recorded frame could be replayed after a
+# restart.
+#
+# The authentication-only MAC had three faults against AN158: the SCF was
+# missing from the additional data, B0 announced the APDU as payload, and
+# the first cipher block was taken instead of the last. The decrypt side
+# also overwrote the received APDU with the SCF and sequence number. ETS uses
+# authentication + confidentiality for tool access, so management was never
+# affected, but group telegrams with authentication only were.
+#
+# The file prints every frame it handles, and the plain text of every frame
+# it decrypts. With the log in the dashboard that included the tool key ETS
+# writes during commissioning. Its prints are compiled out.
+
+SEC22_MARKER = "// sbip: secure application layer, see scripts/patch_knx.py 22"
+
+SEC22_ANCHOR_INC = '#include "aes.hpp"\n'
+
+SEC22_INC = (
+    '#include "aes.hpp"\n'
+    "\n"
+    + SEC22_MARKER + "\n"
+    "extern void (*sbipRandomHook)(uint8_t* out, size_t length);\n"
+    "extern uint64_t (*sbipSequenceHook)(uint8_t counter, uint64_t value, bool store);\n"
+    "\n"
+    "// Every print of this file is a trace of frames and of their plain text.\n"
+    "#define print(...) do {} while (0)\n"
+    "#define println(...) do {} while (0)\n"
+    "#define printHex(...) do {} while (0)\n"
+    "#define printPDU() length()\n"
+)
+
+SEC22_ANCHOR_RANDOM = (
+    "    return 0x000102030405; // TODO: generate random number\n"
+)
+
+SEC22_RANDOM = (
+    "    uint8_t random[6] = {0};\n"
+    "\n"
+    "    if (sbipRandomHook)\n"
+    "        sbipRandomHook(random, sizeof(random));\n"
+    "\n"
+    "    return sixBytesToUInt64(random);\n"
+)
+
+SEC22_ANCHOR_NEXT = (
+    "uint64_t SecureApplicationLayer::nextSequenceNumber(bool toolAccess)\n"
+    "{\n"
+    "    return toolAccess ? _sequenceNumberToolAccess : _sequenceNumber;\n"
+    "}\n"
+)
+
+SEC22_NEXT = (
+    "uint64_t SecureApplicationLayer::nextSequenceNumber(bool toolAccess)\n"
+    "{\n"
+    "    // One counter, as AN158 has it: PID_SEQUENCE_NUMBER_SENDING. The stack\n"
+    "    // keeps a second one for tool access (PID 250, not in the standard);\n"
+    "    // both continue from the highest of everything known - the two members,\n"
+    "    // what ETS wrote into either property, and the firmware's high-water\n"
+    "    // mark from before the restart.\n"
+    "    uint64_t next = _sequenceNumber > _sequenceNumberToolAccess ? _sequenceNumber : _sequenceNumberToolAccess;\n"
+    "    const PropertyID pids[2] = {PID_SEQUENCE_NUMBER_SENDING, PID_TOOL_SEQUENCE_NUMBER_SENDING};\n"
+    "\n"
+    "    for (PropertyID pid : pids)\n"
+    "    {\n"
+    "        uint8_t written[6] = {0};\n"
+    "\n"
+    "        if (_secIfObj.property(pid)->read(1, 1, written) == 1 && sixBytesToUInt64(written) > next)\n"
+    "            next = sixBytesToUInt64(written);\n"
+    "    }\n"
+    "\n"
+    "    if (sbipSequenceHook)\n"
+    "    {\n"
+    "        uint64_t floor = sbipSequenceHook(0, next, false);\n"
+    "\n"
+    "        if (floor > next)\n"
+    "            next = floor;\n"
+    "    }\n"
+    "\n"
+    "    if (next == 0)\n"
+    "        next = 1;\n"
+    "\n"
+    "    (toolAccess ? _sequenceNumberToolAccess : _sequenceNumber) = next;\n"
+    "    return next;\n"
+    "}\n"
+)
+
+SEC22_ANCHOR_UPDATE = (
+    "    // Also update the properties accordingly\n"
+    "    _secIfObj.setSequenceNumber(toolAccess, seqNum);\n"
+)
+
+SEC22_UPDATE = (
+    "    // Also update the properties accordingly\n"
+    "    _secIfObj.setSequenceNumber(toolAccess, seqNum);\n"
+    "\n"
+    "    if (sbipSequenceHook)\n"
+    "        sbipSequenceHook(0, seqNum, true);\n"
+)
+
+SEC22_ANCHOR_LASTVALID = (
+    "        if (srcAddr == _deviceObj.individualAddress())\n"
+    "            return _sequenceNumberToolAccess;\n"
+    "\n"
+    "        return _lastValidSequenceNumberTool;\n"
+)
+
+SEC22_LASTVALID = (
+    "        if (srcAddr == _deviceObj.individualAddress())\n"
+    "            return _sequenceNumberToolAccess;\n"
+    "\n"
+    "        if (sbipSequenceHook)\n"
+    "        {\n"
+    "            uint64_t stored = sbipSequenceHook(1, _lastValidSequenceNumberTool, false);\n"
+    "\n"
+    "            if (stored > _lastValidSequenceNumberTool)\n"
+    "                _lastValidSequenceNumberTool = stored;\n"
+    "        }\n"
+    "\n"
+    "        return _lastValidSequenceNumberTool;\n"
+)
+
+SEC22_ANCHOR_UPDVALID = (
+    "        // TODO: check if we really have to support multiple tools at the same time\n"
+    "        _lastValidSequenceNumberTool = seqNo;\n"
+)
+
+SEC22_UPDVALID = (
+    "    {\n"
+    "        // TODO: check if we really have to support multiple tools at the same time\n"
+    "        _lastValidSequenceNumberTool = seqNo;\n"
+    "\n"
+    "        if (sbipSequenceHook)\n"
+    "            sbipSequenceHook(1, seqNo, true);\n"
+    "    }\n"
+)
+
+SEC22_ANCHOR_AUTHDEF = (
+    "uint32_t SecureApplicationLayer::calcAuthOnlyMac(uint8_t* apdu, uint8_t apduLength,"
+    " const uint8_t* key, uint8_t* iv, uint8_t* ctr0)\n"
+    "{\n"
+    "    uint16_t bufLen = 2 + apduLength; // 2 bytes for the length field (uint16_t)\n"
+    "    // AES-128 operates on blocks of 16 bytes, add padding\n"
+    "    uint16_t bufLenPadded = (bufLen + 15) / 16 * 16;\n"
+    "    uint8_t buffer[bufLenPadded];\n"
+    "    // Make sure to have zeroes everywhere, because of the padding\n"
+    "    memset(buffer, 0x00, bufLenPadded);\n"
+    "\n"
+    "    uint8_t* pBuf = buffer;\n"
+    "\n"
+    "    pBuf = pushWord(apduLength, pBuf);\n"
+    "    pBuf = pushByteArray(apdu, apduLength, pBuf);\n"
+    "\n"
+    "    encryptAesCbc(buffer, bufLenPadded, iv, key);\n"
+    "    xcryptAesCtr(buffer, 4, ctr0, key); // 4 bytes only for the MAC\n"
+    "\n"
+    "    uint32_t mac;\n"
+    "    popInt(mac, &buffer[0]);\n"
+    "\n"
+    "    return mac;\n"
+    "}\n"
+)
+
+SEC22_AUTHDEF = (
+    "uint32_t SecureApplicationLayer::calcAuthOnlyMac(uint8_t* apdu, uint8_t apduLength,"
+    " const uint8_t* key, uint8_t* iv, uint8_t* ctr0, uint8_t scf)\n"
+    "{\n"
+    "    // AN158: the additional data are SCF and APDU, B0 announces no payload,\n"
+    "    // and the MAC is the last cipher block.\n"
+    "    iv[15] = 0x00;\n"
+    "\n"
+    "    uint16_t adLength = 1 + apduLength;\n"
+    "    uint16_t bufLen = 2 + adLength;\n"
+    "    uint16_t bufLenPadded = (bufLen + 15) / 16 * 16;\n"
+    "    uint8_t buffer[bufLenPadded];\n"
+    "    memset(buffer, 0x00, bufLenPadded);\n"
+    "\n"
+    "    uint8_t* pBuf = buffer;\n"
+    "    pBuf = pushWord(adLength, pBuf);\n"
+    "    pBuf = pushByte(scf, pBuf);\n"
+    "    pBuf = pushByteArray(apdu, apduLength, pBuf);\n"
+    "\n"
+    "    encryptAesCbc(buffer, bufLenPadded, iv, key);\n"
+    "\n"
+    "    uint8_t macBytes[4];\n"
+    "    memcpy(macBytes, &buffer[bufLenPadded - 16], 4);\n"
+    "    xcryptAesCtr(macBytes, 4, ctr0, key);\n"
+    "\n"
+    "    uint32_t mac;\n"
+    "    popInt(mac, macBytes);\n"
+    "\n"
+    "    return mac;\n"
+    "}\n"
+)
+
+SEC22_ANCHOR_AUTHDEC = (
+    "        uint32_t calculatedMac = calcAuthOnlyMac(plainApdu, remainingPlainApduLength, key, iv, ctr0);\n"
+)
+
+SEC22_AUTHDEC = (
+    "        uint32_t calculatedMac = calcAuthOnlyMac(plainApdu, remainingPlainApduLength, key, iv, ctr0, scf);\n"
+)
+
+SEC22_ANCHOR_AUTHCOPY = (
+    "        memcpy(plainApdu, secureAsdu, remainingPlainApduLength);\n"
+)
+
+SEC22_AUTHCOPY = (
+    "        // sbip: plainApdu already holds the APDU; secureAsdu points at the SCF.\n"
+)
+
+SEC22_ANCHOR_AUTHENC = (
+    "        uint32_t tmpMac = calcAuthOnlyMac(apdu, apduLength, key, iv, ctr0);\n"
+)
+
+SEC22_AUTHENC = (
+    "        uint32_t tmpMac = calcAuthOnlyMac(apdu, apduLength, key, iv, ctr0, scf);\n"
+)
+
+SEC22_H_ANCHOR = (
+    "        uint32_t calcAuthOnlyMac(uint8_t* apdu, uint8_t apduLength, const uint8_t* key,"
+    " uint8_t* iv, uint8_t* ctr0);\n"
+)
+
+SEC22_H_NEW = (
+    "        " + SEC22_MARKER + "\n"
+    "        uint32_t calcAuthOnlyMac(uint8_t* apdu, uint8_t apduLength, const uint8_t* key,"
+    " uint8_t* iv, uint8_t* ctr0, uint8_t scf);\n"
+)
+
+
+def patch_secure_application_layer():
+    done = []
+
+    if apply_secure_edits(
+        "secure_application_layer.h", SEC22_MARKER,
+        ((SEC22_H_ANCHOR, SEC22_H_NEW),),
+        "the authentication-only MAC stays wrong",
+    ):
+        done.append("secure_application_layer.h")
+
+    if apply_secure_edits(
+        "secure_application_layer.cpp", SEC22_MARKER,
+        ((SEC22_ANCHOR_INC, SEC22_INC),
+         (SEC22_ANCHOR_RANDOM, SEC22_RANDOM),
+         (SEC22_ANCHOR_NEXT, SEC22_NEXT),
+         (SEC22_ANCHOR_UPDATE, SEC22_UPDATE),
+         (SEC22_ANCHOR_LASTVALID, SEC22_LASTVALID),
+         (SEC22_ANCHOR_UPDVALID, SEC22_UPDVALID),
+         (SEC22_ANCHOR_AUTHDEF, SEC22_AUTHDEF),
+         (SEC22_ANCHOR_AUTHDEC, SEC22_AUTHDEC),
+         (SEC22_ANCHOR_AUTHCOPY, SEC22_AUTHCOPY),
+         (SEC22_ANCHOR_AUTHENC, SEC22_AUTHENC)),
+        "Data Secure uses a CONSTANT challenge and forgets its sequence numbers",
+    ):
+        done.append("secure_application_layer.cpp")
+
+    if done:
+        print("patch_knx.py: secure application layer patched in %s" % ", ".join(done))
+
+
+patch_secure_application_layer()
+
+
+# --------------------------------------------------------------------------
+# 23. Access policies for management services
+# --------------------------------------------------------------------------
+#
+# The stack decrypts S-A_Data and passes the security it found on, but
+# nothing ever looks at it: in secure mode a plain A_PropertyValue_Write is
+# executed like a secured one, and the key properties can be read by anyone.
+# 3/5/1 assigns every service and property an access policy by role (tool,
+# runtime key, none) and security (none, auth, auth+conf), separately for
+# secure mode on and off. src/knx_access_policy.cpp holds the table and
+# decides; here it is asked at the three places the application layer hands
+# incoming services to the BAU, and by the cEMI server for local management.
+#
+# A refused property service is answered the way the specification asks for
+# an inaccessible property - no elements, or AccessDenied - so ETS reports
+# the refusal instead of running into a timeout. Everything else is dropped.
+
+SEC23_MARKER = "// sbip: access policies, see src/knx_access_policy.cpp"
+
+SEC23_AL_ANCHOR_DECL = "void ApplicationLayer::transportLayer(TransportLayer& layer)\n"
+
+SEC23_AL_DECL = (
+    SEC23_MARKER + "\n"
+    "// 0 allowed, 1 denied, 2 A_DeviceDescriptor_Read to be answered with FFFFh\n"
+    "extern uint8_t (*sbipAccessHook)(uint16_t apduType, const uint8_t* data, uint16_t length,\n"
+    "                                 bool toolAccess, uint8_t dataSecurity);\n"
+    "\n"
+    "static uint8_t sbipAccessCheck(APDU& apdu, const SecurityControl& secCtrl)\n"
+    "{\n"
+    "    if (sbipAccessHook == nullptr)\n"
+    "        return 0;\n"
+    "\n"
+    "    return sbipAccessHook(apdu.type(), apdu.data(), apdu.length(), secCtrl.toolAccess,\n"
+    "                          (uint8_t)secCtrl.dataSecurity);\n"
+    "}\n"
+    "\n"
+    "// A refused service answered the way AN193 and 3/3/7 ask for an\n"
+    "// inaccessible resource. Anything not listed is dropped.\n"
+    "static void sbipAccessDenied(ApplicationLayer& al, HopCountType hopType, Priority priority,\n"
+    "                             uint16_t tsap, APDU& apdu, const SecurityControl& secCtrl, uint8_t verdict)\n"
+    "{\n"
+    "    const uint8_t* data = apdu.data();\n"
+    "    uint8_t denied = ReturnCodes::AccessDenied;\n"
+    "\n"
+    "    switch (apdu.type())\n"
+    "    {\n"
+    "        case DeviceDescriptorRead:\n"
+    "        {\n"
+    "            // AN193 2.2.4.5: type 0 as FFFFh, any other type as 3Fh.\n"
+    "            uint8_t descriptorType = data[0] & 0x3f;\n"
+    "            uint8_t voidDescriptor[2] = {0xff, 0xff};\n"
+    "\n"
+    "            if (verdict == 2)\n"
+    "                al.deviceDescriptorReadResponse(AckRequested, priority, hopType, tsap, secCtrl,\n"
+    "                                                descriptorType == 0 ? 0 : 0x3f, voidDescriptor);\n"
+    "            break;\n"
+    "        }\n"
+    "\n"
+    "        case PropertyValueRead:\n"
+    "        case PropertyValueWrite:\n"
+    "        {\n"
+    "            uint16_t startIndex = ((data[3] & 0x0f) << 8) | data[4];\n"
+    "            al.propertyValueReadResponse(AckRequested, priority, hopType, tsap, secCtrl,\n"
+    "                                         data[1], data[2], 0, startIndex, nullptr, 0);\n"
+    "            break;\n"
+    "        }\n"
+    "\n"
+    "        case PropertyDescriptionRead:\n"
+    "            // AN193 2.2.1: write_enable, type, max_nr_of_elem and access zero.\n"
+    "            al.propertyDescriptionReadResponse(AckRequested, priority, hopType, tsap, secCtrl,\n"
+    "                                               data[1], data[2], data[3], false, 0, 0, 0);\n"
+    "            break;\n"
+    "\n"
+    "        case PropertyExtDescriptionRead:\n"
+    "        {\n"
+    "            uint16_t objectType = (data[1] << 8) | data[2];\n"
+    "            uint16_t objectInstance = (data[3] << 4) | (data[4] >> 4);\n"
+    "            uint16_t propertyId = ((data[4] & 0x0f) << 8) | data[5];\n"
+    "            uint8_t descriptionType = (data[6] & 0xf0) >> 4;\n"
+    "            uint16_t propertyIndex = ((data[7] & 0x0f) << 8) | data[8];\n"
+    "            al.propertyExtDescriptionReadResponse(AckRequested, priority, hopType, tsap, secCtrl, objectType,\n"
+    "                                                  objectInstance, propertyId, propertyIndex, descriptionType,\n"
+    "                                                  false, 0, 0, 0);\n"
+    "            break;\n"
+    "        }\n"
+    "\n"
+    "        case PropertyValueExtRead:\n"
+    "        case PropertyValueExtWriteCon:\n"
+    "        {\n"
+    "            uint16_t objectType = (data[1] << 8) | data[2];\n"
+    "            uint8_t objectInstance = (data[3] << 4) | (data[4] >> 4);\n"
+    "            uint16_t propertyId = ((data[4] & 0x0f) << 8) | data[5];\n"
+    "            uint16_t startIndex = ((data[7] & 0x0f) << 8) | data[8];\n"
+    "\n"
+    "            if (apdu.type() == PropertyValueExtRead)\n"
+    "                al.propertyValueExtReadResponse(AckRequested, priority, hopType, tsap, secCtrl, objectType,\n"
+    "                                                objectInstance, propertyId, 0, startIndex, nullptr, 0);\n"
+    "            else\n"
+    "                al.propertyValueExtWriteConResponse(AckRequested, priority, hopType, tsap, secCtrl, objectType,\n"
+    "                                                    objectInstance, propertyId, data[6], startIndex, denied);\n"
+    "            break;\n"
+    "        }\n"
+    "\n"
+    "        case FunctionPropertyCommand:\n"
+    "        case FunctionPropertyState:\n"
+    "            al.functionPropertyStateResponse(AckRequested, priority, hopType, tsap, secCtrl,\n"
+    "                                             data[1], data[2], &denied, 1);\n"
+    "            break;\n"
+    "\n"
+    "        case FunctionPropertyExtCommand:\n"
+    "        case FunctionPropertyExtState:\n"
+    "        {\n"
+    "            uint16_t objectType = (data[1] << 8) | data[2];\n"
+    "            uint8_t objectInstance = (data[3] << 4) | (data[4] >> 4);\n"
+    "            uint16_t propertyId = ((data[4] & 0x0f) << 8) | data[5];\n"
+    "            al.functionPropertyExtStateResponse(AckRequested, priority, hopType, tsap, secCtrl, objectType,\n"
+    "                                                objectInstance, propertyId, &denied, 1);\n"
+    "            break;\n"
+    "        }\n"
+    "\n"
+    "        default:\n"
+    "            break;\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    + SEC23_AL_ANCHOR_DECL
+)
+
+SEC23_AL_ANCHOR_IND = (
+    "void ApplicationLayer::individualIndication(HopCountType hopType, Priority priority,"
+    " uint16_t tsap, APDU& apdu, const SecurityControl& secCtrl)\n"
+    "{\n"
+    "    uint8_t* data = apdu.data();\n"
+)
+
+SEC23_AL_IND = (
+    SEC23_AL_ANCHOR_IND
+    + "\n"
+    "    uint8_t sbipVerdict = sbipAccessCheck(apdu, secCtrl);\n"
+    "\n"
+    "    if (sbipVerdict != 0)\n"
+    "    {\n"
+    "        sbipAccessDenied(*this, hopType, priority, tsap, apdu, secCtrl, sbipVerdict);\n"
+    "        return;\n"
+    "    }\n"
+)
+
+SEC23_AL_ANCHOR_BC = (
+    "void ApplicationLayer::dataBroadcastIndication(HopCountType hopType, Priority priority,"
+    " uint16_t source, APDU& apdu, const SecurityControl& secCtrl)\n"
+    "{\n"
+    "    uint8_t* data = apdu.data();\n"
+)
+
+SEC23_AL_BC = (
+    SEC23_AL_ANCHOR_BC
+    + "\n"
+    "    if (sbipAccessCheck(apdu, secCtrl) != 0)\n"
+    "        return;\n"
+)
+
+SEC23_AL_ANCHOR_SBC = (
+    "void ApplicationLayer::dataSystemBroadcastIndication(HopCountType hopType, Priority priority,"
+    " uint16_t source, APDU& apdu, const SecurityControl& secCtrl)\n"
+    "{\n"
+    "    const uint8_t* data = apdu.data();\n"
+)
+
+SEC23_AL_SBC = (
+    SEC23_AL_ANCHOR_SBC
+    + "\n"
+    "    if (sbipAccessCheck(apdu, secCtrl) != 0)\n"
+    "        return;\n"
+)
+
+SEC23_CEMI_ANCHOR_DECL = "void CemiServer::frameReceived(CemiFrame& frame)\n"
+
+SEC23_CEMI_DECL = (
+    SEC23_MARKER + "\n"
+    "extern bool (*sbipCemiAccessHook)(uint16_t objectType, uint8_t propertyId, bool write);\n"
+    "\n"
+    + SEC23_CEMI_ANCHOR_DECL
+)
+
+SEC23_CEMI_ANCHOR_SWITCH = (
+    "{\n"
+    "    switch (frame.messageCode())\n"
+    "    {\n"
+    "        case L_data_req:\n"
+    "        {\n"
+    "            handleLData(frame);\n"
+)
+
+SEC23_CEMI_SWITCH = (
+    "{\n"
+    "    // A refused property access gets no elements: the handlers answer\n"
+    "    // that with a negative confirmation.\n"
+    "    if ((frame.messageCode() == M_PropRead_req || frame.messageCode() == M_PropWrite_req) &&\n"
+    "            sbipCemiAccessHook != nullptr)\n"
+    "    {\n"
+    "        uint16_t objectType = (frame.data()[1] << 8) | frame.data()[2];\n"
+    "\n"
+    "        if (!sbipCemiAccessHook(objectType, frame.data()[4], frame.messageCode() == M_PropWrite_req))\n"
+    "            frame.data()[5] &= 0x0F;\n"
+    "    }\n"
+    "\n"
+    "    switch (frame.messageCode())\n"
+    "    {\n"
+    "        case L_data_req:\n"
+    "        {\n"
+    "            handleLData(frame);\n"
+)
+
+
+def patch_access_policies():
+    done = []
+
+    if apply_secure_edits(
+        "application_layer.cpp", SEC23_MARKER,
+        ((SEC23_AL_ANCHOR_DECL, SEC23_AL_DECL),
+         (SEC23_AL_ANCHOR_IND, SEC23_AL_IND),
+         (SEC23_AL_ANCHOR_BC, SEC23_AL_BC),
+         (SEC23_AL_ANCHOR_SBC, SEC23_AL_SBC)),
+        "management is NOT checked against the access policies",
+    ):
+        done.append("application_layer.cpp")
+
+    if apply_secure_edits(
+        "cemi_server.cpp", SEC23_MARKER,
+        ((SEC23_CEMI_ANCHOR_DECL, SEC23_CEMI_DECL),
+         (SEC23_CEMI_ANCHOR_SWITCH, SEC23_CEMI_SWITCH)),
+        "local cEMI management is NOT checked against the access policies",
+    ):
+        done.append("cemi_server.cpp")
+
+    if done:
+        print("patch_knx.py: access policies applied to %s" % ", ".join(done))
+
+
+patch_access_policies()
+
+
+# --------------------------------------------------------------------------
+# 24. Announce the KNXnet/IP capabilities the device has
+# --------------------------------------------------------------------------
+#
+# PID_KNXNETIP_DEVICE_CAPABILITIES (3/8/3, 2.5.19) is a bit set of the
+# supported service families: 0 device management, 1 tunnelling, 2 routing,
+# 6 security. The stack answers 0001h, device management alone, although it
+# tunnels and routes. 03_08_09 2.6.2.1 asks for the security bit as well.
+
+SEC24_MARKER = "// sbip: device management, tunnelling, routing, security (3/8/3 2.5.19)"
+
+SEC24_ANCHOR = "            pushWord(0x1, data);\n"
+
+SEC24_NEW = (
+    "            " + SEC24_MARKER + "\n"
+    "            pushWord(0x0047, data);\n"
+)
+
+
+def patch_device_capabilities():
+    if apply_secure_edits(
+        "ip_parameter_object.cpp", SEC24_MARKER,
+        ((SEC24_ANCHOR, SEC24_NEW),),
+        "PID_KNXNETIP_DEVICE_CAPABILITIES keeps claiming device management only",
+    ):
+        print("patch_knx.py: KNXnet/IP device capabilities corrected in ip_parameter_object.cpp")
+
+
+patch_device_capabilities()
+
+
+# --------------------------------------------------------------------------
+# 25. No extended frames to a TP-UART that cannot send them
+# --------------------------------------------------------------------------
+#
+# The TP-UART 2 emulator on the SB-Interface does not handle extended frames
+# yet - the SBLib underneath has no support for them. A KNX Data Secure frame
+# carries 13 octets of overhead, so almost every secured management frame is
+# an extended one. Handed to the emulator it is lost or garbled on the line;
+# refused here, the sender gets a negative L_Data.con and knows. The router
+# object announces the same limit in PID_MAX_APDULENGTH_ROUTING (see
+# src/knx_link.cpp), so ETS does not try in the first place.
+
+SEC25_MARKER = "// sbip: extended frames only if the TP-UART can send them"
+
+SEC25_ANCHOR_DECL = "bool TpUartDataLinkLayer::sendFrame(CemiFrame& cemiFrame)\n"
+
+SEC25_DECL = (
+    SEC25_MARKER + "\n"
+    "extern bool sbipTpExtendedFrames;\n"
+    "\n"
+    + SEC25_ANCHOR_DECL
+)
+
+SEC25_ANCHOR = "    TpFrame* tpFrame = new TpFrame(cemiFrame);\n"
+
+SEC25_NEW = (
+    "    if (!sbipTpExtendedFrames && cemiFrame.frameType() == ExtendedFrame)\n"
+    "    {\n"
+    "        println(\"sbip: extended frame not sent - the TP-UART cannot send it\");\n"
+    "        dataConReceived(cemiFrame, false);\n"
+    "        return false;\n"
+    "    }\n"
+    "\n"
+    + SEC25_ANCHOR
+)
+
+
+def patch_tp_extended_frames():
+    if apply_secure_edits(
+        "tpuart_data_link_layer.cpp", SEC25_MARKER,
+        ((SEC25_ANCHOR_DECL, SEC25_DECL), (SEC25_ANCHOR, SEC25_NEW)),
+        "extended frames go to a TP-UART that cannot send them",
+    ):
+        print("patch_knx.py: extended frame guard applied to tpuart_data_link_layer.cpp")
+
+
+patch_tp_extended_frames()

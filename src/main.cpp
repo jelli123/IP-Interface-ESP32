@@ -21,6 +21,8 @@
 #include "interface_config.h"
 #include "improv_service.h"
 #include "knx_link.h"
+#include "knx_secure_crypto.h"
+#include "knx_secure_store.h"
 #include "lpc_isp.h"
 #include "net_manager.h"
 #include "ota_service.h"
@@ -86,6 +88,15 @@ void setup()
     {
         sysLog.resize((size_t)hwConfig.active().logKib * 1024);
     }
+
+    /*
+     * KNX Secure needs randomness it can trust: the FDSK below, and a key
+     * pair for every secure session. Seeded here because the entropy source
+     * used for it, the SAR ADC, cannot run next to WiFi - which starts in
+     * netManager.begin().
+     */
+    knxsec::beginRandom();
+    knxSecureStore.begin();
 
     // Straight after the profile and before anything else touches a pin: the
     // two ISP lines have to reach their idle state early, or a board with
@@ -172,6 +183,17 @@ void setup()
         // Not fatal. The interface still serves the dashboard, which is where
         // the failure is visible, and the link supervision keeps retrying.
         sysLog.println("WARNING: no answer from the SB-Interface on the KNX UART");
+    }
+
+    {
+        // The primitives every secure session and routing frame rests on,
+        // against published vectors. A failure here means no secure
+        // connection can work, so say so at the top of the log.
+        char report[96];
+        bool ok = knxsec::selfTest(report, sizeof(report));
+        knxSecureStore.selfTest(ok, report);
+        sysLog.printf("SECURE: crypto self test %s\n", report);
+        if (!ok) sysLog.println("SECURE: WARNING - KNX Secure will not interoperate");
     }
 
     {
