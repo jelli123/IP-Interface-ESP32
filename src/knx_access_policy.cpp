@@ -64,6 +64,7 @@ const Entry PROPERTIES[] = {
     {OT_ROUTER, 81, policy(0x00C, 0x00C)},   // PID_SECURITY_PROXY_GRP_KEY_TABLE
     {OT_ROUTER, 82, policy(0x00C, 0x00C)},   // PID_SECURITY_PROXY_ZONE_KEY_TABLE
     {OT_ROUTER, 83, policy(0x00C, 0x00C)},   // PID_SECURITY_PROXY_INDIVIDUAL_ADDRESS_TABLE
+    {OT_ROUTER, 120, policy(0x3FF, 0x00C)},  // PID_IP_SBC_CONTROL (03_05_01 4.5.16.1)
 
     // cEMI server object
     {OT_CEMI, 51, policy(0x3FF, 0x1FF)},     // PID_MEDIUM_TYPE

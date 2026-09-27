@@ -85,6 +85,14 @@ uint8_t (*sbipTunnelFeatureHook)(uint8_t slot, uint16_t tunnelAddress, uint8_t f
                                  const uint8_t* value, uint8_t length,
                                  uint8_t* out, uint8_t& outLength, uint16_t& newAddress) = nullptr;
 
+/*
+ * KNX IP System Broadcast, see patch 27: PID_IP_SBC_CONTROL and whether a
+ * broadcast from IP may go on to TP. Both answered by src/knxip_shim.cpp.
+ */
+void (*sbipIpSbcHook)(bool command, uint8_t* data, uint8_t length,
+                      uint8_t* result, uint8_t& resultLength) = nullptr;
+bool (*sbipBroadcastRouteHook)(bool fromPrimary) = nullptr;
+
 /** Longest APDU this device sends onto TP: a standard frame without extended frames. */
 static uint16_t maxTpApdu()
 {
@@ -368,6 +376,14 @@ constexpr const char SbipPlatform::MAGIC[8];
  */
 static HardwareSerial* knxSerial = nullptr;
 static SbipPlatform   knxPlatform(nullptr);
+
+class SbipBau;
+static void applyDomainAddress(SbipBau& bau, const SecurityControl& secCtrl, const uint8_t* domainAddress,
+                               uint8_t length, const uint8_t* serial);
+
+// Set by patch 27 right before the stack calls domainAddressSerialNumberWriteIndication().
+extern uint8_t sbipDomainAddressLength;
+
 /*
  * Bau091A keeps its interface objects private and getInterfaceObject()
  * protected. Deriving is enough to reach them - no library patch needed.
@@ -418,6 +434,19 @@ protected:
                       eraseCode == FactoryReset ? "factory" : "factory, keeping the address");
         knxPlatform.wipeOnCommit();
         wipeSecure();
+    }
+
+    /*
+     * A_DomainAddressSerialNumber_Write: for a KNX IP device the domain
+     * address is its routing multicast address, 4 octets, or with routing
+     * security that plus the security version and the backbone key, 21.
+     * The stack only knows RF's 6.
+     */
+    void domainAddressSerialNumberWriteIndication(Priority priority, HopCountType hopType,
+                                                  const SecurityControl& secCtrl, const uint8_t* domainAddress,
+                                                  const uint8_t* knxSerialNumber) override
+    {
+        applyDomainAddress(*this, secCtrl, domainAddress, sbipDomainAddressLength, knxSerialNumber);
     }
 
 public:
@@ -813,6 +842,118 @@ static uint8_t tunnelFeature(uint8_t slot, uint16_t tunnelAddress, uint8_t featu
     return FEATURE_OK;
 }
 
+/*
+ * 03_05_01 4.5.16.1: [reserved][service 00][mode] to write, [reserved][00]
+ * to read; the answer [return code][service]([mode]).
+ */
+static void ipSbcFunction(bool command, uint8_t* data, uint8_t length, uint8_t* result, uint8_t& resultLength)
+{
+    const uint8_t INVALID = 0xF2, IMPOSSIBLE = 0xF3, DATA_VOID = 0xF8;
+
+    if (length < 2)
+    {
+        result[0]    = INVALID;
+        resultLength = 1;
+        return;
+    }
+
+    result[1]    = data[1];
+    resultLength = 2;
+
+    if (data[1] != 0x00)
+    {
+        result[0] = INVALID;
+        return;
+    }
+
+    if (!command)
+    {
+        result[0]    = 0x00;
+        result[2]    = knxIpShim.sbcRouting() ? 1 : 0;
+        resultLength = 3;
+        return;
+    }
+
+    if (length < 3 || data[2] > 1)
+    {
+        result[0] = DATA_VOID;
+        return;
+    }
+
+    // Broadcasts blocked in the coupler would leave the mode without effect.
+    if (data[2] == 1)
+    {
+        RouterObject* router = (RouterObject*)knxBau.interfaceObject(OT_ROUTER, 1);
+        uint8_t main = 0, sub = 0;
+        if (router != nullptr)
+        {
+            router->property(PID_MAIN_LCCONFIG)->read(main);
+            router->property(PID_SUB_LCCONFIG)->read(sub);
+        }
+        if ((main | sub) & LCCONFIG::BROADCAST_LOCK)
+        {
+            result[0] = IMPOSSIBLE;
+            return;
+        }
+    }
+
+    knxIpShim.sbcEnable(data[2] == 1);
+    result[0] = 0x00;
+}
+
+/*
+ * The rules of conformance tests 2.4.9 and 2.4.15 - 2.4.19: plain only 4
+ * octets and only without security mode; secured only with the tool key,
+ * authenticated and encrypted; 21 octets only for security version 01h.
+ * The new multicast address takes a restart.
+ */
+static void applyDomainAddress(SbipBau& bau, const SecurityControl& secCtrl, const uint8_t* domainAddress,
+                               uint8_t length, const uint8_t* serial)
+{
+    uint8_t own[6];
+    knxLink.serialNumber(own);
+    if (memcmp(serial, own, 6) != 0) return;
+
+    bool secure = secCtrl.dataSecurity != None;
+    if (secure && (secCtrl.dataSecurity != AuthConf || !secCtrl.toolAccess)) return;
+    if (!secure && (length != 4 || bau.security().isSecurityModeEnabled())) return;
+    if (length != 4 && length != 21) return;
+    if (length == 21 && domainAddress[4] != 0x01) return;
+    if ((domainAddress[0] & 0xF0) != 0xE0) return; // not a multicast address
+
+    uint8_t one  = 1;
+    uint8_t mc[4];
+    memcpy(mc, domainAddress, 4);
+    bau.propertyValueWrite(OT_IP_PARAMETER, 1, PID_ROUTING_MULTICAST_ADDRESS, one, 1, mc, sizeof(mc));
+
+    if (secure)
+    {
+        uint8_t routing[4] = {0, 0, FAMILY_ROUTING, (uint8_t)(length == 21 ? 1 : 0)};
+        uint8_t result[4];
+        uint8_t resultLength = 0;
+
+        if (length == 21)
+        {
+            knxIpSecure.propertyWrite(91, 1, 1, domainAddress + 5);
+            // Through the property, as ETS would: setSecurityMode() is private.
+            uint8_t mode[3] = {0, 0, 1};
+            uint8_t modeResult[2];
+            uint8_t modeLength = 0;
+            bau.security().property(PID_SECURITY_MODE)->command(mode, sizeof(mode), modeResult, modeLength);
+        }
+        else
+        {
+            const uint8_t none[2] = {0, 0};
+            knxIpSecure.propertyWrite(91, 0, 1, none);
+        }
+        knxIpSecure.propertyFunction(true, 94, routing, sizeof(routing), result, resultLength);
+    }
+
+    sysLog.printf("KNX: domain address written by serial number (%u octets%s) - routing multicast %u.%u.%u.%u, restarting\n",
+                  length, secure ? ", secured" : "", mc[0], mc[1], mc[2], mc[3]);
+    knxLink.restartForDomainAddress();
+}
+
 bool KnxLink::begin()
 {
     s_instance = this;
@@ -828,6 +969,8 @@ bool KnxLink::begin()
     sbipAccessHook     = &checkServiceAccess;
     sbipCemiAccessHook = &checkCemiAccess;
     sbipTunnelFeatureHook = &tunnelFeature;
+    sbipIpSbcHook         = &ipSbcFunction;
+    sbipBroadcastRouteHook = [](bool fromPrimary) -> bool { return knxIpShim.broadcastMayRoute(fromPrimary); };
 
     KnxIpShim::Udp udp = {
         [](uint8_t* buffer, uint16_t max, uint32_t& ip, uint16_t& port) -> int {
@@ -844,6 +987,17 @@ bool KnxLink::begin()
             // addresses are host order with the first octet on top.
             uint32_t ip = knxPlatform.currentIpAddress();
             return ((ip & 0xFF) << 24) | ((ip & 0xFF00) << 8) | ((ip >> 8) & 0xFF00) | (ip >> 24);
+        },
+        []() -> uint32_t {
+            uint8_t  count = 1;
+            uint32_t length = 0;
+            uint8_t* data   = nullptr;
+            knxBau.propertyValueRead(OT_IP_PARAMETER, 1, PID_ROUTING_MULTICAST_ADDRESS, count, 1, &data, length);
+            uint32_t address = (data != nullptr && count == 1 && length >= 4)
+                                   ? ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) | ((uint32_t)data[2] << 8) | data[3]
+                                   : 0;
+            delete[] data;
+            return address;
         },
     };
     KnxIpShim::Tunnels tunnels = {
@@ -867,6 +1021,7 @@ bool KnxLink::begin()
             IpDataLinkLayer* ip = knxBau.getPrimaryDataLinkLayer();
             return ip != nullptr && ip->sbipSlotOpen(slot);
         },
+        []() -> uint16_t { return knxBau.deviceObject().individualAddress(); },
     };
     knxIpShim.begin(udp, tunnels);
 
@@ -1250,6 +1405,12 @@ void KnxLink::superviseRouting()
  * Not while a table is being loaded either: a half-written filter table has
  * no business in flash.
  */
+void KnxLink::restartForDomainAddress()
+{
+    _domainAddressPending = true;
+    _domainAddressSince   = millis();
+}
+
 void KnxLink::saveMemorySoon()
 {
     _memorySavePending = true;
@@ -1263,6 +1424,17 @@ void KnxLink::saveMemorySoon()
  */
 void KnxLink::superviseMemorySave()
 {
+    // A new domain address: saved and restarted once the answer is out and
+    // the KNXnet/IP Secure settings are stored (they wait 1 s).
+    if (_domainAddressPending && (uint32_t)(millis() - _domainAddressSince) > 2000)
+    {
+        _domainAddressPending = false;
+        _memorySavePending    = false;
+        knx.writeMemory();
+        netManager.scheduleReboot();
+        return;
+    }
+
     if (!_memorySavePending) return;
     if ((uint32_t)(millis() - _memorySaveSince) < 10000 || knx.progMode()) return;
 

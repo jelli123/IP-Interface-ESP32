@@ -91,6 +91,10 @@ int main()
     expect("on: tool write secured families", property(11, 94, true, toolOn), true);
     expect("on: plain read device address (00C)", property(0, 58, false, plainOn), false);
     expect("on: runtime key read device address (00C)", property(0, 58, false, runtimeOn), false);
+    expect("off: plain IP SBC control (3FF)", property(6, 120, true, plainOff), true);
+    expect("on: plain IP SBC control (00C)", property(6, 120, true, plainOn), false);
+    expect("on: tool IP SBC control", property(6, 120, true, toolOn), true);
+    expect("on: runtime key IP SBC control", property(6, 120, true, runtimeOn), false);
     expect("on: description of tool key, tool", propertyDescription(17, 56, toolOn), true);
     expect("on: description of tool key, runtime key", propertyDescription(17, 56, runtimeOn), false);
 

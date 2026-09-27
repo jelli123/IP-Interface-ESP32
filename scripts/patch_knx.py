@@ -3432,3 +3432,195 @@ def patch_tunnelling_features():
 
 
 patch_tunnelling_features()
+
+
+# --------------------------------------------------------------------------
+# 27. KNX IP System Broadcast
+# --------------------------------------------------------------------------
+#
+# 03_08_09 2.5.1.1 makes KNX IP System Broadcast (AN183, integrated into
+# 03_05_01 4.5.16 and 03_03_07) mandatory for a secure router. The frames
+# themselves - ROUTING_SYSTEM_BROADCAST on 224.0.23.12, never wrapped - are
+# handled in src/knxip_shim.cpp, which hands the stack a plain broadcast.
+# Three things need the stack:
+#
+#  - PID_IP_SBC_CONTROL (120) in the router object exists, but takes the
+#    mode from the wrong octet, answers in the wrong format and never falls
+#    back. It now asks the firmware (03_05_01 4.5.16.1).
+#  - The coupler handled system broadcast services (A_SystemNetwork-
+#    Parameter_Read, A_DomainAddressSerialNumber_Write, ...) locally and
+#    then returned: they never crossed it. They are routed now like any
+#    broadcast.
+#  - A system broadcast from IP may only reach TP if it is one of the few
+#    services meant to (conformance tests 2.4.6 - 2.4.8); the coupler asks
+#    before it routes a broadcast that came from IP.
+#  - A_DomainAddressSerialNumber_Write carries 4 octets for a plain and 21
+#    for a secured IP domain address; the BAU is told how many. And if it
+#    came secured, the secure application layer hands it to the broadcast
+#    handler, which drops it: it goes to the system broadcast one instead.
+
+SEC27_MARKER = "// sbip: KNX IP System Broadcast (AN183)"
+
+SEC27_RO_ANCHOR_INC = '#include "function_property.h"\n'
+
+SEC27_RO_INC = (
+    SEC27_RO_ANCHOR_INC
+    + "\n"
+    + SEC27_MARKER + "\n"
+    "extern void (*sbipIpSbcHook)(bool command, uint8_t* data, uint8_t length,\n"
+    "                             uint8_t* result, uint8_t& resultLength);\n"
+)
+
+SEC27_RO_ANCHOR = (
+    "    if (isCommand)\n"
+    "    {\n"
+    "        _ipSbcRoutingEnabled = (data[0] == 1) ? true : false;\n"
+    "    }\n"
+    "\n"
+    "    resultData[0] = ReturnCodes::Success;\n"
+    "    resultData[1] = _ipSbcRoutingEnabled ? 1 : 0;\n"
+    "    resultLength = 2;\n"
+)
+
+SEC27_RO_NEW = (
+    "    if (sbipIpSbcHook != nullptr)\n"
+    "    {\n"
+    "        sbipIpSbcHook(isCommand, data, length, resultData, resultLength);\n"
+    "        return;\n"
+    "    }\n"
+    "\n"
+    "    resultData[0] = ReturnCodes::GenericError;\n"
+    "    resultLength = 1;\n"
+)
+
+SEC27_NLC_ANCHOR_DECL = (
+    "void NetworkLayerCoupler::broadcastIndication(AckType ack, FrameFormat format, NPDU& npdu,"
+    " Priority priority, uint16_t source, uint8_t srcIfIdx)\n"
+)
+
+SEC27_NLC_DECL = (
+    SEC27_MARKER + "\n"
+    "// Whether a broadcast that came from IP may go on to TP, see src/knxip_shim.cpp.\n"
+    "extern bool (*sbipBroadcastRouteHook)(bool fromPrimary);\n"
+    "\n"
+    + SEC27_NLC_ANCHOR_DECL
+)
+
+SEC27_NLC_ANCHOR = (
+    "    // Route to other interface\n"
+    "    if (!(lcconfig & LCCONFIG::BROADCAST_LOCK))\n"
+    "        sendMsgHopCount(ack, GroupAddress, 0, npdu, priority, Broadcast, srcIfIdx, source);\n"
+)
+
+SEC27_NLC_NEW = (
+    "    // Route to other interface\n"
+    "    if (!(lcconfig & LCCONFIG::BROADCAST_LOCK) &&\n"
+    "            (sbipBroadcastRouteHook == nullptr || sbipBroadcastRouteHook(srcIfIdx == kPrimaryIfIndex)))\n"
+    "        sendMsgHopCount(ack, GroupAddress, 0, npdu, priority, Broadcast, srcIfIdx, source);\n"
+)
+
+SEC27_NLC_ANCHOR_SBC = (
+    "            npdu.frame().systemBroadcast(SysBroadcast);\n"
+    "            if (sbipManagementAllowed(srcIfIdx, source, false))\n"
+    "                _transportLayer.dataSystemBroadcastIndication(hopType, priority, source, npdu.tpdu());\n"
+    "            return;\n"
+    "        }\n"
+    "\n"
+    "        if (sbipManagementAllowed(srcIfIdx, source, false))\n"
+    "            _transportLayer.dataBroadcastIndication(hopType, priority, source, npdu.tpdu());\n"
+)
+
+SEC27_NLC_SBC = (
+    "            npdu.frame().systemBroadcast(SysBroadcast);\n"
+    "            if (sbipManagementAllowed(srcIfIdx, source, false))\n"
+    "                _transportLayer.dataSystemBroadcastIndication(hopType, priority, source, npdu.tpdu());\n"
+    "            // ... and routed on like any broadcast: the stack returned\n"
+    "            // here, so no system broadcast service ever crossed the\n"
+    "            // coupler (conformance tests 2.4.3, 2.4.4, 2.4.6).\n"
+    "        }\n"
+    "        else if (sbipManagementAllowed(srcIfIdx, source, false))\n"
+    "            _transportLayer.dataBroadcastIndication(hopType, priority, source, npdu.tpdu());\n"
+)
+
+SEC27_AL_ANCHOR_DECL = (
+    "void ApplicationLayer::dataSystemBroadcastIndication(HopCountType hopType, Priority priority,"
+    " uint16_t source, APDU& apdu)\n"
+)
+
+SEC27_AL_DECL = (
+    SEC27_MARKER + "\n"
+    "// Octets of the domain address in the A_DomainAddressSerialNumber_Write\n"
+    "// being handed to the BAU: 4 plain, 21 with routing security, 6 on RF.\n"
+    "uint8_t sbipDomainAddressLength = 0;\n"
+    "\n"
+    + SEC27_AL_ANCHOR_DECL
+)
+
+SEC27_AL_ANCHOR_DOA = (
+    "            const uint8_t* domainAddress = &data[7];\n"
+    "            _bau.domainAddressSerialNumberWriteIndication(priority, hopType, secCtrl, domainAddress, knxSerialNumber);\n"
+)
+
+SEC27_AL_DOA = (
+    "            const uint8_t* domainAddress = &data[7];\n"
+    "            sbipDomainAddressLength = apdu.length() > 7 ? apdu.length() - 7 : 0;\n"
+    "            _bau.domainAddressSerialNumberWriteIndication(priority, hopType, secCtrl, domainAddress, knxSerialNumber);\n"
+)
+
+SEC27_AL_ANCHOR_BC = (
+    "    switch (apdu.type())\n"
+    "    {\n"
+    "        case IndividualAddressWrite:\n"
+    "        {\n"
+    "            uint16_t newAddress;\n"
+    "            popWord(newAddress, data + 1);\n"
+    "            _bau.individualAddressWriteIndication(hopType, secCtrl, newAddress);\n"
+)
+
+SEC27_AL_BC = (
+    "    // A secured system broadcast service arrives here, unwrapped by the\n"
+    "    // secure application layer: its handler is the system broadcast one.\n"
+    "    if (secCtrl.dataSecurity != None &&\n"
+    "            (apdu.type() == DomainAddressSerialNumberWrite || apdu.type() == SystemNetworkParameterRead))\n"
+    "    {\n"
+    "        ApplicationLayer::dataSystemBroadcastIndication(hopType, priority, source, apdu, secCtrl);\n"
+    "        return;\n"
+    "    }\n"
+    "\n"
+    + SEC27_AL_ANCHOR_BC
+)
+
+
+def patch_ip_system_broadcast():
+    done = []
+
+    if apply_secure_edits(
+        "router_object.cpp", SEC27_MARKER,
+        ((SEC27_RO_ANCHOR_INC, SEC27_RO_INC), (SEC27_RO_ANCHOR, SEC27_RO_NEW)),
+        "PID_IP_SBC_CONTROL keeps its wrong format and never falls back",
+    ):
+        done.append("router_object.cpp")
+
+    if apply_secure_edits(
+        "network_layer_coupler.cpp", SEC27_MARKER,
+        ((SEC27_NLC_ANCHOR_DECL, SEC27_NLC_DECL),
+         (SEC27_NLC_ANCHOR_SBC, SEC27_NLC_SBC),
+         (SEC27_NLC_ANCHOR, SEC27_NLC_NEW)),
+        "any IP system broadcast is routed to TP",
+    ):
+        done.append("network_layer_coupler.cpp")
+
+    if apply_secure_edits(
+        "application_layer.cpp", SEC27_MARKER,
+        ((SEC27_AL_ANCHOR_DECL, SEC27_AL_DECL),
+         (SEC27_AL_ANCHOR_DOA, SEC27_AL_DOA),
+         (SEC27_AL_ANCHOR_BC, SEC27_AL_BC)),
+        "domain address writes do NOT reach the device",
+    ):
+        done.append("application_layer.cpp")
+
+    if done:
+        print("patch_knx.py: KNX IP System Broadcast applied to %s" % ", ".join(done))
+
+
+patch_ip_system_broadcast()

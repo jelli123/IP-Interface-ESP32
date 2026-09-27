@@ -115,6 +115,9 @@ public:
     /** Save the stack's memory image once things are quiet (KNX task only). */
     void saveMemorySoon();
 
+    /** A new domain address was written: save and restart shortly (KNX task only). */
+    void restartForDomainAddress();
+
     /**
      * Forward group telegrams even though no filter table was downloaded.
      *
@@ -364,6 +367,8 @@ private:
     uint32_t _lastLinkCheck     = 0;
     bool     _tpReported        = false; //!< bus state last told to the tunnels
     bool     _memorySavePending = false;
+    bool     _domainAddressPending = false;
+    uint32_t _domainAddressSince   = 0;
     uint32_t _memorySaveSince   = 0;
     uint32_t _busPeakAt         = 0;
 

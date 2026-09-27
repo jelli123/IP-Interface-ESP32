@@ -36,11 +36,22 @@
  *    E_NO_TUNNELLING_ADDRESS, E_AUTHORISATION_ERROR, E_CONNECTION_IN_USE
  *    (03_08_02 table 8).
  *
+ *  KNX IP System Broadcast (AN183 in 03_05_01 4.5.16, 03_03_07 5.2)
+ *    ROUTING_SYSTEM_BROADCAST reaches the device on 224.0.23.12 only, never
+ *    wrapped, and only a handful of services in it count: the device's own
+ *    management takes the serial number read in programming mode, the
+ *    domain address write and data security with the SBC flag; TP gets
+ *    only their answers, and only while PID_IP_SBC_CONTROL has the routing
+ *    mode on. The stack sees a plain domain broadcast. Its own answers to
+ *    it, and while the mode is on the eligible requests from TP or a
+ *    tunnel, leave as ROUTING_SYSTEM_BROADCAST instead of a routing
+ *    indication.
+ *
  *  What the device announces
  *    Search and description answers: core version 2 while the TCP listener
  *    runs, tunnelling 2 (feature services, patch 26 in
  *    scripts/patch_knx.py),
- *    the security family and the DIB of secured
+ *    routing 2 (IP system broadcast), the security family and the DIB of secured
  *    families in the extended search answer only (03_08_09 2.6.2), and the
  *    "authorized" bit of each tunnel slot for the user asking. The
  *    description answer gets the tunnelling info DIB the stack leaves out;
@@ -65,6 +76,7 @@ public:
         bool (*send)(uint32_t ip, uint16_t port, const uint8_t* buffer, uint16_t length);
         bool (*multicast)(const uint8_t* buffer, uint16_t length);
         uint32_t (*ownIp)(); //!< host order, 0 without an address
+        uint32_t (*routingMulticast)(); //!< host order, PID_ROUTING_MULTICAST_ADDRESS
     };
 
     /** What the stack knows about its tunnel addresses, from src/knx_link.cpp. */
@@ -75,6 +87,7 @@ public:
         uint16_t (*maxApdu)();                  //!< longest APDU a tunnel can send to TP
         bool (*securityMode)();                 //!< KNX Data Secure security mode on
         bool (*slotOpen)(uint8_t slot);         //!< a connection holds the slot
+        uint16_t (*ownAddress)();               //!< the device's individual address
     };
 
     void begin(const Udp& udp, const Tunnels& tunnels);
@@ -103,6 +116,17 @@ public:
     /** Asked by the stack for every free slot while it handles a CONNECT_REQUEST. */
     bool slotAllowed(uint8_t slot) const;
 
+    // ---- KNX IP System Broadcast (AN183) -----------------------------------
+
+    /** Switch the IP System Broadcast Routing Mode (PID_IP_SBC_CONTROL). */
+    void sbcEnable(bool on);
+
+    /** The routing mode: on for 20 s after the last enable (03_05_01 4.5.16.1). */
+    bool sbcRouting();
+
+    /** Asked by the coupler before a broadcast from IP goes on to TP. */
+    bool broadcastMayRoute(bool fromIp) const;
+
     // ---- dashboard ---------------------------------------------------------
 
     bool tcpListening() const { return _listening; }
@@ -117,6 +141,8 @@ public:
         uint32_t plainRoutingDropped;
         uint32_t channelHijackDropped;
         uint32_t routingQueued;
+        uint32_t systemBroadcastIn;
+        uint32_t systemBroadcastOut;
     };
     const Stats& stats() const { return _stats; }
 
@@ -133,6 +159,8 @@ private:
         uint8_t  user;
         bool     injected;    //!< made up here, not from the network
         uint16_t requestedIa; //!< extended CRI, 0 if none
+        bool     systemBroadcast; //!< came as ROUTING_SYSTEM_BROADCAST
+        bool     toTp;            //!< ... and may be routed on to TP
     };
 
     struct Tcp
@@ -168,6 +196,9 @@ private:
     bool process(uint8_t* frame, uint16_t& length, uint16_t max, Source src);
     bool checkConnect(const uint8_t* frame, uint16_t length, Source& src);
     bool checkChannel(uint8_t* frame, uint16_t length, const Source& src);
+    bool acceptSystemBroadcast(uint8_t* frame, uint16_t length, Source& src);
+    bool systemBroadcastIndication(const uint8_t* frame, uint16_t length) const;
+    bool sendSystemBroadcast(uint8_t* buffer, uint16_t length);
     void refuseConnect(const uint8_t* frame, uint16_t length, const Source& src, uint8_t status);
 
     // Outgoing
@@ -205,7 +236,12 @@ private:
     bool     _tcpSetting = true;
     Tcp      _tcp[MAX_TCP] = {};
     Channel  _channels[MAX_CHANNELS] = {};
-    Source   _ctx = {-1, 0, 0, KnxIpSecure::NO_SESSION, 0, false, 0};
+    Source   _ctx = {-1, 0, 0, KnxIpSecure::NO_SESSION, 0, false, 0, false, false};
+
+    uint32_t _sbcSince   = 0;     //!< millis() of the last enable
+    bool     _sbcOn      = false;
+    uint32_t _sbcReplyTo = 0;     //!< own answers until then go out as system broadcast
+    bool     _sbcWarned  = false;
 
     // Frames made up here for the stack: disconnects, acknowledgements.
     struct Injected

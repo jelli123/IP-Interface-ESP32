@@ -52,6 +52,26 @@ enum : uint16_t
     TUNNELING_FEATURE_INFO   = 0x0425,
 };
 
+enum : uint16_t
+{
+    ROUTING_INDICATION       = 0x0530,
+    ROUTING_SYSTEM_BROADCAST = 0x0533,
+};
+
+// AN183: the system setup multicast address, where IP system broadcasts
+// travel whatever the routing multicast address.
+static const uint32_t SYSTEM_SETUP_MULTICAST = 0xE000170Cu; // 224.0.23.12
+static const uint16_t KNXNETIP_PORT          = 3671;
+static const uint32_t SBC_ROUTING_MS         = 20000;
+static const uint32_t SBC_REPLY_MS           = 3000;
+
+// APCI of the services an IP system broadcast may carry.
+static const uint16_t APCI_SNP_READ     = 0x1C8;
+static const uint16_t APCI_SNP_RESPONSE = 0x1C9;
+static const uint16_t APCI_DOA_WRITE    = 0x3EE;
+static const uint16_t APCI_DOA_RESPONSE = 0x3ED;
+static const uint16_t APCI_SECURE       = 0x3F1;
+
 // Frames of a tunnel that carry its sequence counter (03_08_04 3.1).
 static bool sequenced(uint16_t service)
 {
@@ -325,6 +345,7 @@ bool KnxIpShim::process(uint8_t* frame, uint16_t& length, uint16_t max, Source s
 
                 memcpy(frame, scratch, inner);
                 length = (uint16_t)inner;
+                if (systemBroadcastIndication(frame, length)) return false;
                 _ctx   = src;
                 return true;
             }
@@ -374,7 +395,13 @@ bool KnxIpShim::process(uint8_t* frame, uint16_t& length, uint16_t max, Source s
             if (src.tcp >= 0) return false;
             break;
 
-        case 0x0530: case 0x0531: case 0x0532: case 0x0533:
+        case ROUTING_SYSTEM_BROADCAST:
+            // Never wrapped, even with routing secured, and never in a session.
+            if (src.tcp >= 0 || src.session != KnxIpSecure::NO_SESSION) return false;
+            if (!acceptSystemBroadcast(frame, length, src)) return false;
+            break;
+
+        case 0x0530: case 0x0531: case 0x0532:
             // Routing is multicast and never inside a session.
             if (src.tcp >= 0 || src.session != KnxIpSecure::NO_SESSION) return false;
 
@@ -386,6 +413,8 @@ bool KnxIpShim::process(uint8_t* frame, uint16_t& length, uint16_t max, Source s
                 knxIpSecure.countPlainRefused();
                 return false;
             }
+
+            if (systemBroadcastIndication(frame, length)) return false;
             break;
 
         case CONNECT_REQUEST:
@@ -838,6 +867,7 @@ uint16_t KnxIpShim::rewriteDescription(const uint8_t* frame, uint16_t length, co
 
                 if (family == FAMILY_CORE && _listening) version = 2;
                 if (family == FAMILY_TUNNELLING) version = 2;
+                if (family == FAMILY_ROUTING) version = 2; // with IP system broadcast (AN183)
                 if (family == FAMILY_SECURITY) security = true;
 
                 outFrame[out++] = family;
@@ -924,6 +954,193 @@ uint16_t KnxIpShim::rewriteDescription(const uint8_t* frame, uint16_t length, co
     return out;
 }
 
+// ---------------------------------------------------------------------------
+// KNX IP System Broadcast
+// ---------------------------------------------------------------------------
+
+namespace
+{
+/** The cEMI L_Data.ind of a routing frame, as far as AN183 cares. */
+struct Routed
+{
+    uint16_t       ctrl1;           //!< offset of control field 1
+    bool           broadcast;       //!< group address 0
+    bool           systemBroadcast; //!< control field 1 bit 4 clear
+    uint8_t        hop;
+    uint16_t       source;
+    const uint8_t* apdu;            //!< TPCI octet
+    uint8_t        apduLength;      //!< octets from the TPCI on
+    uint16_t       apci;
+};
+
+bool parseRouted(const uint8_t* f, uint16_t length, Routed& r)
+{
+    if (length < 8 || f[6] != 0x29) return false; // L_Data.ind
+
+    uint16_t c = (uint16_t)(8 + f[7]);
+    if (length < c + 9) return false;
+
+    uint8_t  ctrl2       = f[c + 1];
+    uint16_t destination = (uint16_t)((f[c + 4] << 8) | f[c + 5]);
+    uint8_t  octets      = f[c + 6];
+    if (length < c + 8 + octets) return false;
+
+    r.ctrl1           = c;
+    r.broadcast       = (ctrl2 & 0x80) && destination == 0;
+    r.systemBroadcast = !(f[c] & 0x10);
+    r.hop             = (uint8_t)((ctrl2 >> 4) & 0x07);
+    r.source          = (uint16_t)((f[c + 2] << 8) | f[c + 3]);
+    r.apdu            = f + c + 7;
+    r.apduLength      = (uint8_t)(octets + 1);
+    r.apci            = (uint16_t)(((r.apdu[0] & 0x03) << 8) | r.apdu[1]);
+    return true;
+}
+
+/** A_SystemNetworkParameter_Read/_Response for the serial number, programming mode. */
+bool serialByProgMode(const Routed& r)
+{
+    return r.apduLength >= 7 && r.apdu[2] == 0 && r.apdu[3] == 0 &&
+           (((r.apdu[4] << 4) | (r.apdu[5] >> 4)) == 11) && r.apdu[6] == 1;
+}
+
+/** S-A_Data or one of its sync services with the SBC flag; @p service -1 for any. */
+bool secureSbc(const Routed& r, bool tool, int service)
+{
+    if (r.apci != APCI_SECURE || r.apduLength < 3) return false;
+
+    uint8_t scf = r.apdu[2];
+    if (!(scf & 0x08)) return false;
+    if (tool && !(scf & 0x80)) return false;
+    return service < 0 || (scf & 0x07) == service;
+}
+} // namespace
+
+void KnxIpShim::sbcEnable(bool on)
+{
+    if (on && !_sbcOn) sysLog.println("KNX: IP system broadcast routing on for 20 s");
+    _sbcOn    = on;
+    _sbcSince = millis();
+}
+
+bool KnxIpShim::sbcRouting()
+{
+    if (_sbcOn && (uint32_t)(millis() - _sbcSince) >= SBC_ROUTING_MS)
+    {
+        _sbcOn = false;
+        sysLog.println("KNX: IP system broadcast routing off again");
+    }
+    return _sbcOn;
+}
+
+bool KnxIpShim::broadcastMayRoute(bool fromIp) const
+{
+    return !fromIp || !_ctx.systemBroadcast || _ctx.toTp;
+}
+
+/*
+ * 03_03_07 5.2.1.3: a routing indication marked as system broadcast is not
+ * how IP carries one - IP devices ignore it (conformance test 2.4.32).
+ * Returns true to drop the frame.
+ */
+bool KnxIpShim::systemBroadcastIndication(const uint8_t* frame, uint16_t length) const
+{
+    Routed r;
+    return knxsec::serviceType(frame, length) == ROUTING_INDICATION &&
+           parseRouted(frame, length, r) && r.broadcast && r.systemBroadcast;
+}
+
+/*
+ * An incoming ROUTING_SYSTEM_BROADCAST, turned into the domain broadcast the
+ * stack knows. What its own management may take and what may go on to TP
+ * follows the conformance tests 2.4.2 - 2.4.10 and 2.4.20.
+ */
+bool KnxIpShim::acceptSystemBroadcast(uint8_t* frame, uint16_t length, Source& src)
+{
+    // Our own, back over the multicast loopback.
+    if (_udp.ownIp != nullptr && src.ip == _udp.ownIp()) return false;
+
+    // Only what arrived on 224.0.23.12 counts (2.4.2). The socket cannot
+    // tell the group a frame came to, so this holds only while the routing
+    // multicast address is that one.
+    if (_udp.routingMulticast == nullptr || _udp.routingMulticast() != SYSTEM_SETUP_MULTICAST)
+    {
+        if (!_sbcWarned)
+        {
+            _sbcWarned = true;
+            sysLog.println("KNX: IP system broadcast ignored - it needs the routing multicast address 224.0.23.12");
+        }
+        return false;
+    }
+
+    Routed r;
+    if (!parseRouted(frame, length, r) || !r.broadcast || !r.systemBroadcast) return false;
+
+    // 03_03_07 5.2.1.3: data security in it without the SBC flag is ignored.
+    if (r.apci == APCI_SECURE && !secureSbc(r, false, -1)) return false;
+
+    bool local = (r.apci == APCI_SNP_READ && serialByProgMode(r)) ||
+                 r.apci == APCI_DOA_WRITE ||
+                 secureSbc(r, false, 0) || secureSbc(r, false, 2);
+
+    bool toTp = sbcRouting() && r.hop > 0 &&
+                ((r.apci == APCI_SNP_RESPONSE && serialByProgMode(r)) || secureSbc(r, true, 3));
+
+    if (!local && !toTp) return false;
+
+    frame[2] = (uint8_t)(ROUTING_INDICATION >> 8);
+    frame[3] = (uint8_t)ROUTING_INDICATION;
+    frame[r.ctrl1] |= 0x10;
+
+    src.systemBroadcast = true;
+    src.toTp            = toTp;
+    if (local) _sbcReplyTo = millis() + SBC_REPLY_MS;
+
+    _stats.systemBroadcastIn++;
+    return true;
+}
+
+/*
+ * A routing indication of the stack that has to leave as system broadcast:
+ * its own answer to one (2.4.13), or while the routing mode is on a request
+ * from TP or a tunnel meant for IP devices (2.4.3 - 2.4.5). Never wrapped.
+ */
+bool KnxIpShim::sendSystemBroadcast(uint8_t* buffer, uint16_t length)
+{
+    Routed r;
+    if (knxsec::serviceType(buffer, length) != ROUTING_INDICATION ||
+        !parseRouted(buffer, length, r) || !r.broadcast)
+        return false;
+
+    bool own = _tunnels.ownAddress != nullptr && r.source == _tunnels.ownAddress();
+    bool out;
+
+    if (own)
+        out = (int32_t)(millis() - _sbcReplyTo) < 0 &&
+              ((r.apci == APCI_SNP_RESPONSE && serialByProgMode(r)) || r.apci == APCI_DOA_RESPONSE ||
+               secureSbc(r, false, -1));
+    else
+        out = sbcRouting() &&
+              ((r.apci == APCI_SNP_READ && serialByProgMode(r)) ||
+               (r.apci == APCI_DOA_WRITE && r.apduLength == 12) ||
+               secureSbc(r, true, 0) || secureSbc(r, true, 2));
+
+    if (!out)
+    {
+        // A routing indication is always a domain broadcast on IP.
+        buffer[r.ctrl1] |= 0x10;
+        return false;
+    }
+
+    if (length > sizeof(outFrame)) return false;
+    memcpy(outFrame, buffer, length);
+    outFrame[2] = (uint8_t)(ROUTING_SYSTEM_BROADCAST >> 8);
+    outFrame[3] = (uint8_t)ROUTING_SYSTEM_BROADCAST;
+    outFrame[r.ctrl1] &= (uint8_t)~0x10;
+
+    _stats.systemBroadcastOut++;
+    return _udp.send(SYSTEM_SETUP_MULTICAST, KNXNETIP_PORT, outFrame, length);
+}
+
 /*
  * DIB 07 (03_08_02 7.5.4.7), as the stack builds it for the extended search:
  * maximum APDU length, then per slot its address and state - bit 0 free,
@@ -956,6 +1173,8 @@ uint16_t KnxIpShim::tunnellingInfo(uint8_t* out, uint16_t room, const Source& to
 
 bool KnxIpShim::sendMulticast(uint8_t* buffer, uint16_t length)
 {
+    if (sendSystemBroadcast(buffer, length)) return true;
+
     // 2.2.1.4.5: every routing frame wrapped once routing is secured.
     if (!knxIpSecure.routingSecure())
         return _udp.multicast(buffer, length);
