@@ -112,6 +112,9 @@ public:
      */
     uint8_t tunnelAddresses(uint16_t* out, uint8_t max) const;
 
+    /** Save the stack's memory image once things are quiet (KNX task only). */
+    void saveMemorySoon();
+
     /**
      * Forward group telegrams even though no filter table was downloaded.
      *
@@ -326,6 +329,7 @@ private:
     void onActivity(uint8_t info);
     void updateBusLoad();
     void superviseTpLink();
+    void superviseMemorySave();
 
     /** Put the effective filter setting in place. */
     void applyRouting();
@@ -358,6 +362,9 @@ private:
     uint32_t _lastBusLoadWindow = 0;
     uint32_t _busBitsInWindow   = 0;
     uint32_t _lastLinkCheck     = 0;
+    bool     _tpReported        = false; //!< bus state last told to the tunnels
+    bool     _memorySavePending = false;
+    uint32_t _memorySaveSince   = 0;
     uint32_t _busPeakAt         = 0;
 
     uint32_t _lastRoutingCheck  = 0;

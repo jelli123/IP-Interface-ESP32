@@ -3174,3 +3174,261 @@ def patch_tp_extended_frames():
 
 
 patch_tp_extended_frames()
+
+
+# --------------------------------------------------------------------------
+# 26. Tunnelling v2: the feature services
+# --------------------------------------------------------------------------
+#
+# 03_08_04 3: TUNNELLING_FEATURE_GET and _SET read and write interface
+# features of a tunnel (EMI type, device descriptor, bus connection state,
+# manufacturer, the tunnel's own address, maximum APDU length), and
+# TUNNELLING_FEATURE_INFO reports changes once the client enabled it.
+# 03_08_09 2.5.1.1 makes tunnelling v2 mandatory for a secure router.
+#
+# The services share the tunnel's sequence counters with TUNNELLING_REQUEST
+# in both directions (3.1), so they have to be handled where the stack keeps
+# those counters. The values themselves come from the firmware through
+# sbipTunnelFeatureHook (src/knx_link.cpp); feature 08, whether a tunnel gets
+# INFO frames, belongs to the connection and lives here.
+
+SEC26_MARKER = "// sbip: tunnelling v2 feature services (03_08_04 3)"
+
+SEC26_ANCHOR_H_PUBLIC = "        bool isSentToTunnel(uint16_t address, bool isGrpAddr);\n#endif\n"
+
+SEC26_H_PUBLIC = (
+    "        bool isSentToTunnel(uint16_t address, bool isGrpAddr);\n"
+    "        " + SEC26_MARKER + "\n"
+    "        void sbipFeatureService(uint8_t* buffer, uint16_t length);\n"
+    "        void sbipFeatureInfo(uint8_t feature, const uint8_t* value, uint8_t length, uint8_t channel = 0);\n"
+    "        bool sbipSlotOpen(uint8_t slot) const { return slot < KNX_TUNNELING && tunnels[slot].ChannelId != 0; }\n"
+    "#endif\n"
+)
+
+SEC26_ANCHOR_H_PRIVATE = "    uint8_t _lastChannelId = 0;\n"
+
+SEC26_H_PRIVATE = (
+    SEC26_ANCHOR_H_PRIVATE
+    + "    // sbip: channel id of each tunnel that asked for INFO frames, 0 if none\n"
+    "    uint8_t _sbipInfoChannel[KNX_TUNNELING] = {};\n"
+    "    void sbipFeatureSend(KnxIpTunnelConnection* tun, uint16_t service, uint8_t feature,\n"
+    "                         uint8_t second, const uint8_t* value, uint8_t length);\n"
+)
+
+SEC26_ANCHOR_CASE = (
+    "        case TunnelingAck:\n"
+    "        {\n"
+    "            sbipTunnelAcked++;\n"
+)
+
+SEC26_CASE = (
+    "        " + SEC26_MARKER + "\n"
+    "        case (KnxIpServiceType)0x0422: // TUNNELLING_FEATURE_GET\n"
+    "        case (KnxIpServiceType)0x0424: // TUNNELLING_FEATURE_SET\n"
+    "        {\n"
+    "            sbipFeatureService(buffer, len);\n"
+    "            break;\n"
+    "        }\n"
+    "\n"
+    + SEC26_ANCHOR_CASE
+)
+
+SEC26_ANCHOR_CHANNEL = "    tun->ChannelId = _lastChannelId;\n"
+
+SEC26_CHANNEL = (
+    SEC26_ANCHOR_CHANNEL
+    + "    _sbipInfoChannel[tun - tunnels] = 0; // 3.6.9: disabled on every new connection\n"
+)
+
+SEC26_ANCHOR_FUNCS = "void IpDataLinkLayer::enabled(bool value)\n"
+
+SEC26_FUNCS = (
+    "#ifdef KNX_TUNNELING\n"
+    + SEC26_MARKER + "\n"
+    "// Answers a feature of the tunnel in slot (PID 53 entry slot + 1) with\n"
+    "// address tunnelAddress: the return code, the value in out/outLength, and\n"
+    "// for a successful write of feature 06 the tunnel's new address. Defined\n"
+    "// in src/knx_link.cpp.\n"
+    "extern uint8_t (*sbipTunnelFeatureHook)(uint8_t slot, uint16_t tunnelAddress, uint8_t feature, bool set,\n"
+    "                                        const uint8_t* value, uint8_t length,\n"
+    "                                        uint8_t* out, uint8_t& outLength, uint16_t& newAddress);\n"
+    "\n"
+    "void IpDataLinkLayer::sbipFeatureSend(KnxIpTunnelConnection* tun, uint16_t service, uint8_t feature,\n"
+    "                                      uint8_t second, const uint8_t* value, uint8_t length)\n"
+    "{\n"
+    "    uint8_t frame[32];\n"
+    "    if (length > sizeof(frame) - 12)\n"
+    "        return;\n"
+    "\n"
+    "    uint16_t total = 12 + length;\n"
+    "    frame[0] = 0x06;\n"
+    "    frame[1] = 0x10;\n"
+    "    pushWord(service, frame + 2);\n"
+    "    pushWord(total, frame + 4);\n"
+    "    frame[6] = 4;\n"
+    "    frame[7] = tun->ChannelId;\n"
+    "    frame[8] = tun->SequenceCounter_S++;\n"
+    "    frame[9] = 0;\n"
+    "    frame[10] = feature;\n"
+    "    frame[11] = second;\n"
+    "    memcpy(frame + 12, value, length);\n"
+    "\n"
+    "    // Acknowledged like a tunnelling request, and counted like one.\n"
+    "    sbipTunnelSent++;\n"
+    "    _platform.sendBytesUniCast(tun->IpAddress, tun->PortData, frame, total);\n"
+    "}\n"
+    "\n"
+    "void IpDataLinkLayer::sbipFeatureService(uint8_t* buffer, uint16_t length)\n"
+    "{\n"
+    "    // Header, connection header, feature identifier, reserved.\n"
+    "    if (length < 12 || buffer[6] != 4)\n"
+    "        return;\n"
+    "\n"
+    "    KnxIpTunnelConnection* tun = nullptr;\n"
+    "\n"
+    "    for (int i = 0; i < KNX_TUNNELING; i++)\n"
+    "        if (tunnels[i].ChannelId != 0 && tunnels[i].ChannelId == buffer[7])\n"
+    "            tun = &tunnels[i];\n"
+    "\n"
+    "    // 3.5: an unknown channel is ignored - and a device management\n"
+    "    // connection has no interface features.\n"
+    "    if (tun == nullptr || tun->IsConfig)\n"
+    "        return;\n"
+    "\n"
+    "    // 3.1: acknowledged and sequenced exactly like a TUNNELLING_REQUEST.\n"
+    "    uint8_t sequence = buffer[8];\n"
+    "    uint8_t ack[10] = {0x06, 0x10, 0x04, 0x21, 0x00, 0x0A, 0x04, tun->ChannelId, sequence, 0x00};\n"
+    "\n"
+    "    if (sequence == tun->SequenceCounter_R)\n"
+    "    {\n"
+    "        _platform.sendBytesUniCast(tun->IpAddress, tun->PortData, ack, sizeof(ack));\n"
+    "        return;\n"
+    "    }\n"
+    "\n"
+    "    if ((uint8_t)(sequence - 1) != tun->SequenceCounter_R)\n"
+    "        return;\n"
+    "\n"
+    "    _platform.sendBytesUniCast(tun->IpAddress, tun->PortData, ack, sizeof(ack));\n"
+    "    tun->SequenceCounter_R = sequence;\n"
+    "\n"
+    "    bool           set         = buffer[3] == 0x24;\n"
+    "    uint8_t        feature     = buffer[10];\n"
+    "    const uint8_t* value       = buffer + 12;\n"
+    "    uint8_t        valueLength = (uint8_t)(length - 12);\n"
+    "    uint8_t        out[16];\n"
+    "    uint8_t        outLength   = 0;\n"
+    "    uint16_t       newAddress  = 0;\n"
+    "    uint8_t        rc;\n"
+    "    uint8_t        slot        = (uint8_t)(tun - tunnels);\n"
+    "\n"
+    "    if (feature == 0x08)\n"
+    "    {\n"
+    "        // 3.6.9: Interface Feature Info service Enable, per connection.\n"
+    "        if (!set)\n"
+    "        {\n"
+    "            out[0] = _sbipInfoChannel[slot] == tun->ChannelId ? 1 : 0;\n"
+    "            outLength = 1;\n"
+    "            rc = 0x00;\n"
+    "        }\n"
+    "        else if (valueLength != 1 || value[0] > 1)\n"
+    "        {\n"
+    "            rc = valueLength != 1 ? 0xFE : 0xF8; // E_DATA_TYPE_CONFLICT, E_DATA_VOID\n"
+    "            outLength = valueLength < sizeof(out) ? valueLength : sizeof(out);\n"
+    "            memcpy(out, value, outLength);\n"
+    "        }\n"
+    "        else\n"
+    "        {\n"
+    "            _sbipInfoChannel[slot] = value[0] ? tun->ChannelId : 0;\n"
+    "            out[0] = value[0];\n"
+    "            outLength = 1;\n"
+    "            rc = 0x00;\n"
+    "        }\n"
+    "    }\n"
+    "    else if (sbipTunnelFeatureHook != nullptr)\n"
+    "    {\n"
+    "        rc = sbipTunnelFeatureHook(slot, tun->IndividualAddress, feature, set, value, valueLength,\n"
+    "                                   out, outLength, newAddress);\n"
+    "    }\n"
+    "    else\n"
+    "    {\n"
+    "        rc = 0xFD; // E_ADDRESS_VOID\n"
+    "    }\n"
+    "\n"
+    "    // 3.3: a new value applies before the response leaves.\n"
+    "    if (rc == 0x00 && newAddress != 0)\n"
+    "        tun->IndividualAddress = newAddress;\n"
+    "\n"
+    "    sbipFeatureSend(tun, 0x0423, feature, rc, out, outLength);\n"
+    "\n"
+    "    // 3.6.7: the moment the new address is in effect.\n"
+    "    if (rc == 0x00 && newAddress != 0)\n"
+    "        sbipFeatureInfo(0x06, out, outLength, tun->ChannelId);\n"
+    "}\n"
+    "\n"
+    "void IpDataLinkLayer::sbipFeatureInfo(uint8_t feature, const uint8_t* value, uint8_t length, uint8_t channel)\n"
+    "{\n"
+    "    for (int i = 0; i < KNX_TUNNELING; i++)\n"
+    "    {\n"
+    "        KnxIpTunnelConnection* tun = &tunnels[i];\n"
+    "\n"
+    "        if (tun->ChannelId == 0 || tun->IsConfig || _sbipInfoChannel[i] != tun->ChannelId)\n"
+    "            continue;\n"
+    "\n"
+    "        if (channel != 0 && tun->ChannelId != channel)\n"
+    "            continue;\n"
+    "\n"
+    "        sbipFeatureSend(tun, 0x0425, feature, 0, value, length);\n"
+    "    }\n"
+    "}\n"
+    "#endif\n"
+    "\n"
+    + SEC26_ANCHOR_FUNCS
+)
+
+
+SEC26_ANCHOR_CEMI = (
+    "        new DataProperty( PID_ADD_INFO_TYPES, false, PDT_ENUM8, 1, ReadLv3 | WriteLv0, (uint8_t)0x02)\n"
+)
+
+SEC26_CEMI = (
+    "        new DataProperty( PID_ADD_INFO_TYPES, false, PDT_ENUM8, 1, ReadLv3 | WriteLv0, (uint8_t)0x02),\n"
+    "        " + SEC26_MARKER + "\n"
+    "        // 03_05_01 4.13: what a tunnel may send to the medium, and what the\n"
+    "        // device takes itself. Set by the firmware at start; volatile, the\n"
+    "        // object is part of the memory image.\n"
+    "        new VolatileDataProperty( PID_MAX_INTERFACE_APDU_LENGTH, false, PDT_UNSIGNED_INT, 1, ReadLv3 | WriteLv0, (uint16_t)15),\n"
+    "        new VolatileDataProperty( PID_MAX_LOCAL_APDU_LENGTH, false, PDT_UNSIGNED_INT, 1, ReadLv3 | WriteLv0, (uint16_t)15)\n"
+)
+
+
+def patch_tunnelling_features():
+    done = []
+
+    if apply_secure_edits(
+        "cemi_server_object.cpp", SEC26_MARKER,
+        ((SEC26_ANCHOR_CEMI, SEC26_CEMI),),
+        "the cEMI server object has no PID_MAX_INTERFACE_APDU_LENGTH",
+    ):
+        done.append("cemi_server_object.cpp")
+
+    if apply_secure_edits(
+        "ip_data_link_layer.h", SEC26_MARKER,
+        ((SEC26_ANCHOR_H_PUBLIC, SEC26_H_PUBLIC), (SEC26_ANCHOR_H_PRIVATE, SEC26_H_PRIVATE)),
+        "tunnelling feature services are NOT declared",
+    ):
+        done.append("ip_data_link_layer.h")
+
+    if apply_secure_edits(
+        "ip_data_link_layer.cpp", SEC26_MARKER,
+        ((SEC26_ANCHOR_CASE, SEC26_CASE),
+         (SEC26_ANCHOR_CHANNEL, SEC26_CHANNEL),
+         (SEC26_ANCHOR_FUNCS, SEC26_FUNCS)),
+        "tunnelling feature services are NOT answered",
+    ):
+        done.append("ip_data_link_layer.cpp")
+
+    if done:
+        print("patch_knx.py: tunnelling v2 feature services applied to %s" % ", ".join(done))
+
+
+patch_tunnelling_features()

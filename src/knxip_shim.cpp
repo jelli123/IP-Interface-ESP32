@@ -46,17 +46,33 @@ enum : uint16_t
     DEVICE_CONFIG_ACK        = 0x0311,
     TUNNELING_REQUEST        = 0x0420,
     TUNNELING_ACK            = 0x0421,
+    TUNNELING_FEATURE_GET    = 0x0422,
+    TUNNELING_FEATURE_RESP   = 0x0423,
+    TUNNELING_FEATURE_SET    = 0x0424,
+    TUNNELING_FEATURE_INFO   = 0x0425,
 };
+
+// Frames of a tunnel that carry its sequence counter (03_08_04 3.1).
+static bool sequenced(uint16_t service)
+{
+    return service == TUNNELING_REQUEST || service == TUNNELING_FEATURE_GET ||
+           service == TUNNELING_FEATURE_RESP || service == TUNNELING_FEATURE_SET ||
+           service == TUNNELING_FEATURE_INFO || service == DEVICE_CONFIG_REQUEST;
+}
 
 // 03_08_02 table 8 and 5.5
 static const uint8_t E_CONNECTION_ID         = 0x21;
 static const uint8_t E_CONNECTION_TYPE       = 0x22;
+static const uint8_t E_CONNECTION_OPTION     = 0x23;
+static const uint8_t E_NO_MORE_UNIQUE_CONNECTIONS = 0x25;
 static const uint8_t E_AUTHORISATION_ERROR   = 0x28;
 static const uint8_t E_NO_TUNNELLING_ADDRESS = 0x2D;
 static const uint8_t E_CONNECTION_IN_USE     = 0x2E;
 
 static const uint8_t CRI_DEVICE_MGMT = 0x03;
 static const uint8_t CRI_TUNNEL      = 0x04;
+
+static const uint8_t TUNNEL_RAW = 0x04;
 
 // 8.4.3.2 a: a TCP connection with nothing in it is closed after 10 s.
 static const uint32_t TCP_IDLE_MS = 10000;
@@ -378,6 +394,8 @@ bool KnxIpShim::process(uint8_t* frame, uint16_t& length, uint16_t max, Source s
 
         case TUNNELING_REQUEST:
         case TUNNELING_ACK:
+        case TUNNELING_FEATURE_GET:
+        case TUNNELING_FEATURE_SET:
         case DEVICE_CONFIG_REQUEST:
         case DEVICE_CONFIG_ACK:
         case CONNECTIONSTATE_REQUEST:
@@ -402,11 +420,17 @@ bool KnxIpShim::process(uint8_t* frame, uint16_t& length, uint16_t max, Source s
 bool KnxIpShim::checkConnect(const uint8_t* frame, uint16_t length, Source& src)
 {
     // Header, two HPAIs, then the CRI: length, connection type, ...
-    if (length < 26) return false;
+    if (length < 24) return false;
 
     uint8_t criLength = frame[22];
     uint8_t type      = frame[23];
     bool    inSession = src.session != KnxIpSecure::NO_SESSION;
+
+    // 03_08_04 5.4.3: a tunnel CRI is the basic one of 4 octets or the
+    // extended one of 6, and it ends the frame. Anything else is ignored
+    // without an answer (conformance test 2.7.17).
+    if (type == CRI_TUNNEL && (criLength != length - 22 || (criLength != 4 && criLength != 6)))
+        return false;
 
     if (type == CRI_DEVICE_MGMT)
     {
@@ -434,8 +458,32 @@ bool KnxIpShim::checkConnect(const uint8_t* frame, uint16_t length, Source& src)
         return false;
     }
 
+    // 5.4.3.3.2 step 3: a user PID_TUNNELLING_USERS knows nothing of may
+    // not tunnel at all. User 1 has the management level and every address.
+    if (secured && src.user != 1)
+    {
+        bool anyAddress = false;
+        for (uint8_t i = 1; i <= KNX_TUNNELING && !anyAddress; i++)
+            anyAddress = knxIpSecure.userMayUseAddress(src.user, i);
+
+        if (!anyAddress)
+        {
+            refuseConnect(frame, length, src, E_CONNECTION_TYPE);
+            return false;
+        }
+    }
+
+    // Step 4b: no raw mode while the security mode is on, secured or not,
+    // management level or not. The stack answers every other layer but the
+    // link layer with E_TUNNELLING_LAYER itself.
+    if (frame[24] == TUNNEL_RAW && _tunnels.securityMode && _tunnels.securityMode())
+    {
+        refuseConnect(frame, length, src, E_CONNECTION_OPTION);
+        return false;
+    }
+
     // Extended CRI (tunnelling v2): a specific address is asked for.
-    if (criLength >= 6 && length >= 28)
+    if (criLength == 6)
     {
         uint16_t address = (uint16_t)((frame[26] << 8) | frame[27]);
         int      slot    = -1;
@@ -462,6 +510,31 @@ bool KnxIpShim::checkConnect(const uint8_t* frame, uint16_t length, Source& src)
         }
 
         src.requestedIa = address;
+        return true;
+    }
+
+    // Basic CRI. 03_08_04 2.2.2: when every address still open to this
+    // client is one an open tunnel already uses - the list holds the same
+    // address more than once - the answer is E_NO_MORE_UNIQUE_CONNECTIONS.
+    // Plain E_NO_MORE_CONNECTIONS, when all slots are taken, is the stack's.
+    bool usable  = false;
+    bool blocked = false;
+
+    for (uint8_t i = 0; _tunnels.slotAddress && i < KNX_TUNNELING; i++)
+    {
+        if (!slotAuthorizedFor(src, i)) continue;
+        if (_tunnels.slotOpen && _tunnels.slotOpen(i)) continue;
+
+        if (_tunnels.addressInUse && _tunnels.addressInUse(_tunnels.slotAddress(i)))
+            blocked = true;
+        else
+            usable = true;
+    }
+
+    if (blocked && !usable)
+    {
+        refuseConnect(frame, length, src, E_NO_MORE_UNIQUE_CONNECTIONS);
+        return false;
     }
 
     return true;
@@ -469,23 +542,38 @@ bool KnxIpShim::checkConnect(const uint8_t* frame, uint16_t length, Source& src)
 
 bool KnxIpShim::slotAllowed(uint8_t slot) const
 {
-    if (_ctx.requestedIa != 0)
-        return _tunnels.slotAddress && _tunnels.slotAddress(slot) == _ctx.requestedIa;
+    if (_tunnels.slotAddress == nullptr) return true;
 
-    // 2.3.1.8.1: the tunnelling users only count in an authenticated session
-    // while tunnelling is secured; otherwise every address is open.
-    if (_ctx.session == KnxIpSecure::NO_SESSION || _ctx.user == 1 ||
+    uint16_t address = _tunnels.slotAddress(slot);
+
+    if (_ctx.requestedIa != 0) return address == _ctx.requestedIa;
+
+    // The stack takes the first free slot and gives up if its address is
+    // in use - even with another slot free. Skipping such slots here lets it
+    // find that one.
+    if (_tunnels.addressInUse && _tunnels.addressInUse(address)) return false;
+
+    return slotAuthorizedFor(_ctx, slot);
+}
+
+/*
+ * 03_08_09 2.3.1.8.1, 03_08_04 5.4.3.3.2: the tunnelling users only count in
+ * an authenticated session while tunnelling is secured; otherwise every
+ * address is open. User 1 has the management level and all of them.
+ */
+bool KnxIpShim::slotAuthorizedFor(const Source& src, uint8_t slot) const
+{
+    if (src.session == KnxIpSecure::NO_SESSION || src.user == 1 ||
         !knxIpSecure.secured(FAMILY_TUNNELLING))
         return true;
 
-    return knxIpSecure.userMayUseAddress(_ctx.user, (uint8_t)(slot + 1));
+    return knxIpSecure.userMayUseAddress(src.user, (uint8_t)(slot + 1));
 }
 
 bool KnxIpShim::checkChannel(uint8_t* frame, uint16_t length, const Source& src)
 {
     uint16_t service = knxsec::serviceType(frame, length);
-    bool connectionHeader = service == TUNNELING_REQUEST || service == TUNNELING_ACK ||
-                            service == DEVICE_CONFIG_REQUEST || service == DEVICE_CONFIG_ACK;
+    bool connectionHeader = sequenced(service) || service == TUNNELING_ACK || service == DEVICE_CONFIG_ACK;
 
     if (length < (connectionHeader ? 10 : 8)) return false;
 
@@ -532,7 +620,7 @@ bool KnxIpShim::checkChannel(uint8_t* frame, uint16_t length, const Source& src)
         // gets the one it expects.
         if (service == TUNNELING_ACK || service == DEVICE_CONFIG_ACK) return false;
 
-        if (c != nullptr && (service == TUNNELING_REQUEST || service == DEVICE_CONFIG_REQUEST))
+        if (c != nullptr && sequenced(service))
             frame[8] = c->rxSeq++;
     }
 
@@ -660,10 +748,10 @@ bool KnxIpShim::sendUnicast(uint32_t ip, uint16_t port, uint8_t* buffer, uint16_
 
     // The stack counts acknowledgements for what it sends to a tunnel; over
     // TCP there are none, so it gets one from here.
-    if (to.tcp >= 0 && (service == TUNNELING_REQUEST || service == DEVICE_CONFIG_REQUEST) && length >= 10)
+    if (to.tcp >= 0 && sequenced(service) && length >= 10)
     {
         uint8_t ack[10];
-        knxsec::header(ack, service == TUNNELING_REQUEST ? TUNNELING_ACK : DEVICE_CONFIG_ACK, sizeof(ack));
+        knxsec::header(ack, service == DEVICE_CONFIG_REQUEST ? DEVICE_CONFIG_ACK : TUNNELING_ACK, sizeof(ack));
         ack[6] = 4;
         ack[7] = buffer[7];
         ack[8] = buffer[8];
@@ -749,6 +837,7 @@ uint16_t KnxIpShim::rewriteDescription(const uint8_t* frame, uint16_t length, co
                 uint8_t version = frame[k + 1];
 
                 if (family == FAMILY_CORE && _listening) version = 2;
+                if (family == FAMILY_TUNNELLING) version = 2;
                 if (family == FAMILY_SECURITY) security = true;
 
                 outFrame[out++] = family;
@@ -768,6 +857,14 @@ uint16_t KnxIpShim::rewriteDescription(const uint8_t* frame, uint16_t length, co
             uint16_t start = out;
             memcpy(outFrame + out, frame + pos, 4);
             out += 4;
+
+            // The stack puts 254 there, whatever TP can carry.
+            if (_tunnels.maxApdu != nullptr)
+            {
+                uint16_t apdu = _tunnels.maxApdu();
+                outFrame[start + 2] = (uint8_t)(apdu >> 8);
+                outFrame[start + 3] = (uint8_t)apdu;
+            }
 
             uint8_t slot = 0;
             for (uint16_t k = pos + 4; k + 3 < pos + dibLength; k += 4, slot++)
@@ -794,6 +891,15 @@ uint16_t KnxIpShim::rewriteDescription(const uint8_t* frame, uint16_t length, co
         pos += dibLength;
     }
 
+    // 03_08_04 3.5 NOTE 3: a client tells tunnelling v2 by this DIB in the
+    // description answer.
+    if (service == DESCRIPTION_RESPONSE)
+    {
+        uint16_t added = tunnellingInfo(outFrame + out, (uint16_t)(max - out), to);
+        if (added == 0) return 0;
+        out += added;
+    }
+
     const uint16_t families = knxIpSecure.securedFamilies() &
                               ((1u << FAMILY_DEVICE_MGMT) | (1u << FAMILY_TUNNELLING) | (1u << FAMILY_ROUTING));
 
@@ -816,6 +922,36 @@ uint16_t KnxIpShim::rewriteDescription(const uint8_t* frame, uint16_t length, co
     outFrame[4] = (uint8_t)(out >> 8);
     outFrame[5] = (uint8_t)out;
     return out;
+}
+
+/*
+ * DIB 07 (03_08_02 7.5.4.7), as the stack builds it for the extended search:
+ * maximum APDU length, then per slot its address and state - bit 0 free,
+ * bit 1 authorized, bit 2 usable.
+ */
+uint16_t KnxIpShim::tunnellingInfo(uint8_t* out, uint16_t room, const Source& to) const
+{
+    uint16_t length = (uint16_t)(4 + 4 * KNX_TUNNELING);
+    if (room < length || _tunnels.slotAddress == nullptr) return 0;
+
+    uint16_t apdu = _tunnels.maxApdu ? _tunnels.maxApdu() : 15;
+    out[0] = (uint8_t)length;
+    out[1] = 0x07;
+    out[2] = (uint8_t)(apdu >> 8);
+    out[3] = (uint8_t)apdu;
+
+    uint8_t* slot = out + 4;
+    for (uint8_t i = 0; i < KNX_TUNNELING; i++, slot += 4)
+    {
+        uint16_t address = _tunnels.slotAddress(i);
+        bool     free    = !(_tunnels.addressInUse && _tunnels.addressInUse(address));
+
+        slot[0] = (uint8_t)(address >> 8);
+        slot[1] = (uint8_t)address;
+        slot[2] = 0;
+        slot[3] = (uint8_t)((free ? 0x05 : 0) | (slotAuthorized(i, to.session, to.user) ? 0x02 : 0));
+    }
+    return length;
 }
 
 bool KnxIpShim::sendMulticast(uint8_t* buffer, uint16_t length)

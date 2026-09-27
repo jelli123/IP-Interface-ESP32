@@ -38,9 +38,13 @@
  *
  *  What the device announces
  *    Search and description answers: core version 2 while the TCP listener
- *    runs, the security family and the DIB of secured families in the
- *    extended search answer only (03_08_09 2.6.2), and the "authorized" bit
- *    of each tunnel slot for the user asking.
+ *    runs, tunnelling 2 (feature services, patch 26 in
+ *    scripts/patch_knx.py),
+ *    the security family and the DIB of secured
+ *    families in the extended search answer only (03_08_09 2.6.2), and the
+ *    "authorized" bit of each tunnel slot for the user asking. The
+ *    description answer gets the tunnelling info DIB the stack leaves out;
+ *    a tunnelling v2 client looks for it there (03_08_04 3.5).
  */
 #pragma once
 
@@ -68,6 +72,9 @@ public:
     {
         uint16_t (*slotAddress)(uint8_t slot);  //!< PID 53 entry slot + 1
         bool (*addressInUse)(uint16_t address); //!< an open tunnel has it
+        uint16_t (*maxApdu)();                  //!< longest APDU a tunnel can send to TP
+        bool (*securityMode)();                 //!< KNX Data Secure security mode on
+        bool (*slotOpen)(uint8_t slot);         //!< a connection holds the slot
     };
 
     void begin(const Udp& udp, const Tunnels& tunnels);
@@ -166,8 +173,10 @@ private:
     // Outgoing
     bool deliver(const Source& to, const uint8_t* frame, uint16_t length);
     uint16_t rewriteDescription(const uint8_t* frame, uint16_t length, const Source& to);
+    uint16_t tunnellingInfo(uint8_t* out, uint16_t room, const Source& to) const;
     bool tcpWrite(uint8_t index, const uint8_t* frame, uint16_t length);
     bool slotAuthorized(uint8_t slot, uint8_t session, uint8_t user) const;
+    bool slotAuthorizedFor(const Source& src, uint8_t slot) const;
 
     // Bookkeeping
     void closeTcp(uint8_t index);

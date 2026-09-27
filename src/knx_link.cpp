@@ -77,6 +77,20 @@ bool (*sbipCemiAccessHook)(uint16_t objectType, uint8_t propertyId, bool write) 
 #endif
 bool sbipTpExtendedFrames = SBIP_TP_EXTENDED_FRAMES;
 
+/*
+ * Tunnelling v2 interface features (03_08_04 3.6), see patch 26. The stack
+ * handles the frames and feature 08; the values come from here.
+ */
+uint8_t (*sbipTunnelFeatureHook)(uint8_t slot, uint16_t tunnelAddress, uint8_t feature, bool set,
+                                 const uint8_t* value, uint8_t length,
+                                 uint8_t* out, uint8_t& outLength, uint16_t& newAddress) = nullptr;
+
+/** Longest APDU this device sends onto TP: a standard frame without extended frames. */
+static uint16_t maxTpApdu()
+{
+    return sbipTpExtendedFrames ? 220 : 15;
+}
+
 static void reportRoutingLoop(uint32_t fromIp, uint16_t source, bool ownIp)
 {
     static uint32_t lastAt = 0;
@@ -721,6 +735,84 @@ void KnxLink::preserveAddress()
     knxPrefs.end();
 }
 
+// Return codes of 03_08_04 3.3 and 3.5.
+static const uint8_t FEATURE_OK             = 0x00;
+static const uint8_t FEATURE_DATA_VOID      = 0xF8;
+static const uint8_t FEATURE_READ_ONLY      = 0xFB;
+static const uint8_t FEATURE_ADDRESS_VOID   = 0xFD;
+static const uint8_t FEATURE_TYPE_CONFLICT  = 0xFE;
+
+static uint8_t tunnelFeature(uint8_t slot, uint16_t tunnelAddress, uint8_t feature, bool set,
+                             const uint8_t* value, uint8_t length,
+                             uint8_t* out, uint8_t& outLength, uint16_t& newAddress)
+{
+    auto word = [&](uint16_t v) {
+        out[0] = (uint8_t)(v >> 8);
+        out[1] = (uint8_t)v;
+        outLength = 2;
+    };
+
+    switch (feature)
+    {
+        case 0x01: word(0x0004); break;                                // supported EMI: cEMI
+        case 0x02: word(knxBau.deviceObject().maskVersion()); break;   // device descriptor type 0
+        case 0x03: out[0] = knxLink.tpConnected() ? 1 : 0; outLength = 1; break;
+        case 0x04: word(knxBau.deviceObject().manufacturerId()); break;
+        case 0x05: out[0] = 0x03; outLength = 1; break;                // active EMI: cEMI
+        case 0x06: word(tunnelAddress); break;
+        case 0x07: word(maxTpApdu()); break;                           // as PID_MAX_INTERFACE_APDU_LENGTH
+        default:   return FEATURE_ADDRESS_VOID;                        // 3.5: no value with it
+    }
+
+    if (!set) return FEATURE_OK;
+
+    // From here on a write: the answer repeats the value asked for.
+    uint8_t echo = length < 16 ? length : 16;
+    memcpy(out, value, echo);
+    outLength = echo;
+
+    // 3.6.7: only the tunnel's address can be written, and only while the
+    // device is not secured.
+    bool secured = knxBau.security().isSecurityModeEnabled() || knxIpSecure.secured(FAMILY_TUNNELLING);
+    if (feature != 0x06 || secured) return FEATURE_READ_ONLY;
+
+    if (length != 2) return FEATURE_TYPE_CONFLICT;
+
+    uint16_t requested = (uint16_t)((value[0] << 8) | value[1]);
+    if (requested == tunnelAddress) return FEATURE_OK;
+
+    // Not an address of this device: neither its own, nor one of the
+    // tunnels' (PID_ADDITIONAL_INDIVIDUAL_ADDRESSES), nor one in use.
+    uint16_t addresses[KNX_TUNNELING];
+    uint8_t  count = knxLink.tunnelAddresses(addresses, KNX_TUNNELING);
+
+    bool taken = requested == 0 || requested == knxBau.deviceObject().individualAddress();
+    for (uint8_t i = 0; i < count; i++)
+        if (addresses[i] == requested) taken = true;
+
+    IpDataLinkLayer* ip = knxBau.getPrimaryDataLinkLayer();
+    if (ip != nullptr && ip->isSentToTunnel(requested, false)) taken = true;
+
+    if (taken) return FEATURE_DATA_VOID;
+
+    // Additional addresses are permanent (2.2.2): the slot keeps the new
+    // one, and the image is saved once things are quiet.
+    if (count == KNX_TUNNELING && slot < KNX_TUNNELING)
+    {
+        uint8_t entry[2] = {(uint8_t)(requested >> 8), (uint8_t)requested};
+        uint8_t one      = 1;
+        knxBau.propertyValueWrite(OT_IP_PARAMETER, 1, PID_ADDITIONAL_INDIVIDUAL_ADDRESSES,
+                                  one, (uint16_t)(slot + 1), entry, sizeof(entry));
+        knxLink.saveMemorySoon();
+    }
+
+    newAddress = requested;
+    sysLog.printf("KNX: tunnel %u.%u.%u now uses %u.%u.%u (TUNNELLING_FEATURE_SET)\n",
+                  tunnelAddress >> 12, (tunnelAddress >> 8) & 0x0F, tunnelAddress & 0xFF,
+                  requested >> 12, (requested >> 8) & 0x0F, requested & 0xFF);
+    return FEATURE_OK;
+}
+
 bool KnxLink::begin()
 {
     s_instance = this;
@@ -735,6 +827,7 @@ bool KnxLink::begin()
     };
     sbipAccessHook     = &checkServiceAccess;
     sbipCemiAccessHook = &checkCemiAccess;
+    sbipTunnelFeatureHook = &tunnelFeature;
 
     KnxIpShim::Udp udp = {
         [](uint8_t* buffer, uint16_t max, uint32_t& ip, uint16_t& port) -> int {
@@ -754,15 +847,25 @@ bool KnxLink::begin()
         },
     };
     KnxIpShim::Tunnels tunnels = {
-        // Slot n of the stack uses PID 53 entry n + 1.
+        // Slot n of the stack uses PID 53 entry n + 1. Until ETS wrote the
+        // list the stack takes the device's own line, 1 to n, and stores
+        // that at the first connect.
         [](uint8_t slot) -> uint16_t {
             uint16_t addresses[KNX_TUNNELING];
             uint8_t  count = knxLink.tunnelAddresses(addresses, KNX_TUNNELING);
-            return slot < count ? addresses[slot] : 0;
+            if (count != KNX_TUNNELING)
+                return (uint16_t)((knxBau.deviceObject().individualAddress() & 0xFF00) | (slot + 1));
+            return addresses[slot];
         },
         [](uint16_t address) -> bool {
             IpDataLinkLayer* ip = knxBau.getPrimaryDataLinkLayer();
             return ip != nullptr && ip->isSentToTunnel(address, false);
+        },
+        &maxTpApdu,
+        []() -> bool { return knxBau.security().isSecurityModeEnabled(); },
+        [](uint8_t slot) -> bool {
+            IpDataLinkLayer* ip = knxBau.getPrimaryDataLinkLayer();
+            return ip != nullptr && ip->sbipSlotOpen(slot);
         },
     };
     knxIpShim.begin(udp, tunnels);
@@ -812,7 +915,18 @@ bool KnxLink::begin()
     {
         RouterObject* router = (RouterObject*)knxBau.interfaceObject(OT_ROUTER, 1);
         if (router != nullptr)
-            router->property(PID_MAX_APDU_LENGTH_ROUTER)->write((uint16_t)(sbipTpExtendedFrames ? 220 : 15));
+            router->property(PID_MAX_APDU_LENGTH_ROUTER)->write(maxTpApdu());
+
+        // The same limit for a tunnel (patch 26), and what the device takes
+        // itself for local management.
+        InterfaceObject* cemi = knxBau.interfaceObject(OT_CEMI_SERVER, 1);
+        if (cemi != nullptr)
+        {
+            uint16_t local = 15;
+            knxBau.deviceObject().property(PID_MAX_APDU_LENGTH)->read(local);
+            cemi->property(PID_MAX_INTERFACE_APDU_LENGTH)->write(maxTpApdu());
+            cemi->property(PID_MAX_LOCAL_APDU_LENGTH)->write(local);
+        }
     }
 
     knx.start();
@@ -950,6 +1064,7 @@ void KnxLink::loop()
     }
 
     updateBusLoad();
+    superviseMemorySave();
     superviseTpLink();
     superviseRouting();
     superviseRestart();
@@ -964,6 +1079,17 @@ void KnxLink::loop()
  */
 void KnxLink::superviseTpLink()
 {
+    // 03_08_04 3.6.4: tunnels that asked for it hear of every change of the
+    // bus connection state.
+    bool connected = tpConnected();
+    if (connected != _tpReported)
+    {
+        _tpReported = connected;
+        IpDataLinkLayer* ip = knxBau.getPrimaryDataLinkLayer();
+        uint8_t state = connected ? 1 : 0;
+        if (ip != nullptr) ip->sbipFeatureInfo(0x03, &state, 1);
+    }
+
     if ((uint32_t)(millis() - _lastLinkCheck) < 10000)
     {
         return;
@@ -1124,6 +1250,30 @@ void KnxLink::superviseRouting()
  * Not while a table is being loaded either: a half-written filter table has
  * no business in flash.
  */
+void KnxLink::saveMemorySoon()
+{
+    _memorySavePending = true;
+    _memorySaveSince   = millis();
+}
+
+/*
+ * A change the device made itself, like a tunnel address set over
+ * TUNNELLING_FEATURE_SET, is saved with the same care as an address:
+ * ten quiet seconds, not in programming mode, not while ETS loads.
+ */
+void KnxLink::superviseMemorySave()
+{
+    if (!_memorySavePending) return;
+    if ((uint32_t)(millis() - _memorySaveSince) < 10000 || knx.progMode()) return;
+
+    RouterObject* router = (RouterObject*)knxBau.interfaceObject(OT_ROUTER, 1);
+    if (router != nullptr && router->loadState() == LS_LOADING) return;
+
+    _memorySavePending = false;
+    knx.writeMemory();
+    sysLog.println("KNX: configuration saved");
+}
+
 void KnxLink::persistAddress()
 {
     uint16_t address = knx.individualAddress();
