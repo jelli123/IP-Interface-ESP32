@@ -26,6 +26,7 @@ NCN5130-Transceiver; hier sitzt stattdessen ein Selfbus-Interface am UART.
 | **ETS-Zugriff** | pro Weg sperrbar (TP, Tunnel, Routing), Freigabe auf Zeit per Taster |
 | **KNX Secure** | KNXnet/IP Secure (Tunnel, Device Management, Routing) und Data Secure für das Management, siehe [unten](#knx-secure) |
 | KNXnet/IP über TCP | Core v2, wie die ETS 6 Tunnel und Secure Sessions aufbaut; abschaltbar |
+| KNXnet/IP v2 | Tunnelling v2 (Feature-Dienste), Device Management v2 (cEMI-Transportschicht), Routing mit IP System Broadcast |
 | **Geräteidentität** | im Dashboard einstellbar oder aus einer knxprod eingelesen, mit Prüfung der Ladeprozedur |
 | OTA-Update | Datei-Upload **und** Online-Pull aus einem Manifest |
 | **LPC-Programmierung** | SB-Interface über zwei GPIO erkennen und flashen |
@@ -2702,9 +2703,10 @@ Management. Umsetzung, Belege und offene Punkte stehen in
 > Byte gegen die Beispiele in Annex A von 03_08_09 geprüft, und das Gerät
 > prüft sie bei jedem Start erneut. Eine Inbetriebnahme mit der ETS 6 und
 > Secure Routing gegen einen zweiten Secure-Router sind noch nicht getestet.
-> Was die Spezifikation für ein zertifizierbares Gerät außerdem verlangt –
-> Tunnelling v2, Device Management v2, KNX IP System Broadcast – fehlt noch,
-> siehe [SECURE.md](SECURE.md).
+> Tunnelling v2, Device Management v2 (cEMI-Transportschicht) und der KNX IP
+> System Broadcast, die das Profil „KNXnet/IP Router“ außerdem verlangt, sind
+> umgesetzt, aber ebenfalls noch nicht mit der ETS erprobt; was fehlt, steht
+> in [SECURE.md](SECURE.md).
 
 ### Was sich ohne Secure ändert – fast nichts
 
@@ -2811,6 +2813,18 @@ keine KNXnet/IP-Secure-Schlüssel, keine gesicherten Dienste. Adresse und
 Filtertabelle bleiben. Das ist der Weg zurück, wenn das ETS-Projekt mit den
 Schlüsseln verloren ist – über KNX gibt es ihn absichtlich nicht, nur hier
 und per Master-Reset (der alles löscht).
+
+### IP System Broadcast
+
+Geräte im Auslieferungszustand haben keine passende Adresse; die ETS erreicht
+sie per System Broadcast – etwa um die Seriennummern der Geräte im
+Programmiermodus zu lesen oder einem KNX-IP-Gerät seine Multicast-Adresse
+(und den Backbone-Key) zu geben. Auf IP reist das als eigener Dienst an
+224.0.23.12, ungesichert, auch wenn das Routing gesichert ist. Über den Router
+hinweg geht es nur, solange die ETS es für jeweils 20 s freischaltet
+(`PID_IP_SBC_CONTROL`); die Protokollzeile „IP system broadcast routing on“
+zeigt das an. Das Gerät nimmt System Broadcasts nur an, solange seine
+Routing-Multicast-Adresse 224.0.23.12 ist.
 
 ### Als Koppler
 

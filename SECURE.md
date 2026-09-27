@@ -13,11 +13,13 @@ Dokument und in den Quelltexten beziehen sich auf:
 | 3/8/9 | 03_08_09 KNX IP Secure v01.01.02 AS |
 | 3/8/2 | 03_08_02 Core v01.06.02 AS (TCP: 8.4.3) |
 | 3/8/3 | 03_08_03 Management v01.07.03 AS |
-| 3/8/4 | 03_08_04 Tunnelling v01.07.01 AS |
+| 3/8/4 | 03_08_04 Tunnelling v01.07.01 AS (Tunnelling v2, AN185) |
+| 3/6/3 | 03_06_03 EMI/IMI v01.04.02 AS (cEMI-Transportschicht, `M_FuncProp`) |
 | 3/5/1 | 03_05_01 Resources v01.10.01 AS (FDSK: 6.1, Security-Objekt: 6.3) |
 | AN193 | AN193 v04 Access Policies AS |
 | AN192 | AN192 v06 Coupler security extensions AS |
-| TSSJ/TSSK | 08 Konformitätstests Data Security v1.11 / KNXnet/IP Security v1.1 |
+| AN203 | AN203 v03 USB Local TL for Secure devices AS (Data Secure ohne Adressen) |
+| TSSJ/TSSK | 08 Konformitätstests Data Security v1.11 / KNXnet/IP Security v1.1 – für den IP System Broadcast (AN183 selbst liegt dem Standard nicht bei) die maßgebliche Beschreibung |
 
 Die Byte-Formate sind zusätzlich gegen die Beispiele in Annex A von 3/8/9
 geprüft (Host-Test und Selbsttest beim Start).
@@ -114,20 +116,54 @@ IP-Secure-Profil das Profilmodul „S-AL“.
 | Security Proxy (AN192) | **nicht umgesetzt** – optionales Profilmodul |
 | **Langrahmen**: ein S-A_Data-Rahmen trägt 13 Oktette Overhead; mit Standardrahmen (15 Oktette APDU) passt praktisch kein gesichertes Management hindurch | Der TP-UART-Emulator auf dem SB-Interface kann noch keine Extended Frames (SBLib). Deshalb meldet der Router `PID_MAX_APDULENGTH_ROUTING` = 15, und Patch 25 gibt Extended Frames nicht an den Emulator weiter, sondern bestätigt sie negativ. **Folge:** Geräte hinter diesem Router lassen sich nicht sicher programmieren, bis die SBLib Extended Frames kann; dann `-DSBIP_TP_EXTENDED_FRAMES=1`. Der Router selbst ist davon nicht betroffen – er wird über IP programmiert |
 
-### 2.5 Was die Spezifikation verlangt und hier fehlt
+### 2.5 Tunnelling v2 (3/8/4 3, 5.4.3; TSSK 2.7)
 
-Das Profil „KNXnet/IP Router“ in 3/8/9 2.5.1.1 verlangt außerdem:
+| Anforderung | Umsetzung |
+|---|---|
+| `TUNNELLING_FEATURE_GET/SET` mit denselben Sequenzzählern und Quittungen wie `TUNNELLING_REQUEST`, Antwort `TUNNELLING_FEATURE_RESPONSE` | Patch 26 im Stack, wo die Zähler liegen |
+| Features 01 EMI (0004h), 02 Maske, 03 Busverbindung, 04 Hersteller, 05 aktives EMI (03h), 06 Tunneladresse, 07 max. APDU, 08 INFO an/aus | `tunnelFeature()` in `src/knx_link.cpp`; 08 je Verbindung, bei jedem Verbindungsaufbau aus |
+| Rückgabecodes `E_ACCESS_READ_ONLY`, `E_DATA_TYPE_CONFLICT`, `E_DATA_VOID`, `E_ADDRESS_VOID` (ohne Wert) | ja |
+| 06 schreibbar nur ohne Security-Modus; nicht eigene, nicht aus PID 53, nicht belegt; dauerhaft (PID 53 des Slots, Abbild gespeichert); `TUNNELLING_FEATURE_INFO` im Moment der Wirkung | ja |
+| `TUNNELLING_FEATURE_INFO` für die Busverbindung bei jeder Änderung | `superviseTpLink()` |
+| Tunnelling-Info-DIB auch in der Beschreibungsantwort; max. APDU = `PID_MAX_INTERFACE_APDU_LENGTH` | Shim; PID 68/69 im cEMI-Server-Objekt (flüchtig, Patch 26) |
+| Fehlerhafte CRI ohne Antwort verwerfen | ja |
+| Benutzer ohne Eintrag in PID 97 → `E_CONNECTION_TYPE`; Raw-Modus bei Security-Modus → `E_CONNECTION_OPTION` | ja |
+| `E_NO_MORE_UNIQUE_CONNECTIONS`, wenn nur noch doppelte Adressen frei wären | ja; außerdem überspringt die Slotwahl belegte Adressen (der Stack gab sonst auf) |
 
-* **Tunnelling v2** – `TUNNELLING_FEATURE_GET/SET/INFO`. Der Stack kennt nur
-  v1 und kündigt v1 an; die ETS weicht darauf aus.
-* **Device Management v2** – cEMI-Transportschicht über die Device-Management-
-  Verbindung. Der Stack kennt nur `M_Prop`; die ETS programmiert den Router
-  über einen Tunnel mit `A_`-Diensten.
-* **KNX IP System Broadcast** (`ROUTING_SYSTEM_BROADCAST`). Fehlt im Stack.
+### 2.6 KNX IP System Broadcast (3/5/1 4.5.16, 3/3/7 5.2, TSSK 2.4)
 
-Solange das fehlt, ist das Gerät kein KNX-zertifizierbarer IP Secure Router.
-Für die Inbetriebnahme mit der ETS sollte es trotzdem reichen – genau das ist
-noch zu testen.
+| Anforderung | Umsetzung |
+|---|---|
+| `ROUTING_SYSTEM_BROADCAST` (0533h) nur auf 224.0.23.12, nie gewrappt – auch nicht bei gesichertem Routing | Shim; empfangen nur, solange die Routing-Multicast-Adresse 224.0.23.12 ist (der Socket kennt die Zielgruppe nicht) |
+| cEMI: L_Data.ind, SB = 0, Gruppenadresse 0 | ja; Routing-Indications mit SB = 0 werden verworfen |
+| `PID_IP_SBC_CONTROL` (Router-Objekt, PID 120): Funktionsformat, Rückfall nach 20 s, F2h/F3h/F8h, Access Policy 3FF/00C | Patch 27, `ipSbcFunction()`; F3h, wenn der Koppler Broadcasts sperrt |
+| TP → IP bei eingeschaltetem Modus: Seriennummer lesen (Programmiermodus), Domain-Adresse 4 Oktette, S-A_Data/Sync-Request mit SBC = 1 und T = 1 – als System Broadcast statt Routing-Indication | Shim |
+| IP → TP bei eingeschaltetem Modus: nur Seriennummer-Antwort und Sync-Response (SBC, T) | Hook im Koppler (Patch 27) |
+| Eigenes Management, unabhängig vom Modus: Seriennummer im Programmiermodus, Domain-Adresse schreiben, Data Secure mit SBC; Antwort als System Broadcast | Shim + Stack |
+| Domain-Adresse: 4 Oktette ungesichert nur ohne Security-Modus; gesichert nur mit Tool-Key und Verschlüsselung; 4 Oktette schaltet gesichertes Routing ab, 21 Oktette (Version 01h + Backbone-Key) schaltet es und den Security-Modus ein; danach Neustart | `applyDomainAddress()` |
+| Routing-Version 2 in der Liste der Dienstfamilien | ja |
+
+Der Stack leitete System-Broadcast-Dienste im Koppler überhaupt nicht weiter
+(Befund 18 in [KNXSTACK.md](KNXSTACK.md)); Patch 27 behebt das mit.
+
+### 2.7 Device Management v2 (3/8/3 2.6, 3/6/3 4.1.6/4.1.7)
+
+| Anforderung | Umsetzung |
+|---|---|
+| `T_Data_Connected.req`/`T_Data_Individual.req` über die Device-Management-Verbindung an die eigene Anwendungsschicht, Antwort als `.ind` | Patch 28: lokaler Modus der Transportschicht |
+| `T_Connect.ind`/`T_Disconnect.ind` mit der Verbindung | beim ersten Transportrahmen bzw. beim Ende der Verbindung – eine Verbindung, über die die ETS nur Properties liest, sperrt so nicht den `T_Connect` über ihren Tunnel |
+| Data Secure ohne Adressen und Transport-Sequenznummer in B0 (AN158, AN203) | Patch 28 in der Secure Application Layer |
+| `M_FuncPropCommand.req`, `M_FuncPropStateRead.req` (auch für v1 Pflicht; der Stack meldete „not implemented“) | `cemiService()`; ohne Funktions-Property ohne Rückgabecode, abgewiesen mit 0Bh |
+
+### 2.8 Was fehlt
+
+* **Security Proxy** (AN192) – optional.
+* **Extended Frames auf TP** – eine Frage der SBLib, siehe 2.4.
+* **IP System Broadcast bei anderer Routing-Multicast-Adresse** als
+  224.0.23.12: dazu müsste der Socket die Zielgruppe eines Pakets kennen
+  (`IP_PKTINFO`), was das Arduino-lwIP nicht liefert.
+* **Wiederholung** von `TUNNELLING_FEATURE_RESPONSE`/`_INFO` über UDP ohne
+  Quittung – wie bei den Tunnelrahmen des Stacks.
 
 ---
 
@@ -163,6 +199,9 @@ Eingriffe im Stack, alle in `scripts/patch_knx.py`:
 | 23 | `application_layer.cpp`, `cemi_server.cpp` | Access Policies an den drei Indication-Verteilern und im cEMI-Server |
 | 24 | `ip_parameter_object.cpp` | `PID_KNXNETIP_DEVICE_CAPABILITIES` = 0047h |
 | 25 | `tpuart_data_link_layer.cpp` | keine Extended Frames an einen TP-UART, der sie nicht kann |
+| 26 | `ip_data_link_layer.cpp/.h`, `cemi_server_object.cpp` | Tunnelling-v2-Feature-Dienste, Abfragen für Slots und Device-Management-Verbindung, PID 68/69 im cEMI-Server-Objekt |
+| 27 | `router_object.cpp`, `network_layer_coupler.cpp`, `application_layer.cpp` | `PID_IP_SBC_CONTROL`, System-Broadcast-Dienste über den Koppler, Routing-Freigabe IP → TP, Länge der Domain-Adresse, gesicherte Domain-Adresse an die BAU |
+| 28 | `transport_layer.cpp/.h`, `secure_application_layer.cpp`, `cemi_server.cpp` | lokaler Modus der Transportschicht (cEMI), B0 ohne Adressen, Funktions-Properties und Transportrahmen über cEMI |
 
 ---
 
@@ -199,7 +238,12 @@ auf der Karte *KNX Secure*.
    FDSK, Tool Key, Secure-Modus, PID 91–97.
 4. **Secure Tunnel** mit Benutzer und Passwort, Zuordnung nach PID 97.
 5. **Secure Routing** gegen einen zweiten Secure-Router.
-6. Verhalten der ETS gegenüber Tunnelling v1 bei einem Secure-Gerät.
+6. **Tunnelling v2, Device Management v2, Routing v2**: Das Gerät kündigt
+   jetzt alle drei an. Programmiert die ETS den Router damit über die
+   Device-Management-Verbindung (cEMI-Transportschicht) statt über ihren
+   Tunnel, ist das der erste Praxistest dieses Wegs.
+7. **IP System Broadcast**: Seriennummer lesen und Domain-Adresse schreiben
+   für KNX-IP-Geräte hinter bzw. vor dem Router.
 
 ### Testplan
 
@@ -215,6 +259,23 @@ auf der Karte *KNX Secure*.
 5. Ungesicherten Tunnel versuchen: Ablehnung mit 22h. Mit Keyring: geht.
 6. Neustart, erneuter Download: keine Folgenummernfehler.
 7. Mit zweitem Secure-Router: Routing in beide Richtungen.
+
+---
+
+## 6. Schlüssel im Flash
+
+FDSK, Tool-Key, Backbone-Key, Passwort-Hashes und die Gruppen- und
+P2P-Schlüssel liegen im NVS bzw. im Speicherabbild – im Klartext, wer den
+Flash ausliest, hat sie. Die Krypto-Hardware des ESP32 hilft dagegen nicht:
+sie beschleunigt AES, SHA und Bignum (mbedTLS nutzt sie für IP Secure, der
+Stack für Data Secure seine eigene Software-AES), hält aber keine Schlüssel
+fest. Was schützt, sind **Flash Encryption** mit **NVS Encryption** (Schlüssel
+in eFuses, bei S2/S3/C3/C6 über das HMAC-Peripheral nicht auslesbar) und
+**Secure Boot v2** gegen fremde Firmware. Beides brennt eFuses unumkehrbar und
+braucht einen eigenen Bootloader (pioarduino mit `custom_sdkconfig`); es ist
+deshalb nicht Teil dieses Zweigs. Ein externes Secure Element (ATECC608)
+bringt wenig: es kann weder X25519 noch die vielen Data-Secure-Schlüssel
+halten, und die Firmware bräuchte die Schlüssel für CCM doch im RAM.
 
 ---
 

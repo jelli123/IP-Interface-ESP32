@@ -60,6 +60,10 @@ E-Mail sind Platzhalter – vor dem Einreichen `git commit --amend --reset-autho
 | 15 | Data Secure: Sicherheit wird entschlüsselt, aber nie geprüft | Sicherheitslücke | – |
 | 16 | Data Secure im Koppler verschiebt das Speicherabbild | Entwurf | – |
 | 17 | `PID_KNXNETIP_DEVICE_CAPABILITIES` meldet nur Device Management | Fehler | – |
+| 18 | System-Broadcast-Dienste passieren den Koppler nie | Fehler | – |
+| 19 | `PID_IP_SBC_CONTROL` im falschen Format, ohne Rückfall | Fehler | – |
+| 20 | Tunnelwahl gibt beim ersten belegten Slot auf | Fehler | – |
+| 21 | cEMI-Server: Funktions-Properties und Transportschicht fehlen | Lücke | – |
 
 ---
 
@@ -594,6 +598,76 @@ bei `KNX_TUNNELING` bzw. Routing und Bit 6 bei KNXnet/IP Secure.
 
 ---
 
+## 18 – System-Broadcast-Dienste passieren den Koppler nie
+
+**Datei:** `src/knx/network_layer_coupler.cpp`
+
+`NetworkLayerCoupler::broadcastIndication()` erkennt auf TP und IP die
+Dienste des System Broadcast (`A_SystemNetworkParameter_Read`,
+`A_DomainAddressSerialNumber_Write` und ihre Verwandten), reicht sie an die
+eigene Anwendungsschicht – und kehrt dann zurück. Weitergeleitet wird keiner
+davon, in keine Richtung. Ein Tool auf der TP-Seite findet so kein Gerät im
+Programmiermodus auf der IP-Seite, und umgekehrt; die Konformitätstests
+2.4.3, 2.4.4 und 2.4.6 der KNX-IP-Secure-Tests verlangen die Weiterleitung.
+
+Behoben in Patch 27: nach der lokalen Behandlung geht es weiter wie bei jedem
+Broadcast.
+
+---
+
+## 19 – `PID_IP_SBC_CONTROL` im falschen Format, ohne Rückfall
+
+**Datei:** `src/knx/router_object.cpp`
+
+PID 120 des Router-Objekts („IP System Broadcast Routing Control“, 03_05_01
+4.5.16.1) ist eine Funktions-Property mit `[reserviert][ServiceID][Modus]`.
+`functionIpEnableSbc()` liest den Modus aus dem ersten, reservierten Oktett,
+antwortet `[Erfolg][Modus]` statt `[Rückgabecode][ServiceID]` und schaltet
+nie zurück – die Spezifikation verlangt „Disable“ 20 s nach dem letzten
+„Enable“. Abgefragt wird der Modus im Stack nirgends. Der Code trägt selbst
+den Vermerk „just copied from RF“.
+
+Diese Firmware beantwortet die Funktion selbst (Patch 27,
+`ipSbcFunction()` in `src/knx_link.cpp`).
+
+---
+
+## 20 – Tunnelwahl gibt beim ersten belegten Slot auf
+
+**Datei:** `src/knx/ip_data_link_layer.cpp`
+
+`loopHandleConnectRequest()` nimmt den ersten freien Slot und prüft erst dann,
+ob dessen Adresse schon ein anderer Tunnel benutzt. Ist das so – PID 53 darf
+dieselbe Adresse mehrfach enthalten –, lehnt der Stack mit
+`E_NO_MORE_CONNECTIONS` ab, auch wenn ein weiterer Slot mit freier Adresse
+bereitstünde. 03_08_04 2.2.2 sieht für den Fall, dass wirklich nur noch
+doppelte Adressen übrig sind, `E_NO_MORE_UNIQUE_CONNECTIONS` vor.
+
+Diese Firmware überspringt solche Slots über den Slot-Hook (Patch 20) und
+antwortet `E_NO_MORE_UNIQUE_CONNECTIONS` selbst (`src/knxip_shim.cpp`).
+
+---
+
+## 21 – cEMI-Server: Funktions-Properties und Transportschicht fehlen
+
+**Dateien:** `src/knx/cemi_server.cpp`, `src/knx/cemi_server_object.cpp`,
+`src/knx/transport_layer.cpp`
+
+`M_FuncPropCommand.req` und `M_FuncPropStateRead.req` beantwortet der
+cEMI-Server mit einer Log-Zeile „not implemented“ – schon KNXnet/IP Device
+Management v1 verlangt beide (03_08_03). Die cEMI-Transportschicht
+(`T_Data_Connected`, `T_Data_Individual` über die Device-Management-
+Verbindung), die Version 2 ausmacht, fehlt ganz, ebenso
+`PID_MAX_INTERFACE_APDU_LENGTH` und `PID_MAX_LOCAL_APDU_LENGTH` im
+cEMI-Server-Objekt.
+
+Nachgerüstet in Patch 26 (die beiden PIDs, flüchtig, damit das Speicherabbild
+gleich bleibt) und Patch 28 (lokaler Modus der Transportschicht, Data Secure
+ohne Adressen nach AN203, Funktions-Properties). Upstream gehörte das in den
+cEMI-Server selbst.
+
+---
+
 ## Was hier bleibt und nicht nach oben gehört
 
 | Änderung in `patch_knx.py` | Warum sie projektspezifisch ist |
@@ -607,6 +681,7 @@ bei `KNX_TUNNELING` bzw. Routing und Bit 6 bei KNXnet/IP Secure.
 | Zähler für unquittierte Tunnelrahmen | Behelf; die saubere Lösung wäre Punkt 8 |
 | Management-Sperre pro Weg (`sbipManagementHook`) | Einstellung dieser Firmware; der Standard sieht dafür KNX Data Secure vor |
 | KNXnet/IP über TCP und KNXnet/IP Secure (`src/knxip_shim.cpp`) | Liegt außerhalb des Stacks, der beides nicht kennt; er sieht weiter nur UDP. Upstream wäre das eine eigene Transportschicht |
+| Tunnelling-v2-Feature-Dienste (Patch 26), IP System Broadcast (Shim, Patch 27) | Die Werte und Regeln hängen an der Firmware (Busverbindung des SB-Interface, Routing-Multicast, KNX Secure); upstream wären es eigene Klassen im Stack |
 | Keine Extended Frames an den TP-UART (Patch 25) | Der Emulator auf dem SB-Interface kann sie noch nicht; eine Eigenschaft dieser Hardware, nicht des Stacks |
 | IP-Secure-Properties als Callback-Properties (Patch 19) | Halten das Speicherabbild programmierter Geräte gültig; die Werte liegen im NVS der Firmware |
 | Tunnelwahl je Secure-Benutzer (Patch 20) | Gehört upstream in `loopHandleConnectRequest()`, sobald der Stack Secure Sessions kennt |
