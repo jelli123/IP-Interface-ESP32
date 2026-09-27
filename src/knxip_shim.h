@@ -49,8 +49,8 @@
  *
  *  What the device announces
  *    Search and description answers: core version 2 while the TCP listener
- *    runs, tunnelling 2 (feature services, patch 26 in
- *    scripts/patch_knx.py),
+ *    runs, device management 2 (cEMI transport layer, patch 28 in
+ *    scripts/patch_knx.py), tunnelling 2 (feature services, patch 26),
  *    routing 2 (IP system broadcast), the security family and the DIB of secured
  *    families in the extended search answer only (03_08_09 2.6.2), and the
  *    "authorized" bit of each tunnel slot for the user asking. The

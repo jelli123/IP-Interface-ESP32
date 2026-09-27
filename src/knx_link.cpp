@@ -93,6 +93,13 @@ void (*sbipIpSbcHook)(bool command, uint8_t* data, uint8_t length,
                       uint8_t* result, uint8_t& resultLength) = nullptr;
 bool (*sbipBroadcastRouteHook)(bool fromPrimary) = nullptr;
 
+/*
+ * Device management v2, see patch 28: the cEMI transport layer and the
+ * function property services of the cEMI server.
+ */
+void (*sbipLocalTransportSend)(bool connected, APDU& apdu) = nullptr;
+bool (*sbipCemiServiceHook)(CemiFrame& frame) = nullptr;
+
 /** Longest APDU this device sends onto TP: a standard frame without extended frames. */
 static uint16_t maxTpApdu()
 {
@@ -451,6 +458,7 @@ protected:
 
 public:
     SecurityInterfaceObject& security() { return _secIfObj; }
+    TransportLayer& transportLayer() { return _transLayer; }
 
     /**
      * Forget what ETS loaded for KNX Secure: the security object, stored
@@ -843,6 +851,102 @@ static uint8_t tunnelFeature(uint8_t slot, uint16_t tunnelAddress, uint8_t featu
 }
 
 /*
+ * cEMI T_Data_Connected.ind / T_Data_Individual.ind (03_06_03 4.1.6): laid
+ * out like L_Data, with the six octets of control fields and addresses 0.
+ */
+static void localTransportSend(bool connected, APDU& apdu)
+{
+    uint8_t octets = apdu.length();
+    uint8_t frame[10 + 255];
+
+    frame[0] = connected ? 0x89 : 0x94;
+    frame[1] = 0;                              // no additional information
+    memset(frame + 2, 0, 6);                   // reserved
+    frame[8] = octets;
+    frame[9] = (uint8_t)(apdu.data()[-1] & 0x03); // reserved bits, APCI high bits
+    memcpy(frame + 10, apdu.data(), octets);
+
+    CemiFrame cemi(frame, (uint16_t)(10 + octets));
+    IpDataLinkLayer* ip = knxBau.getPrimaryDataLinkLayer();
+    if (ip != nullptr) ip->dataRequestToTunnel(cemi); // no addresses: the device management channel
+}
+
+/*
+ * M_FuncPropCommand.req / M_FuncPropStateRead.req (03_06_03 4.1.7.4) and
+ * the transport layer frames. Answered here, so the cEMI server's
+ * "not implemented" never gets them.
+ */
+static bool cemiService(CemiFrame& frame)
+{
+    uint8_t* d     = frame.data();
+    uint16_t total = frame.totalLenght();
+
+    if (d[0] == 0x41 || d[0] == 0x4A)
+    {
+        // 03_08_03 2.6.1.2 switches the transport layer when the device
+        // management connection opens. Here it switches with its first
+        // transport layer frame: a client that only reads properties over
+        // that connection - ETS does, next to its tunnel - must not have
+        // the device refuse the T_Connect it sends through the tunnel.
+        IpDataLinkLayer* ip = knxBau.getPrimaryDataLinkLayer();
+        TransportLayer&  tl = knxBau.transportLayer();
+
+        if (!tl.sbipLocalActive() && ip != nullptr && ip->sbipConfigOpen())
+            tl.sbipLocalOpen();
+
+        if (tl.sbipLocalActive())
+            tl.sbipLocalData(d[0] == 0x41, frame.apdu());
+        return true;
+    }
+
+    if (total < 5) return true;
+
+    uint16_t objectType = (uint16_t)((d[1] << 8) | d[2]);
+    uint8_t  instance   = d[3];
+    uint8_t  pid        = d[4];
+    bool     command    = d[0] == 0xF8;
+
+    uint8_t response[5 + 1 + 32];
+    memcpy(response, d, 5);
+    response[0] = 0xFA; // .con, the same for both
+    uint8_t length = 5;
+
+    InterfaceObject* object   = knxBau.interfaceObject((ObjectType)objectType, instance);
+    Property*        property = object ? object->property((PropertyID)pid) : nullptr;
+
+    if (property != nullptr && property->Type() == PDT_FUNCTION)
+    {
+        if (!checkCemiAccess(objectType, pid, command))
+        {
+            // 03_08_09 2.2.1.4.3: cEMI management is anonymous. AN203's
+            // "access denied", without data.
+            response[length++] = 0x0B;
+        }
+        else
+        {
+            uint8_t result[32];
+            uint8_t resultLength = 0;
+            uint8_t argument     = (uint8_t)(total - 5);
+
+            if (command)
+                property->command(d + 5, argument, result, resultLength);
+            else
+                property->state(d + 5, argument, result, resultLength);
+
+            if (resultLength > sizeof(result)) resultLength = sizeof(result);
+            memcpy(response + length, result, resultLength);
+            length = (uint8_t)(length + resultLength);
+        }
+    }
+    // 4.1.7.4.5: not a function property - no return code, no data.
+
+    CemiFrame cemi(response, length);
+    IpDataLinkLayer* ip = knxBau.getPrimaryDataLinkLayer();
+    if (ip != nullptr) ip->dataRequestToTunnel(cemi);
+    return true;
+}
+
+/*
  * 03_05_01 4.5.16.1: [reserved][service 00][mode] to write, [reserved][00]
  * to read; the answer [return code][service]([mode]).
  */
@@ -970,6 +1074,8 @@ bool KnxLink::begin()
     sbipCemiAccessHook = &checkCemiAccess;
     sbipTunnelFeatureHook = &tunnelFeature;
     sbipIpSbcHook         = &ipSbcFunction;
+    sbipLocalTransportSend = &localTransportSend;
+    sbipCemiServiceHook    = &cemiService;
     sbipBroadcastRouteHook = [](bool fromPrimary) -> bool { return knxIpShim.broadcastMayRoute(fromPrimary); };
 
     KnxIpShim::Udp udp = {
@@ -1219,6 +1325,7 @@ void KnxLink::loop()
     }
 
     updateBusLoad();
+    superviseLocalTransport();
     superviseMemorySave();
     superviseTpLink();
     superviseRouting();
@@ -1405,6 +1512,20 @@ void KnxLink::superviseRouting()
  * Not while a table is being loaded either: a half-written filter table has
  * no business in flash.
  */
+/*
+ * 03_08_03 2.6.1.6: the transport layer connection of the device
+ * management client ends with its connection - closed, timed out or the
+ * client gone (T_Disconnect.ind to the application layer).
+ */
+void KnxLink::superviseLocalTransport()
+{
+    IpDataLinkLayer* ip = knxBau.getPrimaryDataLinkLayer();
+    TransportLayer&  tl = knxBau.transportLayer();
+
+    if (tl.sbipLocalActive() && (ip == nullptr || !ip->sbipConfigOpen()))
+        tl.sbipLocalClose();
+}
+
 void KnxLink::restartForDomainAddress()
 {
     _domainAddressPending = true;

@@ -118,6 +118,9 @@ public:
     /** A new domain address was written: save and restart shortly (KNX task only). */
     void restartForDomainAddress();
 
+    /** End the cEMI transport layer connection with its device management connection. */
+    void superviseLocalTransport();
+
     /**
      * Forward group telegrams even though no filter table was downloaded.
      *

@@ -866,6 +866,7 @@ uint16_t KnxIpShim::rewriteDescription(const uint8_t* frame, uint16_t length, co
                 uint8_t version = frame[k + 1];
 
                 if (family == FAMILY_CORE && _listening) version = 2;
+                if (family == FAMILY_DEVICE_MGMT) version = 2; // cEMI transport layer, patch 28
                 if (family == FAMILY_TUNNELLING) version = 2;
                 if (family == FAMILY_ROUTING) version = 2; // with IP system broadcast (AN183)
                 if (family == FAMILY_SECURITY) security = true;

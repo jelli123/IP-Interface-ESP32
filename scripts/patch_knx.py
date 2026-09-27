@@ -3202,6 +3202,13 @@ SEC26_H_PUBLIC = (
     "        void sbipFeatureService(uint8_t* buffer, uint16_t length);\n"
     "        void sbipFeatureInfo(uint8_t feature, const uint8_t* value, uint8_t length, uint8_t channel = 0);\n"
     "        bool sbipSlotOpen(uint8_t slot) const { return slot < KNX_TUNNELING && tunnels[slot].ChannelId != 0; }\n"
+    "        bool sbipConfigOpen() const\n"
+    "        {\n"
+    "            for (int i = 0; i < KNX_TUNNELING; i++)\n"
+    "                if (tunnels[i].ChannelId != 0 && tunnels[i].IsConfig)\n"
+    "                    return true;\n"
+    "            return false;\n"
+    "        }\n"
     "#endif\n"
 )
 
@@ -3624,3 +3631,275 @@ def patch_ip_system_broadcast():
 
 
 patch_ip_system_broadcast()
+
+
+# --------------------------------------------------------------------------
+# 28. Device management v2: the cEMI transport layer, function properties
+# --------------------------------------------------------------------------
+#
+# 03_08_03 2.6 and 03_08_09 2.5.1.1: over a KNXnet/IP device management
+# connection the device takes cEMI T_Data_Connected.req (41h) and
+# T_Data_Individual.req (4Ah) into its own application layer, as over a
+# transport layer connection, and answers with T_Data_Connected.ind (89h)
+# and T_Data_Individual.ind (94h) (03_06_03 4.1.6). The connection opens
+# with the device management connection and closes with it.
+#
+# Secured, the frames have no addresses and no transport layer sequence
+# number; those fields are 0 in B0 and the counter blocks (AN158
+# 2.2.1.1.3.2, AN203).
+#
+# M_FuncPropCommand.req and M_FuncPropStateRead.req (03_06_03 4.1.7.4) are
+# mandatory for device management v1 already; the stack prints "not
+# implemented". Both go to the firmware (src/knx_link.cpp), with the
+# transport layer frames.
+
+SEC28_MARKER = "// sbip: cEMI transport layer, device management v2 (03_08_03 2.6)"
+
+SEC28_TLH_ANCHOR_PUBLIC = "        void connectionTimeoutIndication();\n"
+
+SEC28_TLH_PUBLIC = (
+    "        " + SEC28_MARKER + "\n"
+    "        void sbipLocalOpen();\n"
+    "        void sbipLocalClose();\n"
+    "        void sbipLocalData(bool connected, APDU& apdu);\n"
+    "        bool sbipLocalActive() const { return _sbipLocal; }\n"
+    + SEC28_TLH_ANCHOR_PUBLIC
+)
+
+SEC28_TLH_ANCHOR_PRIVATE = "        uint16_t _connectionAddress = 0;\n"
+
+SEC28_TLH_PRIVATE = (
+    SEC28_TLH_ANCHOR_PRIVATE
+    + "        bool _sbipLocal = false; // connected over the cEMI transport layer\n"
+)
+
+SEC28_TL_ANCHOR_INC = '#include "bits.h"\n'
+
+SEC28_TL_INC = (
+    SEC28_TL_ANCHOR_INC
+    + "\n"
+    + SEC28_MARKER + "\n"
+    "// Sends an APDU to the device management client, see src/knx_link.cpp.\n"
+    "extern void (*sbipLocalTransportSend)(bool connected, APDU& apdu);\n"
+)
+
+SEC28_TL_ANCHOR_IND_REQ = (
+    "void TransportLayer::dataIndividualRequest(AckType ack, HopCountType hopType, Priority priority,"
+    " uint16_t destination, APDU& apdu)\n"
+    "{\n"
+)
+
+SEC28_TL_IND_REQ = (
+    SEC28_TL_ANCHOR_IND_REQ
+    + "    // The local client has no address; the answer to it goes back the\n"
+    "    // way it came.\n"
+    "    if (_sbipLocal && destination == 0)\n"
+    "    {\n"
+    "        if (sbipLocalTransportSend)\n"
+    "            sbipLocalTransportSend(false, apdu);\n"
+    "        return;\n"
+    "    }\n"
+    "\n"
+)
+
+SEC28_TL_ANCHOR_CONN = (
+    "void TransportLayer::connectRequest(uint16_t destination, Priority priority)\n"
+    "{\n"
+)
+
+SEC28_TL_CONN = (
+    SEC28_TL_ANCHOR_CONN
+    + "    if (_sbipLocal)\n"
+    "        return; // held by the local client\n"
+    "\n"
+)
+
+SEC28_TL_ANCHOR_DISC = (
+    "void TransportLayer::disconnectRequest(uint16_t tsap, Priority priority)\n"
+    "{\n"
+)
+
+SEC28_TL_DISC = (
+    SEC28_TL_ANCHOR_DISC
+    + "    if (_sbipLocal)\n"
+    "        return; // ends with the device management connection only\n"
+    "\n"
+)
+
+SEC28_TL_ANCHOR_DATA = (
+    "void TransportLayer::dataConnectedRequest(uint16_t tsap, Priority priority, APDU& apdu)\n"
+    "{\n"
+)
+
+SEC28_TL_DATA = (
+    SEC28_TL_ANCHOR_DATA
+    + "    // 03_08_03 2.6.1.4: confirmed once it is handed to KNXnet/IP.\n"
+    "    if (_sbipLocal)\n"
+    "    {\n"
+    "        if (sbipLocalTransportSend)\n"
+    "            sbipLocalTransportSend(true, apdu);\n"
+    "        _applicationLayer.dataConnectedConfirm(tsap);\n"
+    "        return;\n"
+    "    }\n"
+    "\n"
+)
+
+SEC28_TL_ANCHOR_FUNCS = "void TransportLayer::connectionTimeoutIndication()\n"
+
+SEC28_TL_FUNCS = (
+    SEC28_MARKER + "\n"
+    "void TransportLayer::sbipLocalOpen()\n"
+    "{\n"
+    "    if (_sbipLocal)\n"
+    "        return;\n"
+    "\n"
+    "    // A connection from the bus gives way.\n"
+    "    if (_currentState != Closed)\n"
+    "    {\n"
+    "        _currentState = Closed;\n"
+    "        A6(_connectionAddress);\n"
+    "    }\n"
+    "\n"
+    "    _sbipLocal = true;\n"
+    "    _currentState = OpenIdle;\n"
+    "    _connectionAddress = 0;\n"
+    "    _seqNoSend = 0;\n"
+    "    _seqNoRecv = 0;\n"
+    "    disableConnectionTimeout();\n"
+    "    disableAckTimeout();\n"
+    "    _applicationLayer.connectIndication(0);\n"
+    "}\n"
+    "\n"
+    "void TransportLayer::sbipLocalClose()\n"
+    "{\n"
+    "    if (!_sbipLocal)\n"
+    "        return;\n"
+    "\n"
+    "    _sbipLocal = false;\n"
+    "    _currentState = Closed;\n"
+    "    _applicationLayer.disconnectIndication(0);\n"
+    "}\n"
+    "\n"
+    "void TransportLayer::sbipLocalData(bool connected, APDU& apdu)\n"
+    "{\n"
+    "    if (!_sbipLocal)\n"
+    "        return;\n"
+    "\n"
+    "    if (connected)\n"
+    "        _applicationLayer.dataConnectedIndication(SystemPriority, 0, apdu);\n"
+    "    else\n"
+    "        _applicationLayer.dataIndividualIndication(NetworkLayerParameter, SystemPriority, 0, apdu);\n"
+    "}\n"
+    "\n"
+    + SEC28_TL_ANCHOR_FUNCS
+)
+
+SEC28_SAL_ANCHOR_SECURE = (
+    "                                    uint8_t* apdu, uint16_t apduLength, const SecurityControl& secCtrl, bool systemBcast)\n"
+    "{\n"
+    "    bool toolAccess = secCtrl.toolAccess;\n"
+)
+
+SEC28_SAL_SECURE = (
+    "                                    uint8_t* apdu, uint16_t apduLength, const SecurityControl& secCtrl, bool systemBcast)\n"
+    "{\n"
+    "    " + SEC28_MARKER + "\n"
+    "    // Towards the local client: no addresses, no sequence number in B0.\n"
+    "    if (_transportLayer->sbipLocalActive() && dstAddr == 0 && !dstAddrIsGroupAddr)\n"
+    "    {\n"
+    "        srcAddr = 0;\n"
+    "        tpci &= 0x03;\n"
+    "    }\n"
+    "\n"
+    "    bool toolAccess = secCtrl.toolAccess;\n"
+)
+
+SEC28_SAL_ANCHOR_SYNC = (
+    "        // ignore sync.reqs not addressed to us\n"
+    "        if (!memcmp(knxSerialNumber, _deviceObj.propertyData(PID_SERIAL_NUMBER), 6))\n"
+)
+
+SEC28_SAL_SYNC = (
+    "        // ignore sync.reqs not addressed to us - the local client has no\n"
+    "        // address, but there is no one else it could mean\n"
+    "        if (!(_transportLayer->sbipLocalActive() && srcAddr == 0 && dstAddr == 0) &&\n"
+    "                !memcmp(knxSerialNumber, _deviceObj.propertyData(PID_SERIAL_NUMBER), 6))\n"
+)
+
+SEC28_CEMI_ANCHOR_DECL = "void CemiServer::frameReceived(CemiFrame& frame)\n"
+
+SEC28_CEMI_DECL = (
+    SEC28_MARKER + "\n"
+    "// Function properties and the transport layer frames, see src/knx_link.cpp.\n"
+    "extern bool (*sbipCemiServiceHook)(CemiFrame& frame);\n"
+    "\n"
+    + SEC28_CEMI_ANCHOR_DECL
+)
+
+SEC28_CEMI_ANCHOR_SWITCH = (
+    "    switch (frame.messageCode())\n"
+    "    {\n"
+    "        case L_data_req:\n"
+    "        {\n"
+    "            handleLData(frame);\n"
+)
+
+SEC28_CEMI_SWITCH = (
+    "    switch ((uint8_t)frame.messageCode())\n"
+    "    {\n"
+    "        case 0xF8: // M_FuncPropCommand.req\n"
+    "        case 0xF9: // M_FuncPropStateRead.req\n"
+    "        case 0x41: // T_Data_Connected.req\n"
+    "        case 0x4A: // T_Data_Individual.req\n"
+    "            // 03_08_03 2.6.1.2: without support a transport layer frame is\n"
+    "            // ignored - only the KNXnet/IP acknowledgement goes back.\n"
+    "            if (sbipCemiServiceHook != nullptr && sbipCemiServiceHook(frame))\n"
+    "                return;\n"
+    "            break;\n"
+    "    }\n"
+    "\n"
+    + SEC28_CEMI_ANCHOR_SWITCH
+)
+
+
+def patch_cemi_transport_layer():
+    done = []
+
+    if apply_secure_edits(
+        "transport_layer.h", SEC28_MARKER,
+        ((SEC28_TLH_ANCHOR_PUBLIC, SEC28_TLH_PUBLIC), (SEC28_TLH_ANCHOR_PRIVATE, SEC28_TLH_PRIVATE)),
+        "the cEMI transport layer is NOT declared",
+    ):
+        done.append("transport_layer.h")
+
+    if apply_secure_edits(
+        "transport_layer.cpp", SEC28_MARKER,
+        ((SEC28_TL_ANCHOR_INC, SEC28_TL_INC),
+         (SEC28_TL_ANCHOR_IND_REQ, SEC28_TL_IND_REQ),
+         (SEC28_TL_ANCHOR_CONN, SEC28_TL_CONN),
+         (SEC28_TL_ANCHOR_DISC, SEC28_TL_DISC),
+         (SEC28_TL_ANCHOR_DATA, SEC28_TL_DATA),
+         (SEC28_TL_ANCHOR_FUNCS, SEC28_TL_FUNCS)),
+        "the cEMI transport layer is NOT available",
+    ):
+        done.append("transport_layer.cpp")
+
+    if apply_secure_edits(
+        "secure_application_layer.cpp", SEC28_MARKER,
+        ((SEC28_SAL_ANCHOR_SECURE, SEC28_SAL_SECURE), (SEC28_SAL_ANCHOR_SYNC, SEC28_SAL_SYNC)),
+        "data security over the cEMI transport layer uses the wrong B0",
+    ):
+        done.append("secure_application_layer.cpp")
+
+    if apply_secure_edits(
+        "cemi_server.cpp", SEC28_MARKER,
+        ((SEC28_CEMI_ANCHOR_DECL, SEC28_CEMI_DECL), (SEC28_CEMI_ANCHOR_SWITCH, SEC28_CEMI_SWITCH)),
+        "function properties and transport layer frames over cEMI are NOT answered",
+    ):
+        done.append("cemi_server.cpp")
+
+    if done:
+        print("patch_knx.py: cEMI transport layer and function properties applied to %s" % ", ".join(done))
+
+
+patch_cemi_transport_layer()
