@@ -549,10 +549,10 @@ bool KnxLink::begin()
     knxPlatform.knxUart(knxSerial);
 
     // Do not call knxSerial->begin() here. Esp32Platform::setupUart() is
-    // invoked by TpUartDataLinkLayer::reset() and unconditionally re-opens the
-    // port with 19200 baud, 8E1 and these pins, so anything configured earlier
-    // is discarded. 8E1 is mandatory: the TP-UART protocol relies on the
-    // parity bit for octet level error detection.
+    // invoked by the first TpUartDataLinkLayer::reset() and unconditionally
+    // re-opens the port with 19200 baud, 8E1 and these pins, so anything
+    // configured earlier is discarded. 8E1 is mandatory: the TP-UART
+    // protocol relies on the parity bit for octet level error detection.
     knxPlatform.knxUartPins(hw.knxRxPin, hw.knxTxPin);
 
     // StatusLed drives the programming indicator: it has to work for an
@@ -639,9 +639,12 @@ void KnxLink::loop()
     {
         _suspended = false;
 
-        // reset() runs Esp32Platform::setupUart(), which reopens the port
-        // with 19200 baud and 8E1 - so this both re-arms the port and
-        // resynchronises with a TP-UART that was just power cycled.
+        // reset() calls setupUart() only the very first time, so the port
+        // closed by suspend() has to be reopened here, at 19200 baud and 8E1.
+        // The SB-Interface is usually still starting at this point and misses
+        // the reset handshake; the stack's U_State.req once a second picks
+        // the link up again as soon as it answers.
+        knxPlatform.setupUart();
         TpUartDataLinkLayer* tp = knxBau.getSecondaryDataLinkLayer();
         if (tp != nullptr) tp->reset();
         _lastLinkCheck = millis();
