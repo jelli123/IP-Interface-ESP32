@@ -3366,7 +3366,7 @@ const LSTAGE = {pause:'KNX-Stack anhalten', detect:'Bootlader suchen',
                 manifest:'Manifest lesen', download:'Datei herunterladen',
                 done:'fertig', failed:'fehlgeschlagen'};
 
-let lpcLast = null, lpcTimer = null;
+let lpcLast = null, lpcTimer = null, lpcUntil = 0;
 
 function openLpc(){ lpcDlg.showModal(); lpcRefresh(); }
 
@@ -3425,7 +3425,11 @@ function lpcTick(){
   lpcTimer = setTimeout(async () => {
     lpcTimer = null;
     const s = await lpcRefresh();
-    if(s && s.busy) lpcTick();
+    if(!s) return;
+    // Nach dem Auftrag startet der LPC erst noch: Die TP-UART-Emulation
+    // meldet sich ein bis zwei Sekunden später, also so lange weiterfragen.
+    if(s.busy) lpcUntil = Date.now() + 10000;
+    if(s.busy || (!s.tp_connected && Date.now() < lpcUntil)) lpcTick();
   }, 700);
 }
 
@@ -3437,6 +3441,7 @@ async function lpcStart(path){
     $('lpcState').textContent = msg;
     return;
   }
+  lpcUntil = Date.now() + 10000;
   lpcRefresh(); lpcTick();
 }
 
