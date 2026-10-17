@@ -460,14 +460,30 @@ das Gerät nach, plus die Plausibilität des ersten Wortes – des initialen
 Stapelzeigers, der ins RAM zeigen muss. Ergebnis: *leer*, *startfähiges
 Programm* oder *Inhalt ohne gültige Prüfsumme*.
 
-**Ist es die richtige Firmware?** Das kann der Bootlader nicht sagen. Die
-TP-UART-2-Emulation kennt keinen Versions- oder Produktbefehl – ein echter
-TP-UART hat keinen, und die Emulation bildet einen echten nach. Was das Gerät
-stattdessen zeigt, ist die **funktionale** Antwort: ob die Emulation auf den
-`U_Reset.req` des KNX-Stacks antwortet. Das ist dieselbe Information wie
-*Verbindung* auf der Hauptseite, hier nur neben den Bootlader-Angaben. Zusammen
-ergibt das eine brauchbare Diagnose: gültiges Programm **und** keine Antwort
-heißt „da läuft etwas, aber nicht die TPUART-Emulation".
+**Ist es die richtige Firmware?** Das kann der Bootlader nicht sagen. Nach
+jedem Auftrag fragt das Gerät deshalb als TP-UART nach: `U_Reset.req`, dann
+`U_EmuIdentify.req` (`0xFE`). Diesen herstellerspezifischen Service kennt nur
+die Selfbus-TP-UART-2-Emulation ab 0.10. Sie antwortet mit Firmware-Version,
+sblib-Version, längstem Frame und Namen, in einem Block mit Längenangabe und
+Prüfsumme, damit ein Telegramm vom Bus nicht verwechselt werden kann. Ein
+echter TP-UART 2 oder NCN512x meldet stattdessen einen Protocol-Error; dann
+folgt `U_ProductID.req`, auf den ein TP-UART 2 seine Produkt-ID nennt. Das
+Format beschreibt das README der Emulation.
+
+Ergebnis, auf der Karte unter *Schnittstelle*: die Emulation mit Version, ein
+anderer TP-UART mit oder ohne Produkt-ID, oder – wenn gar nichts antwortet –
+was der Bootlader gefunden hat: *ohne Firmware*, *kein startfähiges Programm*
+oder *Firmware antwortet nicht*. Letzteres heißt „da läuft etwas, aber nicht
+die TP-UART-Emulation“. Eine Emulation älter als 0.10 kennt die Abfrage
+nicht und erscheint deshalb als gewöhnlicher TP-UART. Im Dialog
+steht die gemeldete Version neben der, die *Online holen* anbietet.
+
+**Beim Start** läuft dieselbe Abfrage einmal von selbst, sobald die
+Hauptschleife dreht: Der KNX-Stack hält dafür einen Augenblick an. Antwortet
+kein TP-UART und sind die Steuerleitungen verdrahtet, versucht das Gerät
+den ROM-Bootlader. So zeigt sich auch ein LPC1115, der noch nie programmiert
+wurde – mit leerem Flash bleibt er ohnehin im Bootlader. Ohne Steuerleitungen
+bleibt es bei der TP-UART-Abfrage.
 
 ### Programmieren
 

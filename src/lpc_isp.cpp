@@ -39,6 +39,20 @@ const uint32_t CHUNK        = 1024;    //!< fits the 4 KB RAM of the smallest pa
 const uint32_t RAM_BASE     = 0x10000000;
 const uint32_t GROW         = 4096;    //!< allocation granularity of the staging buffer
 
+/*
+ * The TP-UART side, see the emulator's tpuart_defs.h. U_EmuIdentify is a
+ * Selfbus extension; a real TP-UART 2 or NCN512x answers it with a
+ * U_State.ind carrying the protocol error bit.
+ */
+const uint8_t  U_RESET_REQ        = 0x01;
+const uint8_t  U_RESET_IND        = 0x03;
+const uint8_t  U_STATE_MASK       = 0x07;
+const uint8_t  U_PRODUCT_ID_REQ   = 0x20;
+const uint8_t  U_EMU_IDENTIFY_REQ = 0xFE;
+const uint8_t  EMU_IDENTIFY_MIN   = 14;    //!< payload octets of format 1
+const uint8_t  EMU_IDENTIFY_MAX   = 64;    //!< anything longer is not an answer
+const uint32_t TP_BAUD            = 19200;
+
 /** Internal RAM the rest of the firmware must keep when there is no PSRAM. */
 const uint32_t HEADROOM     = 48u * 1024u;
 
@@ -586,6 +600,185 @@ bool LpcIsp::writeImage()
     return true;
 }
 
+/*
+ * Three attempts, the last one slower: a long or noisy line can make the
+ * autobaud measurement miss at 115200 and still work at 57600.
+ */
+bool LpcIsp::syncBootloader()
+{
+    for (int attempt = 0; attempt < 3; attempt++)
+    {
+        if (synchronize(attempt < 2 ? 115200 : 57600)) return true;
+    }
+    return false;
+}
+
+/* ------------------------------------------------------------------------- *
+ * The TP-UART side
+ *
+ * Runs while the KNX stack is paused, on the same port, so nothing gets in
+ * the way of the answers - except telegrams from the bus, which a TP-UART
+ * passes on whenever they arrive. Every step is built to cope with that.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * U_Reset.req until U_Reset.ind comes back.
+ *
+ * Right after a reset of the LPC the emulator is still in its LED test, a
+ * good three quarters of a second, hence the repeats.
+ */
+bool LpcIsp::waitForReset(uint32_t bootMs)
+{
+    uint32_t deadline = millis() + bootMs;
+
+    do
+    {
+        while (_uart->read() >= 0) {}
+        _uart->write(U_RESET_REQ);
+        _uart->flush();
+
+        uint32_t start = millis();
+        while ((uint32_t)(millis() - start) < 100)
+        {
+            int c = _uart->read();
+            if (c == U_RESET_IND) return true;
+            if (c < 0) vTaskDelay(1);
+        }
+    } while ((int32_t)(millis() - deadline) < 0);
+
+    return false;
+}
+
+/**
+ * Send one service octet and collect what comes back, until the line has
+ * been quiet for @p quietMs. The emulator paces its output at one octet per
+ * millisecond, a real TP-UART answers within one octet time.
+ */
+size_t LpcIsp::collect(uint8_t service, uint8_t* out, size_t max, uint32_t quietMs)
+{
+    while (_uart->read() >= 0) {}
+    _uart->write(service);
+    _uart->flush();
+
+    size_t   n    = 0;
+    uint32_t last = millis();
+    uint32_t wait = 200; // for the first octet
+
+    while ((uint32_t)(millis() - last) < wait)
+    {
+        int c = _uart->read();
+        if (c < 0)
+        {
+            vTaskDelay(1);
+            continue;
+        }
+        if (n < max) out[n++] = (uint8_t)c;
+        last = millis();
+        wait = quietMs;
+    }
+    return n;
+}
+
+/**
+ * Look for the answer to U_EmuIdentify.req in what came back.
+ *
+ * It starts with the service code and its length and ends with a checksum,
+ * so it can be told apart from a telegram that arrived just before it. A
+ * longer answer of a later format is accepted, the extra octets skipped.
+ */
+bool LpcIsp::parseIdentify(const uint8_t* data, size_t length)
+{
+    for (size_t i = 0; i + 1 < length; i++)
+    {
+        if (data[i] != U_EMU_IDENTIFY_REQ) continue;
+
+        uint8_t payload = data[i + 1];
+        if (payload < EMU_IDENTIFY_MIN || payload > EMU_IDENTIFY_MAX) continue;
+
+        size_t end = i + 2 + payload; // index of the checksum
+        if (end >= length) continue;
+
+        uint8_t sum = 0;
+        for (size_t k = i; k < end; k++) sum ^= data[k];
+        if ((uint8_t)~sum != data[end]) continue;
+
+        const uint8_t* p = data + i + 2;
+        if (p[0] < 1) continue; // format
+
+        _tp.fwMajor  = p[1];
+        _tp.fwMinor  = p[2];
+        _tp.sblib    = (uint16_t)((p[3] << 8) | p[4]);
+        _tp.maxFrame = p[5];
+
+        for (int k = 0; k < 8; k++)
+        {
+            char c = (char)p[6 + k];
+            _tp.name[k] = (c >= 0x20 && c < 0x7F) ? c : '?';
+        }
+        _tp.name[8] = '\0';
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Ask what is on the KNX UART, as a TP-UART at 19200 baud 8E1.
+ *
+ * Leaves the port closed: the KNX stack opens it again when it resumes, and
+ * runs its own reset handshake then.
+ */
+void LpcIsp::queryTransceiver(uint32_t bootMs)
+{
+    _tp = Transceiver();
+
+    _uart->end();
+    _uart->begin(TP_BAUD, SERIAL_8E1, _rx, _tx);
+    _uart->setTimeout(0);
+
+    if (!waitForReset(bootMs))
+    {
+        _tp.kind = Transceiver::NONE;
+    }
+    else
+    {
+        uint8_t buf[96];
+
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            size_t n = collect(U_EMU_IDENTIFY_REQ, buf, sizeof(buf), 30);
+            if (parseIdentify(buf, n))
+            {
+                _tp.kind = Transceiver::EMULATOR;
+                break;
+            }
+        }
+
+        if (_tp.kind != Transceiver::EMULATOR)
+        {
+            _tp.kind = Transceiver::TPUART;
+
+            // One octet comes back. More than one means a telegram came
+            // along, and then there is no telling which is which: ask again.
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                size_t n = collect(U_PRODUCT_ID_REQ, buf, sizeof(buf), 10);
+                if (n != 1) continue;
+
+                // A U_State.ind, protocol error: no U_ProductID here.
+                if ((buf[0] & U_STATE_MASK) != U_STATE_MASK)
+                {
+                    _tp.hasProductId = true;
+                    _tp.productId    = buf[0];
+                }
+                break;
+            }
+        }
+    }
+
+    _uart->end();
+    sysLog.printf("LPC: on the KNX UART: %s\n", transceiverText().c_str());
+}
+
 /* ------------------------------------------------------------------------- *
  * Jobs
  * ------------------------------------------------------------------------- */
@@ -650,16 +843,60 @@ void LpcIsp::run()
     }
 
     stage("pause", "pausing the KNX stack");
-    if (!knxLink.suspend())
+
+    // At startup the main loop may not be turning yet; it acknowledges once
+    // setup() is through, and that can take a few seconds with WiFi.
+    if (!knxLink.suspend(_job == IDENTIFY ? 20000 : 3000))
     {
         fail("the KNX stack did not stop - is the main loop stuck?");
         return;
     }
 
-    if (_job == RUN)
+    if (_job == IDENTIFY)
+    {
+        // The LPC usually came up with us and is running already, but at
+        // power-up it may still be in its LED test.
+        stage("identify", "asking the SB-Interface as a TP-UART");
+        queryTransceiver(1500);
+
+        // Nothing answers: maybe there is no firmware at all. An LPC with an
+        // empty flash sits in its ROM bootloader, and so does one we reset
+        // with PIO0_1 low.
+        if (_tp.kind == Transceiver::NONE && available())
+        {
+            _info = Info();
+
+            stage("detect", "looking for the ROM bootloader");
+            if (syncBootloader() && identify()) inspect();
+
+            stage("reset", "restarting the SB-Interface");
+            runUser();
+
+            if (_info.imageValid)
+            {
+                stage("identify", "asking the SB-Interface as a TP-UART");
+                queryTransceiver(3000);
+            }
+            else
+            {
+                _uart->end();
+            }
+        }
+
+        _lastOk = _tp.kind != Transceiver::NONE || _info.answered;
+        if (!_lastOk)
+        {
+            fail(available()
+                 ? "neither a TP-UART nor the ROM bootloader answered"
+                 : "no TP-UART answered, and without ISP lines there is nothing else to ask");
+        }
+    }
+    else if (_job == RUN)
     {
         stage("reset", "resetting the SB-Interface");
         runUser();
+        stage("identify", "asking the SB-Interface as a TP-UART");
+        queryTransceiver(3000);
         _lastOk = true;
     }
     else
@@ -669,15 +906,7 @@ void LpcIsp::run()
 
         stage("detect", "looking for the ROM bootloader");
 
-        // Three attempts, the last one slower: a long or noisy line can make
-        // the autobaud measurement miss at 115200 and still work at 57600.
-        bool synced = false;
-        for (int attempt = 0; attempt < 3 && !synced; attempt++)
-        {
-            synced = synchronize(attempt < 2 ? 115200 : 57600);
-        }
-
-        if (!synced)
+        if (!syncBootloader())
         {
             fail("no answer from the ROM bootloader - check the reset and ISP wiring");
         }
@@ -709,7 +938,21 @@ void LpcIsp::run()
 
         stage("reset", "restarting the SB-Interface");
         runUser();
-        _uart->end();
+
+        // What the bootloader cannot say: whether the program it starts is
+        // the emulator, and which version of it. Not worth waiting for when
+        // it has just said there is nothing to start.
+        if (_info.answered && !_info.imageValid)
+        {
+            _tp      = Transceiver();
+            _tp.kind = Transceiver::NONE;
+            _uart->end();
+        }
+        else
+        {
+            stage("identify", "asking the SB-Interface as a TP-UART");
+            queryTransceiver(3000);
+        }
     }
 
     knxLink.resume();
@@ -727,7 +970,8 @@ void LpcIsp::jobTask(void* arg)
 
 bool LpcIsp::start(Job job, String& error)
 {
-    if (!available())
+    // Asking as a TP-UART needs the UART only; the rest needs both lines.
+    if (job != IDENTIFY && !available())
     {
         error = "no ISP pins are configured";
         return false;
@@ -753,7 +997,8 @@ bool LpcIsp::start(Job job, String& error)
     return true;
 }
 
-bool LpcIsp::startProbe(String& error) { return start(PROBE, error); }
+bool LpcIsp::startProbe(String& error)    { return start(PROBE, error); }
+bool LpcIsp::startIdentify(String& error) { return start(IDENTIFY, error); }
 bool LpcIsp::startRun(String& error)   { return start(RUN, error); }
 
 bool LpcIsp::startFlash(String& error)
@@ -1294,7 +1539,7 @@ void LpcIsp::uploadDiscard()
 
 String LpcIsp::statusJson() const
 {
-    static const char* const JOBS[] = {"idle", "probe", "flash", "run", "fetch"};
+    static const char* const JOBS[] = {"idle", "probe", "flash", "run", "fetch", "identify"};
 
     String j = "{";
     j += "\"available\":" + String(available() ? "true" : "false") + ",";
@@ -1317,6 +1562,7 @@ String LpcIsp::statusJson() const
     // everything above: the bootloader can tell us a valid image is present,
     // only the KNX stack can tell us it is the right one.
     j += "\"tp_connected\":" + String(knxLink.tpConnected() ? "true" : "false") + ",";
+    j += "\"transceiver\":" + transceiverJson() + ",";
 
     char partId[16];
     snprintf(partId, sizeof(partId), "0x%08lX", (unsigned long)_info.partId);
@@ -1335,6 +1581,82 @@ String LpcIsp::statusJson() const
              (unsigned long)_info.uid[2], (unsigned long)_info.uid[3]);
     j += "\"uid\":\"" + String(uid) + "\",";
 
+    j += "\"blank\":" + String(_info.blank ? "true" : "false") + ",";
+    j += "\"image_valid\":" + String(_info.imageValid ? "true" : "false");
+    j += "}}";
+    return j;
+}
+
+String LpcIsp::transceiverText() const
+{
+    char text[96];
+
+    switch (_tp.kind)
+    {
+    case Transceiver::EMULATOR:
+        snprintf(text, sizeof(text),
+                 "Selfbus SB-Interface, TP-UART 2 emulation %u.%02u (sblib %X.%02X)",
+                 (unsigned)_tp.fwMajor, (unsigned)_tp.fwMinor,
+                 (unsigned)(_tp.sblib >> 8), (unsigned)(_tp.sblib & 0xFF));
+        break;
+
+    case Transceiver::TPUART:
+        if (_tp.hasProductId)
+            snprintf(text, sizeof(text), "TP-UART, product ID 0x%02X", (unsigned)_tp.productId);
+        else
+            strlcpy(text, "TP-UART without product ID", sizeof(text));
+        break;
+
+    case Transceiver::NONE:
+        if (_info.answered)
+        {
+            snprintf(text, sizeof(text), "%s, %s",
+                     _info.part[0] ? _info.part : "LPC11xx",
+                     _info.blank        ? "no firmware"
+                     : _info.imageValid ? "firmware does not answer"
+                                        : "no program that starts");
+        }
+        else
+        {
+            strlcpy(text, "no answer", sizeof(text));
+        }
+        break;
+
+    default:
+        strlcpy(text, "not identified yet", sizeof(text));
+        break;
+    }
+
+    return String(text);
+}
+
+String LpcIsp::transceiverJson() const
+{
+    static const char* const KINDS[] = {"unknown", "none", "tpuart", "emulator"};
+
+    String j = "{";
+    j += "\"kind\":\"" + String(KINDS[_tp.kind]) + "\",";
+    j += "\"text\":\"" + jsonEscape(transceiverText()) + "\",";
+    j += "\"product_id\":" + String(_tp.hasProductId ? (int)_tp.productId : -1);
+
+    if (_tp.kind == Transceiver::EMULATOR)
+    {
+        char version[8], sblib[8];
+        snprintf(version, sizeof(version), "%u.%02u",
+                 (unsigned)_tp.fwMajor, (unsigned)_tp.fwMinor);
+        snprintf(sblib, sizeof(sblib), "%X.%02X",
+                 (unsigned)(_tp.sblib >> 8), (unsigned)(_tp.sblib & 0xFF));
+
+        j += ",\"name\":\"" + jsonEscape(String(_tp.name)) + "\"";
+        j += ",\"version\":\"" + String(version) + "\"";
+        j += ",\"sblib\":\"" + String(sblib) + "\"";
+        j += ",\"max_frame\":" + String(_tp.maxFrame);
+    }
+
+    // For "nothing answers": whether the bootloader did, and what it found.
+    j += ",\"lpc\":{";
+    j += "\"answered\":" + String(_info.answered ? "true" : "false") + ",";
+    j += "\"part\":\"" + jsonEscape(String(_info.part)) + "\",";
     j += "\"blank\":" + String(_info.blank ? "true" : "false") + ",";
     j += "\"image_valid\":" + String(_info.imageValid ? "true" : "false");
     j += "}}";

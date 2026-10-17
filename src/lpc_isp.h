@@ -41,6 +41,33 @@ public:
         uint32_t resetVec   = 0;     //!< second word, entry point
     };
 
+    /**
+     * What answers on the KNX UART when it is talked to as a TP-UART.
+     *
+     * Asked with U_Reset.req, then U_EmuIdentify.req - a Selfbus extension
+     * only the TP-UART 2 emulator knows - and, when that goes unanswered,
+     * U_ProductID.req. Only written by the job task.
+     */
+    struct Transceiver
+    {
+        enum Kind : uint8_t
+        {
+            UNKNOWN = 0, //!< not asked yet
+            NONE,        //!< no answer to U_Reset.req
+            TPUART,      //!< a TP-UART, but not the emulator
+            EMULATOR     //!< the Selfbus TP-UART 2 emulator
+        };
+
+        Kind     kind         = UNKNOWN;
+        bool     hasProductId = false;
+        uint8_t  productId    = 0;
+        uint8_t  fwMajor      = 0;  //!< emulator firmware version
+        uint8_t  fwMinor      = 0;
+        uint16_t sblib        = 0;  //!< SBLIB_VERSION the emulator was built with
+        uint8_t  maxFrame     = 0;  //!< longest frame incl. checksum
+        char     name[9]      = {0};
+    };
+
     /** Put both control lines into their idle state. Call once, at startup. */
     void begin();
 
@@ -52,6 +79,24 @@ public:
     /** Identify the chip and report what is programmed. */
     bool startProbe(String& error);
 
+    /**
+     * Find out what is on the KNX UART, for startup.
+     *
+     * Asks as a TP-UART first. When nothing answers and the ISP lines are
+     * wired, the ROM bootloader is tried, which is how an LPC that was never
+     * programmed shows up. Works without ISP lines too, then only the first
+     * half runs.
+     */
+    bool startIdentify(String& error);
+
+    const Transceiver& transceiver() const { return _tp; }
+
+    /** The transceiver in one line, for the log and /api/status. */
+    String transceiverText() const;
+
+    /** The transceiver as a JSON object, for /api/status and /api/lpc. */
+    String transceiverJson() const;
+
     /** Erase and program the staged image, then verify it. */
     bool startFlash(String& error);
 
@@ -61,10 +106,10 @@ public:
     /**
      * Fetch the staged image from the manifest in the hardware profile.
      *
-     * Not an update check: the TP-UART emulator has no version command, so
-     * the device cannot tell what is already in the LPC. This only puts the
-     * offered file where an upload would have put it - writing it stays a
-     * second, deliberate click.
+     * Not an update by itself: this only puts the offered file where an
+     * upload would have put it - writing it stays a second, deliberate click.
+     * The dashboard sets the offered version against the one the emulator
+     * reports, see transceiver().
      */
     bool startFetch(String& error);
 
@@ -90,7 +135,8 @@ private:
         PROBE,
         FLASH,
         RUN,
-        FETCH
+        FETCH,
+        IDENTIFY
     };
 
     static void jobTask(void* arg);
@@ -105,12 +151,19 @@ private:
     void enterIsp();
     void runUser();
 
+    /* --- TP-UART side ---------------------------------------------------- */
+    void queryTransceiver(uint32_t bootMs);
+    bool waitForReset(uint32_t bootMs);
+    size_t collect(uint8_t service, uint8_t* out, size_t max, uint32_t quietMs);
+    bool parseIdentify(const uint8_t* data, size_t length);
+
     /* --- ISP protocol ---------------------------------------------------- */
     int  readByte(uint32_t timeoutMs);
     bool readLine(char* out, size_t max, uint32_t timeoutMs);
     void sendLine(const char* text);
     int  command(const char* cmd, uint32_t timeoutMs = 2000);
     bool synchronize(uint32_t baud);
+    bool syncBootloader();
     bool identify();
     void inspect();
     bool readMemory(uint32_t address, uint8_t* out, size_t length);
@@ -134,7 +187,8 @@ private:
     int8_t          _isp    = -1;
     bool            _invert = false;
 
-    Info _info;
+    Info        _info;
+    Transceiver _tp;
 
     /*
      * Progress and messages are written here and read from the web server

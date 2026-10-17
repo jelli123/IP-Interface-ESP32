@@ -792,9 +792,9 @@ small{color:var(--dim)} small.warn{color:var(--warn)}
   nicht. Geschrieben wird erst nach einem zweiten Klick, und jeder Block
   wird gegen die Kopie im RAM des LPC verglichen.</small></p>
   <p><small>„Online holen“ lädt die Datei aus dem Manifest, das im
-  Hardware-Profil steht, und prüft ihre SHA-256-Summe. Das ist keine
-  Aktualitätsprüfung: Der TP-UART-Emulator kennt keinen Versionsbefehl, das
-  Gerät kann also nicht wissen, was im LPC bereits steht.</small></p>
+  Hardware-Profil steht, und prüft ihre SHA-256-Summe. Daneben steht die
+  Version, die die TP-UART-Emulation selbst meldet &ndash; ältere Versionen
+  als 0.10 können das noch nicht.</small></p>
 </dialog>
 
 <dialog id="timeDlg">  <h2>Zeitserver</h2>
@@ -1383,13 +1383,12 @@ const EN = {
 'Manifest lesen':'reading the manifest',
 'Datei herunterladen':'downloading the file',
 ['„Online holen“ lädt die Datei aus dem Manifest, das im Hardware-Profil '
-+ 'steht, und prüft ihre SHA-256-Summe. Das ist keine Aktualitätsprüfung: Der '
-+ 'TP-UART-Emulator kennt keinen Versionsbefehl, das Gerät kann also nicht '
-+ 'wissen, was im LPC bereits steht.']:
++ 'steht, und prüft ihre SHA-256-Summe. Daneben steht die Version, die die '
++ 'TP-UART-Emulation selbst meldet – ältere Versionen als 0.10 können das noch '
++ 'nicht.']:
   '"Fetch online" downloads the file named by the manifest from the hardware '
-+ 'profile and checks its SHA-256. This is not an update check: the TP-UART '
-+ 'emulator has no version command, so the device cannot know what is already '
-+ 'in the LPC.',
++ 'profile and checks its SHA-256. Next to it is the version the TP-UART '
++ 'emulation reports itself - versions older than 0.10 cannot do that yet.',
 'Aktiv über den Schalter.':'Active through the switch.',
 'Aktiv, weil die ETS das Gerät noch nicht programmiert hat.':
   'Active because the ETS has not programmed the device yet.',
@@ -1958,6 +1957,13 @@ const EN = {
 'startfähiges Programm':'a program that will start',
 'Inhalt ohne gültige Prüfsumme':'contents without a valid checksum',
 'antwortet':'answering', 'keine Antwort':'no answer',
+'installiert':'installed', 'Schnittstelle abfragen':'Asking the interface',
+'Selfbus SB-Interface, TP-UART-2-Emulation':'Selfbus SB-Interface, TP-UART 2 emulation',
+'TP-UART, Produkt-ID':'TP-UART, product ID',
+'TP-UART ohne Produkt-ID':'TP-UART without product ID',
+'ohne Firmware':'no firmware', 'Firmware antwortet nicht':'firmware does not answer',
+'kein startfähiges Programm':'no program that starts',
+'wird ermittelt …':'being identified …', 'noch nicht ermittelt':'not identified yet',
 'bereit':'ready', 'Datei geladen':'file loaded', 'invertiert':'inverted',
 'Datei wird übertragen...':'transferring the file...',
 'KNX-Stack anhalten':'Pausing the KNX stack',
@@ -2188,7 +2194,7 @@ async function refresh(){
   }
 
   $('tpConn').innerHTML = dot(s.tp.connected);
-  $('tpType').textContent = s.tp.type;
+  $('tpType').textContent = tpTypeText(s.tp.transceiver, s.tp.lpc_busy);
   $('tpBaud').textContent = s.tp.baud + ' Bd, 8E1';
   $('tpTest').textContent = s.tp.self_test;
   loadBar('tpLoad', s.tp.bus_load, s.tp.bus_load_peak, s.tp.bus_load_peak_age);
@@ -3355,12 +3361,36 @@ async function showFilter(){
   $('filterList').textContent = f.addresses.join('   ');
 }
 
+/* Was an der KNX-UART hängt, wie es das Gerät beim Start und nach jedem
+ * Auftrag im Dialog „SB-Interface programmieren“ ermittelt. */
+function tpTypeText(x, busy){
+  if(!x) return '-';
+  switch(x.kind){
+  case 'emulator':
+    return t('Selfbus SB-Interface, TP-UART-2-Emulation') + ' ' + x.version
+         + ' (sblib ' + x.sblib + ')';
+  case 'tpuart':
+    return x.product_id >= 0
+         ? t('TP-UART, Produkt-ID') + ' 0x' + x.product_id.toString(16).toUpperCase().padStart(2,'0')
+         : t('TP-UART ohne Produkt-ID');
+  case 'none':
+    if(!x.lpc.answered) return t('keine Antwort');
+    return (x.lpc.part || 'LPC11xx') + ', '
+         + t(x.lpc.blank       ? 'ohne Firmware'
+           : x.lpc.image_valid ? 'Firmware antwortet nicht'
+                               : 'kein startfähiges Programm');
+  default:
+    return t(busy ? 'wird ermittelt …' : 'noch nicht ermittelt');
+  }
+}
+
 /* --- SB-Interface programmieren ------------------------------------------ *
  * Jeder Auftrag läuft im Gerät auf einer eigenen Task und dauert Sekunden.
  * Die Oberfläche stößt ihn nur an und fragt danach den Fortschritt ab.
  * ------------------------------------------------------------------------ */
 
 const LSTAGE = {pause:'KNX-Stack anhalten', detect:'Bootlader suchen',
+                identify:'Schnittstelle abfragen',
                 erase:'Flash löschen', write:'schreiben',
                 reset:'SB-Interface neu starten',
                 manifest:'Manifest lesen', download:'Datei herunterladen',
@@ -3395,8 +3425,11 @@ async function lpcRefresh(){
       : c.blank         ? '<span class="dot warn"></span>' + t('leer, nie programmiert')
       : c.image_valid   ? dot(true) + ' ' + t('startfähiges Programm')
                         : '<span class="dot err"></span>' + t('Inhalt ohne gültige Prüfsumme');
+  // Die Version meldet die Emulation selbst, seit 0.10 per U_EmuIdentify.
+  const tr = s.transceiver || {};
+  const installed = tr.kind === 'emulator' ? tr.version : '';
   $('lpcTp').innerHTML = s.tp_connected
-      ? dot(true) + ' ' + t('antwortet')
+      ? dot(true) + ' ' + t('antwortet') + (installed ? ' \u00b7 ' + installed : '')
       : '<span class="dot err"></span>' + t('keine Antwort');
 
   $('lpcFileSt').textContent = s.image_size
@@ -3406,7 +3439,8 @@ async function lpcRefresh(){
   $('lpcFetchBtn').style.display = s.can_fetch ? '' : 'none';
   $('lpcFetchBtn').disabled = s.busy;
   $('lpcOffRow').style.display = s.offered ? '' : 'none';
-  $('lpcOff').textContent = s.offered || '-';
+  $('lpcOff').textContent = !s.offered ? '-'
+      : s.offered + (installed ? ' (' + t('installiert') + ' ' + installed + ')' : '');
 
   let state = t(LSTAGE[s.stage] || s.stage || '-');
   if(!s.busy && s.ran && s.error) state = t('fehlgeschlagen') + ' \u2013 ' + s.error;

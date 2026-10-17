@@ -364,8 +364,11 @@ static String statusJson()
 
     // The TP1 side. No NCN512x rail or crystal telemetry here: the Selfbus
     // SB-Interface emulates a plain TP-UART 2 and has no such registers.
+    // What is on the UART is asked at startup and after every LPC job.
     json += "\"tp\":{";
-    json += "\"type\":\"Selfbus SB-Interface (TP-UART 2 emulation)\",";
+    json += "\"type\":\"" + jsonEscape(lpcIsp.transceiverText()) + "\",";
+    json += "\"transceiver\":" + lpcIsp.transceiverJson() + ",";
+    json += "\"lpc_busy\":" + String(lpcIsp.busy() ? "true" : "false") + ",";
     json += "\"connected\":" + String(knxLink.tpConnected() ? "true" : "false") + ",";
     json += "\"baud\":" + String(SBIP_KNX_BAUDRATE) + ",";
     json += "\"rx_frames\":" + String(stats.tpRxFrames) + ",";

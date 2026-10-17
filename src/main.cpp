@@ -186,6 +186,14 @@ void setup()
     }
 
     {
+        // What is on the KNX UART, and with which firmware. Runs on its own
+        // task and pauses the stack for a moment once the main loop turns.
+        String error;
+        if (!lpcIsp.startIdentify(error))
+            sysLog.printf("LPC: cannot ask the SB-Interface - %s\n", error.c_str());
+    }
+
+    {
         // The primitives every secure session and routing frame rests on,
         // against published vectors. A failure here means no secure
         // connection can work, so say so at the top of the log.
