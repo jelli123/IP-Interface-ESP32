@@ -3128,24 +3128,26 @@ patch_device_capabilities()
 
 
 # --------------------------------------------------------------------------
-# 25. No extended frames to a TP-UART that cannot send them
+# 25. No frame longer than the TP-UART can send
 # --------------------------------------------------------------------------
 #
-# The TP-UART 2 emulator on the SB-Interface does not handle extended frames
-# yet - the SBLib underneath has no support for them. A KNX Data Secure frame
-# carries 13 octets of overhead, so almost every secured management frame is
-# an extended one. Handed to the emulator it is lost or garbled on the line;
-# refused here, the sender gets a negative L_Data.con and knows. The router
-# object announces the same limit in PID_MAX_APDULENGTH_ROUTING (see
-# src/knx_link.cpp), so ETS does not try in the first place.
+# A KNX Data Secure frame carries 13 octets of overhead, so almost every
+# secured management frame is an extended one. The TP-UART 2 emulator on the
+# SB-Interface sends extended frames of up to 64 octets since version 0.10
+# and says so in its answer to U_EmuIdentify; an older one, or a genuine
+# TP-UART the firmware knows nothing about, gets standard frames only.
+# src/knx_link.cpp keeps that limit in sbipTpMaxFrame. A longer frame handed
+# to the TP-UART is lost or garbled on the line; refused here, the sender
+# gets a negative L_Data.con and knows. The router object announces the same
+# limit in PID_MAX_APDULENGTH_ROUTING, so ETS does not try in the first place.
 
-SEC25_MARKER = "// sbip: extended frames only if the TP-UART can send them"
+SEC25_MARKER = "// sbip: no frame longer than the TP-UART can send"
 
 SEC25_ANCHOR_DECL = "bool TpUartDataLinkLayer::sendFrame(CemiFrame& cemiFrame)\n"
 
 SEC25_DECL = (
     SEC25_MARKER + "\n"
-    "extern bool sbipTpExtendedFrames;\n"
+    "extern uint16_t sbipTpMaxFrame;\n"
     "\n"
     + SEC25_ANCHOR_DECL
 )
@@ -3153,9 +3155,12 @@ SEC25_DECL = (
 SEC25_ANCHOR = "    TpFrame* tpFrame = new TpFrame(cemiFrame);\n"
 
 SEC25_NEW = (
-    "    if (!sbipTpExtendedFrames && cemiFrame.frameType() == ExtendedFrame)\n"
+    "    if (cemiFrame.telegramLengthtTP() > sbipTpMaxFrame)\n"
     "    {\n"
-    "        println(\"sbip: extended frame not sent - the TP-UART cannot send it\");\n"
+    "        print(\"sbip: frame of \");\n"
+    "        print(cemiFrame.telegramLengthtTP());\n"
+    "        print(\" octets not sent - the TP-UART takes \");\n"
+    "        println(sbipTpMaxFrame);\n"
     "        dataConReceived(cemiFrame, false);\n"
     "        return false;\n"
     "    }\n"
@@ -3168,9 +3173,9 @@ def patch_tp_extended_frames():
     if apply_secure_edits(
         "tpuart_data_link_layer.cpp", SEC25_MARKER,
         ((SEC25_ANCHOR_DECL, SEC25_DECL), (SEC25_ANCHOR, SEC25_NEW)),
-        "extended frames go to a TP-UART that cannot send them",
+        "frames go to a TP-UART that cannot send them",
     ):
-        print("patch_knx.py: extended frame guard applied to tpuart_data_link_layer.cpp")
+        print("patch_knx.py: TP frame length guard applied to tpuart_data_link_layer.cpp")
 
 
 patch_tp_extended_frames()

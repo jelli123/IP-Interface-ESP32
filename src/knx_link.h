@@ -332,6 +332,12 @@ public:
 private:
     static void activityTrampoline(uint8_t info);
     void applyIdentity();
+
+    /**
+     * Take the longest TP frame from what the SB-Interface reported and
+     * announce the APDU length that follows from it. Main task only.
+     */
+    void applyTpFrameLimit();
     void onActivity(uint8_t info);
     void updateBusLoad();
     void superviseTpLink();

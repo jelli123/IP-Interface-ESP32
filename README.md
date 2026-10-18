@@ -2851,14 +2851,20 @@ andere Gruppentelegramm. Ein gesichertes Telegramm ist allerdings um
 Byte Nutzdaten und praktisch das ganze gesicherte Management brauchen einen
 *Extended Frame*.
 
-> **Einschränkung:** Der TP-UART-Emulator auf dem SB-Interface kann noch keine
-> Extended Frames, weil die SBLib sie nicht unterstützt. Der Router meldet
-> deshalb `PID_MAX_APDULENGTH_ROUTING` = 15 und gibt lange Rahmen nicht an den
-> Emulator weiter, sondern bestätigt sie negativ. Gesicherte Telegramme, die in
-> einen Standardrahmen passen, gehen durch; **Geräte hinter diesem Router lassen
-> sich aber nicht sicher programmieren**. Sobald die SBLib Extended Frames
-> kann: `-DSBIP_TP_EXTENDED_FRAMES=1`. Der Router selbst ist nicht betroffen –
-> er wird über IP programmiert.
+> **Rahmenlänge auf TP:** Der TP-UART-Emulator auf dem SB-Interface sendet ab
+> Version 0.10 Extended Frames bis 64 Oktette und meldet das in seiner Antwort
+> auf `U_EmuIdentify`. Der Router übernimmt den Wert nach jeder Erkennung des
+> SB-Interfaces und meldet daraus `PID_MAX_APDULENGTH_ROUTING` und
+> `PID_MAX_INTERFACE_APDU_LENGTH` = **55**. Das reicht für gesichertes
+> Management der Geräte hinter dem Router.
+>
+> Ein älterer Emulator oder ein echter TP-UART meldet keine Rahmenlänge. Dann
+> bleibt es bei Standardrahmen (APDU 15): Gesicherte Telegramme, die in einen
+> Standardrahmen passen, gehen durch, **Geräte hinter dem Router lassen sich
+> aber nicht sicher programmieren**. Für einen echten TP-UART schaltet
+> `-DSBIP_TP_EXTENDED_FRAMES=1` Extended Frames frei. Längere Rahmen gibt der
+> Router nicht an den TP-UART weiter, sondern bestätigt sie negativ. Der Router
+> selbst ist nicht betroffen – er wird über IP programmiert.
 
 Die Funktion *Security Proxy* (AN192, Umsetzen zwischen gesicherter und
 ungesicherter Linie) ist nicht umgesetzt.
@@ -3340,8 +3346,8 @@ Diese Punkte folgen aus der Emulation, nicht aus dieser Firmware:
 * **Keine Transceiver-Telemetrie.** V20V, VDD2, VBUS, VFILT, XTAL und
   Thermal-Warning existieren beim LPC1115 nicht. Das Dashboard zeigt
   stattdessen den Verbindungszustand und die Frame-Zähler.
-* **Keine Extended Frames.** Die `Bus`-Zustandsmaschine von sblib implementiert
-  nur Standard-Frames.
+* **Extended Frames nur bis 64 Oktette.** Ab Emulator 0.10, das reicht für eine
+  APDU von 55 Oktetten. Ein NCN5130 nimmt bis 263 Oktette.
 * **`L_Data.con` ist immer positiv.** sblib gibt das Sendeergebnis nicht heraus
   und wiederholt intern bereits bei NACK und BUSY.
 * **ACK erfolgt autonom.** Das SB-Interface quittiert jedes empfangene

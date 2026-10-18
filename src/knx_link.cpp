@@ -26,6 +26,7 @@
 #include "knxip_shim.h"
 
 #include "log_buffer.h"
+#include "lpc_isp.h"
 #include "net_manager.h"
 KnxLink knxLink;
 
@@ -67,15 +68,25 @@ uint8_t (*sbipAccessHook)(uint16_t apduType, const uint8_t* data, uint16_t lengt
 bool (*sbipCemiAccessHook)(uint16_t objectType, uint8_t propertyId, bool write) = nullptr;
 
 /*
- * Whether the TP-UART sends extended frames, see patch 25. The TP-UART 2
- * emulator on the SB-Interface cannot yet - the SBLib underneath has no
- * support for them - so the stack refuses them rather than hand them over.
- * Switch on with -DSBIP_TP_EXTENDED_FRAMES=1 once it can.
+ * Longest frame the TP-UART sends, checksum included, see patch 25. Anything
+ * longer the stack refuses with a negative L_Data.con rather than hand over.
+ *
+ * The TP-UART 2 emulator on the SB-Interface says how long in its answer to
+ * U_EmuIdentify (64 octets as of version 0.10), and applyTpFrameLimit() takes
+ * it from there after every identification. A genuine TP-UART does not say;
+ * for one of those -DSBIP_TP_EXTENDED_FRAMES=1 allows extended frames, the
+ * default is standard frames only. Until the first identification the same
+ * default applies.
  */
 #ifndef SBIP_TP_EXTENDED_FRAMES
 #define SBIP_TP_EXTENDED_FRAMES 0
 #endif
-bool sbipTpExtendedFrames = SBIP_TP_EXTENDED_FRAMES;
+static constexpr uint16_t TP_STD_MAX_FRAME = 23;  //!< 15 octets APDU + 8
+static constexpr uint16_t TP_EXT_OVERHEAD  = 9;   //!< extended frame without APDU
+static constexpr uint16_t TP_MAX_APDU      = 220; //!< what the stack handles at most
+static constexpr uint16_t TP_DEFAULT_MAX_FRAME =
+    SBIP_TP_EXTENDED_FRAMES ? (TP_MAX_APDU + TP_EXT_OVERHEAD) : TP_STD_MAX_FRAME;
+uint16_t sbipTpMaxFrame = TP_DEFAULT_MAX_FRAME;
 
 /*
  * Tunnelling v2 interface features (03_08_04 3.6), see patch 26. The stack
@@ -100,10 +111,12 @@ bool (*sbipBroadcastRouteHook)(bool fromPrimary) = nullptr;
 void (*sbipLocalTransportSend)(bool connected, APDU& apdu) = nullptr;
 bool (*sbipCemiServiceHook)(CemiFrame& frame) = nullptr;
 
-/** Longest APDU this device sends onto TP: a standard frame without extended frames. */
+/** Longest APDU this device sends onto TP, following from sbipTpMaxFrame. */
 static uint16_t maxTpApdu()
 {
-    return sbipTpExtendedFrames ? 220 : 15;
+    if (sbipTpMaxFrame <= TP_STD_MAX_FRAME) return 15;
+    uint16_t apdu = (uint16_t)(sbipTpMaxFrame - TP_EXT_OVERHEAD);
+    return (apdu > TP_MAX_APDU) ? TP_MAX_APDU : apdu;
 }
 
 static void reportRoutingLoop(uint32_t fromIp, uint16_t source, bool ownIp)
@@ -1165,30 +1178,7 @@ bool KnxLink::begin()
 
     knx.readMemory();
     loadSecurityObject();
-
-    /*
-     * PID_MAX_APDULENGTH_ROUTING tells ETS how long a frame this coupler
-     * routes. Without extended frames on TP that is the standard frame's 15
-     * octets - and since a KNX Data Secure frame adds 13, secured management
-     * of devices behind this router is then not possible. Saying so is
-     * better than routing frames the TP-UART loses.
-     */
-    {
-        RouterObject* router = (RouterObject*)knxBau.interfaceObject(OT_ROUTER, 1);
-        if (router != nullptr)
-            router->property(PID_MAX_APDU_LENGTH_ROUTER)->write(maxTpApdu());
-
-        // The same limit for a tunnel (patch 26), and what the device takes
-        // itself for local management.
-        InterfaceObject* cemi = knxBau.interfaceObject(OT_CEMI_SERVER, 1);
-        if (cemi != nullptr)
-        {
-            uint16_t local = 15;
-            knxBau.deviceObject().property(PID_MAX_APDU_LENGTH)->read(local);
-            cemi->property(PID_MAX_INTERFACE_APDU_LENGTH)->write(maxTpApdu());
-            cemi->property(PID_MAX_LOCAL_APDU_LENGTH)->write(local);
-        }
-    }
+    applyTpFrameLimit();
 
     knx.start();
 
@@ -1286,6 +1276,10 @@ void KnxLink::loop()
         if (tp != nullptr) tp->reset();
         _lastLinkCheck = millis();
         sysLog.println("KNX: stack resumed");
+
+        // Every job ends with asking the SB-Interface what it is, and a
+        // newly flashed emulator may take longer frames than the old one.
+        applyTpFrameLimit();
     }
 
     knx.loop();
@@ -1649,6 +1643,47 @@ void KnxLink::activityTrampoline(uint8_t info)
 HardwareSerial* KnxLink::uart() const
 {
     return knxSerial;
+}
+
+void KnxLink::applyTpFrameLimit()
+{
+    const LpcIsp::Transceiver& tp = lpcIsp.transceiver();
+
+    uint16_t maxFrame = TP_DEFAULT_MAX_FRAME;
+    if (tp.kind == LpcIsp::Transceiver::EMULATOR && tp.maxFrame != 0)
+        maxFrame = (tp.maxFrame < TP_STD_MAX_FRAME) ? TP_STD_MAX_FRAME : tp.maxFrame;
+
+    bool changed   = maxFrame != sbipTpMaxFrame;
+    sbipTpMaxFrame = maxFrame;
+
+    /*
+     * PID_MAX_APDULENGTH_ROUTING tells ETS how long a frame this coupler
+     * routes. Without extended frames on TP that is the standard frame's 15
+     * octets - and since a KNX Data Secure frame adds 13, secured management
+     * of devices behind this router is then not possible. Saying so is
+     * better than routing frames the TP-UART loses.
+     */
+    RouterObject* router = (RouterObject*)knxBau.interfaceObject(OT_ROUTER, 1);
+    if (router != nullptr)
+        router->property(PID_MAX_APDU_LENGTH_ROUTER)->write(maxTpApdu());
+
+    // The same limit for a tunnel (patch 26), and what the device takes
+    // itself for local management.
+    InterfaceObject* cemi = knxBau.interfaceObject(OT_CEMI_SERVER, 1);
+    if (cemi != nullptr)
+    {
+        uint16_t local = 15;
+        knxBau.deviceObject().property(PID_MAX_APDU_LENGTH)->read(local);
+        cemi->property(PID_MAX_INTERFACE_APDU_LENGTH)->write(maxTpApdu());
+        cemi->property(PID_MAX_LOCAL_APDU_LENGTH)->write(local);
+    }
+
+    if (changed)
+    {
+        sysLog.printf("KNX: TP frames up to %u octets, APDU %u%s\n", (unsigned)sbipTpMaxFrame,
+                      (unsigned)maxTpApdu(),
+                      sbipTpMaxFrame > TP_STD_MAX_FRAME ? " (extended frames)" : " (standard frames only)");
+    }
 }
 
 bool KnxLink::suspend(uint32_t timeoutMs)

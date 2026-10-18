@@ -45,7 +45,7 @@ IP-Secure-Profil das Profilmodul „S-AL“.
 |---|---|---|
 | **A** | Gemeinsame Grundlage: Krypto, FDSK je Gerät, echte Zufallszahlen, Folgenummern, Secure Application Layer für das *Management* des Routers, Access Policies (AN193) | umgesetzt |
 | **B** | KNXnet/IP Secure: TCP (Core v2), Secure Sessions, Secure Routing mit Timer-Synchronisation, DIBs, Zugriffsregeln | umgesetzt |
-| **C** | KNX Data Secure als Koppler: Durchleiten gesicherter Telegramme | umgesetzt; **auf TP ohne Extended Frames stark eingeschränkt**, siehe 2.3 |
+| **C** | KNX Data Secure als Koppler: Durchleiten gesicherter Telegramme | umgesetzt; auf TP mit Extended Frames bis 64 Oktette (Emulator ab 0.10), sonst stark eingeschränkt, siehe 2.4 |
 | **D** | Produktdatenbank, Dashboard, Doku | umgesetzt |
 | **E** | Test mit ETS 6 und einem zweiten Secure-Router | offen – braucht Hardware |
 
@@ -114,7 +114,7 @@ IP-Secure-Profil das Profilmodul „S-AL“.
 |---|---|
 | Gesicherte Telegramme unverändert weiterleiten (Filtertabelle wie üblich) | Stack routet APDU-transparent |
 | Security Proxy (AN192) | **nicht umgesetzt** – optionales Profilmodul |
-| **Langrahmen**: ein S-A_Data-Rahmen trägt 13 Oktette Overhead; mit Standardrahmen (15 Oktette APDU) passt praktisch kein gesichertes Management hindurch | Der TP-UART-Emulator auf dem SB-Interface kann noch keine Extended Frames (SBLib). Deshalb meldet der Router `PID_MAX_APDULENGTH_ROUTING` = 15, und Patch 25 gibt Extended Frames nicht an den Emulator weiter, sondern bestätigt sie negativ. **Folge:** Geräte hinter diesem Router lassen sich nicht sicher programmieren, bis die SBLib Extended Frames kann; dann `-DSBIP_TP_EXTENDED_FRAMES=1`. Der Router selbst ist davon nicht betroffen – er wird über IP programmiert |
+| **Langrahmen**: ein S-A_Data-Rahmen trägt 13 Oktette Overhead; mit Standardrahmen (15 Oktette APDU) passt praktisch kein gesichertes Management hindurch | Der TP-UART-Emulator ab 0.10 sendet Extended Frames bis 64 Oktette und meldet das per `U_EmuIdentify`. `KnxLink::applyTpFrameLimit()` übernimmt den Wert nach jeder Erkennung, der Router meldet dann `PID_MAX_APDULENGTH_ROUTING` = 55, und Patch 25 bestätigt nur längere Rahmen negativ. Ohne diese Angabe (älterer Emulator, echter TP-UART ohne `-DSBIP_TP_EXTENDED_FRAMES=1`) bleibt es bei 15. **Folge:** Mit dem Emulator ab 0.10 lassen sich Geräte hinter diesem Router sicher programmieren, sonst nicht. Der Router selbst ist davon nicht betroffen – er wird über IP programmiert |
 
 ### 2.5 Tunnelling v2 (3/8/4 3, 5.4.3; TSSK 2.7)
 
@@ -158,7 +158,7 @@ Der Stack leitete System-Broadcast-Dienste im Koppler überhaupt nicht weiter
 ### 2.8 Was fehlt
 
 * **Security Proxy** (AN192) – optional.
-* **Extended Frames auf TP** – eine Frage der SBLib, siehe 2.4.
+* **Extended Frames über 64 Oktette auf TP** – der Emulator begrenzt auf 64, siehe 2.4.
 * **IP System Broadcast bei anderer Routing-Multicast-Adresse** als
   224.0.23.12: dazu müsste der Socket die Zielgruppe eines Pakets kennen
   (`IP_PKTINFO`), was das Arduino-lwIP nicht liefert.
@@ -198,7 +198,7 @@ Eingriffe im Stack, alle in `scripts/patch_knx.py`:
 | 22 | `secure_application_layer.cpp/.h` | Zufall, Folgenummern, MAC bei reiner Authentifizierung, keine Klartext-Ausgaben |
 | 23 | `application_layer.cpp`, `cemi_server.cpp` | Access Policies an den drei Indication-Verteilern und im cEMI-Server |
 | 24 | `ip_parameter_object.cpp` | `PID_KNXNETIP_DEVICE_CAPABILITIES` = 0047h |
-| 25 | `tpuart_data_link_layer.cpp` | keine Extended Frames an einen TP-UART, der sie nicht kann |
+| 25 | `tpuart_data_link_layer.cpp` | kein Rahmen an den TP-UART, der länger ist, als er senden kann |
 | 26 | `ip_data_link_layer.cpp/.h`, `cemi_server_object.cpp` | Tunnelling-v2-Feature-Dienste, Abfragen für Slots und Device-Management-Verbindung, PID 68/69 im cEMI-Server-Objekt |
 | 27 | `router_object.cpp`, `network_layer_coupler.cpp`, `application_layer.cpp` | `PID_IP_SBC_CONTROL`, System-Broadcast-Dienste über den Koppler, Routing-Freigabe IP → TP, Länge der Domain-Adresse, gesicherte Domain-Adresse an die BAU |
 | 28 | `transport_layer.cpp/.h`, `secure_application_layer.cpp`, `cemi_server.cpp` | lokaler Modus der Transportschicht (cEMI), B0 ohne Adressen, Funktions-Properties und Transportrahmen über cEMI |

@@ -682,6 +682,6 @@ cEMI-Server selbst.
 | Management-Sperre pro Weg (`sbipManagementHook`) | Einstellung dieser Firmware; der Standard sieht dafür KNX Data Secure vor |
 | KNXnet/IP über TCP und KNXnet/IP Secure (`src/knxip_shim.cpp`) | Liegt außerhalb des Stacks, der beides nicht kennt; er sieht weiter nur UDP. Upstream wäre das eine eigene Transportschicht |
 | Tunnelling-v2-Feature-Dienste (Patch 26), IP System Broadcast (Shim, Patch 27) | Die Werte und Regeln hängen an der Firmware (Busverbindung des SB-Interface, Routing-Multicast, KNX Secure); upstream wären es eigene Klassen im Stack |
-| Keine Extended Frames an den TP-UART (Patch 25) | Der Emulator auf dem SB-Interface kann sie noch nicht; eine Eigenschaft dieser Hardware, nicht des Stacks |
+| Kein Rahmen an den TP-UART, der länger ist, als er senden kann (Patch 25) | Der Emulator auf dem SB-Interface sendet ab 0.10 bis 64 Oktette und meldet das per `U_EmuIdentify`; eine Eigenschaft dieser Hardware, nicht des Stacks |
 | IP-Secure-Properties als Callback-Properties (Patch 19) | Halten das Speicherabbild programmierter Geräte gültig; die Werte liegen im NVS der Firmware |
 | Tunnelwahl je Secure-Benutzer (Patch 20) | Gehört upstream in `loopHandleConnectRequest()`, sobald der Stack Secure Sessions kennt |
