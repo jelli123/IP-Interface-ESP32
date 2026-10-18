@@ -2060,14 +2060,20 @@ Tunnelverbindung verlassen hat. Das beweist nur den Absendevorgang, nicht die
 Ankunft – und genau diese Lücke hat mehrere Testrunden gekostet.
 
 Ein Tunnelrahmen muss vom Client quittiert werden; die Bibliothek nahm die
-Quittung entgegen und verwarf sie kommentarlos. Jetzt werden beide Seiten
-gezählt. Bleiben zehn Rahmen unquittiert, steht im Protokoll:
+Quittung entgegen und verwarf sie kommentarlos. Jetzt wird je Tunnel gezählt,
+wie viele Rahmen seit der letzten Quittung offen sind. Bleiben zehn Rahmen in
+Folge unquittiert, steht einmal pro Verbindung im Protokoll:
 
 ```
-KNX: a tunnel client is not acknowledging anything we send. The frames
-leave this device, so they are lost on the way (firewall, router between
-the subnets) or the client rejects them.
+KNX: the tunnel client on channel 0x3, 1.1.246 is not acknowledging anything
+we send. The frames leave this device, so they are lost on the way (firewall,
+router between the subnets) or the client rejects them.
 ```
+
+Quittiert der Client danach doch wieder, folgt
+`KNX: the tunnel client on channel 0x3 acknowledges again`. Eine neue
+Verbindung beginnt bei null; ein Client, der früher einmal stumm war, belastet
+spätere Verbindungen also nicht.
 
 Erscheint die Zeile, liegt der Fehler **hinter** dem Gerät – typischerweise
 eine Firewall auf dem ETS-Rechner oder der Router zwischen zwei Subnetzen.

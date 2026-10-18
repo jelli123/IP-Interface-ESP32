@@ -1362,6 +1362,13 @@ patch_tunnel_to_bus()
 # and drops it on the floor, so "ETS shows nothing" and "the frames never
 # arrive" look identical from here - and that question has cost several
 # rounds of testing. Counting both sides settles it.
+#
+# Counted per tunnel slot, as frames sent since the last acknowledgement on
+# that channel. A single count for all tunnels never recovered from one
+# client that had gone silent, and every ack of another client re-armed the
+# warning, so it repeated with each frame sent. A new channel in the slot
+# starts from zero; the warning comes once per connection, at the tenth
+# frame, and names the channel and tunnel address.
 
 ACK_MARKER = "// sbip: a client that never acknowledges is not receiving"
 
@@ -1373,21 +1380,67 @@ ACK_ANCHOR = (
 
 ACK_NEW = (
     ACK_MARKER + "\n"
-    "static uint32_t sbipTunnelSent = 0;\n"
-    "static uint32_t sbipTunnelAcked = 0;\n"
-    "static bool sbipTunnelAckWarned = false;\n"
+    "static constexpr uint16_t SBIP_TUNNEL_UNACKED_WARN = 10;\n"
+    "static uint8_t sbipTunnelChannel[KNX_TUNNELING] = {};  // channel the count belongs to\n"
+    "static uint16_t sbipTunnelUnacked[KNX_TUNNELING] = {}; // sent since its last ack\n"
+    "\n"
+    "static void sbipPrintTunnel(const KnxIpTunnelConnection& tunnel)\n"
+    "{\n"
+    "    print(\"channel 0x\");\n"
+    "    print(tunnel.ChannelId, 16);\n"
+    "    print(\", \");\n"
+    "    print(tunnel.IndividualAddress >> 12);\n"
+    "    print(\".\");\n"
+    "    print((tunnel.IndividualAddress >> 8) & 0x0F);\n"
+    "    print(\".\");\n"
+    "    print(tunnel.IndividualAddress & 0xFF);\n"
+    "}\n"
+    "\n"
+    "static void sbipTunnelSentTo(uint8_t slot, const KnxIpTunnelConnection& tunnel)\n"
+    "{\n"
+    "    if (slot >= KNX_TUNNELING)\n"
+    "        return;\n"
+    "\n"
+    "    if (sbipTunnelChannel[slot] != tunnel.ChannelId)\n"
+    "    {\n"
+    "        sbipTunnelChannel[slot] = tunnel.ChannelId;\n"
+    "        sbipTunnelUnacked[slot] = 0;\n"
+    "    }\n"
+    "\n"
+    "    if (sbipTunnelUnacked[slot] < 0xFFFF)\n"
+    "        sbipTunnelUnacked[slot]++;\n"
+    "\n"
+    "    if (sbipTunnelUnacked[slot] == SBIP_TUNNEL_UNACKED_WARN)\n"
+    "    {\n"
+    "        print(\"KNX: the tunnel client on \");\n"
+    "        sbipPrintTunnel(tunnel);\n"
+    "        println(\" is not acknowledging anything we send. The frames \"\n"
+    "                \"leave this device, so they are lost on the way (firewall, \"\n"
+    "                \"router between the subnets) or the client rejects them.\");\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "static void sbipTunnelAckedBy(uint8_t channel)\n"
+    "{\n"
+    "    for (uint8_t slot = 0; slot < KNX_TUNNELING; slot++)\n"
+    "    {\n"
+    "        if (channel == 0 || sbipTunnelChannel[slot] != channel)\n"
+    "            continue;\n"
+    "\n"
+    "        if (sbipTunnelUnacked[slot] >= SBIP_TUNNEL_UNACKED_WARN)\n"
+    "        {\n"
+    "            print(\"KNX: the tunnel client on channel 0x\");\n"
+    "            print(channel, 16);\n"
+    "            println(\" acknowledges again\");\n"
+    "        }\n"
+    "        sbipTunnelUnacked[slot] = 0;\n"
+    "    }\n"
+    "}\n"
     "\n"
     "void IpDataLinkLayer::sendFrameToTunnel(KnxIpTunnelConnection* tunnel,"
     " CemiFrame& frame)\n"
     "{\n"
-    "    if (!sbipTunnelAckWarned && ++sbipTunnelSent - sbipTunnelAcked >= 10)\n"
-    "    {\n"
-    "        sbipTunnelAckWarned = true;\n"
-    "        println(\"KNX: a tunnel client is not acknowledging anything we \"\n"
-    "                \"send. The frames leave this device, so they are lost on \"\n"
-    "                \"the way (firewall, router between the subnets) or the \"\n"
-    "                \"client rejects them.\");\n"
-    "    }\n"
+    "    sbipTunnelSentTo((uint8_t)(tunnel - tunnels), *tunnel);\n"
     "\n"
 )
 
@@ -1403,8 +1456,9 @@ ACK_RX_ANCHOR = (
 ACK_RX_NEW = (
     "        case TunnelingAck:\n"
     "        {\n"
-    "            sbipTunnelAcked++;\n"
-    "            sbipTunnelAckWarned = false;\n"
+    "            // Header, then structure length, channel id, sequence counter, status.\n"
+    "            if (len >= 8)\n"
+    "                sbipTunnelAckedBy(buffer[7]);\n"
     "            break;\n"
     "        }\n"
 )
@@ -3230,7 +3284,7 @@ SEC26_H_PRIVATE = (
 SEC26_ANCHOR_CASE = (
     "        case TunnelingAck:\n"
     "        {\n"
-    "            sbipTunnelAcked++;\n"
+    "            // Header, then structure length, channel id, sequence counter, status.\n"
 )
 
 SEC26_CASE = (
@@ -3286,7 +3340,7 @@ SEC26_FUNCS = (
     "    memcpy(frame + 12, value, length);\n"
     "\n"
     "    // Acknowledged like a tunnelling request, and counted like one.\n"
-    "    sbipTunnelSent++;\n"
+    "    sbipTunnelSentTo((uint8_t)(tun - tunnels), *tun);\n"
     "    _platform.sendBytesUniCast(tun->IpAddress, tun->PortData, frame, total);\n"
     "}\n"
     "\n"
