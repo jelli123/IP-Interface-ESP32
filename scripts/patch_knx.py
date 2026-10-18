@@ -3962,3 +3962,108 @@ def patch_cemi_transport_layer():
 
 
 patch_cemi_transport_layer()
+
+
+# --------------------------------------------------------------------------
+# 29. Say which tunnel closes, and why
+# --------------------------------------------------------------------------
+#
+# KnxIpTunnelConnection::Reset() logs "Close Tunnel-Connection[?]": the
+# connection does not know its slot, so a literal question mark stands in for
+# it, and the reason is not given at all. "New Tunnel-Connection[0]" names the
+# slot, so the two lines did not match up. Reset() now only clears; the three
+# callers in ip_data_link_layer.cpp know slot and reason and log the close in
+# the same form as the open, with channel and tunnel address.
+
+SEC29_MARKER = "// sbip: the caller logs the close, it knows slot and reason"
+
+SEC29_ANCHOR_RESET = (
+    "void KnxIpTunnelConnection::Reset()\n"
+    "{\n"
+    "    print(\"Close Tunnel-Connection[\");\n"
+    "    print(\"?\");\n"
+    "    print(\"], Channel: 0x\");\n"
+    "    println(ChannelId, 16);\n"
+    "\n"
+)
+
+SEC29_RESET = (
+    "void KnxIpTunnelConnection::Reset()\n"
+    "{\n"
+    "    " + SEC29_MARKER + "\n"
+)
+
+SEC29_DLL_MARKER = "// sbip: log a tunnel close with slot and reason"
+
+SEC29_ANCHOR_HELPER = (
+    "void IpDataLinkLayer::sendFrameToTunnel(KnxIpTunnelConnection* tunnel,"
+    " CemiFrame& frame)\n"
+)
+
+SEC29_HELPER = (
+    SEC29_DLL_MARKER + "\n"
+    "static void sbipLogTunnelClose(int slot, const KnxIpTunnelConnection& tunnel, const char* reason)\n"
+    "{\n"
+    "    print(\"Close Tunnel-Connection[\");\n"
+    "    print(slot);\n"
+    "    print(\"], Channel: 0x\");\n"
+    "    print(tunnel.ChannelId, 16);\n"
+    "    print(\" PA: \");\n"
+    "    print(tunnel.IndividualAddress >> 12);\n"
+    "    print(\".\");\n"
+    "    print((tunnel.IndividualAddress >> 8) & 0xF);\n"
+    "    print(\".\");\n"
+    "    print(tunnel.IndividualAddress & 0xFF);\n"
+    "    print(\" (\");\n"
+    "    print(reason);\n"
+    "    println(\")\");\n"
+    "}\n"
+    "\n"
+    + SEC29_ANCHOR_HELPER
+)
+
+SEC29_ANCHOR_HEARTBEAT = "                tunnels[i].Reset();\n"
+
+SEC29_HEARTBEAT = (
+    "                sbipLogTunnelClose(i, tunnels[i], \"no heartbeat for 120 s\");\n"
+    + SEC29_ANCHOR_HEARTBEAT
+)
+
+SEC29_ANCHOR_TAKEOVER = "                tunnels[firstResAndOccTunnel].Reset();\n"
+
+SEC29_TAKEOVER = (
+    "                sbipLogTunnelClose(firstResAndOccTunnel, tunnels[firstResAndOccTunnel],\n"
+    "                                   \"slot taken over by a new connection\");\n"
+    + SEC29_ANCHOR_TAKEOVER
+)
+
+SEC29_ANCHOR_DISCONNECT = "    tun->Reset();\n}\n"
+
+SEC29_DISCONNECT = (
+    "    sbipLogTunnelClose((int)(tun - tunnels), *tun, \"disconnect request\");\n"
+    + SEC29_ANCHOR_DISCONNECT
+)
+
+
+def patch_tunnel_close_log():
+    done = []
+    if apply_secure_edits(
+        "knx_ip_tunnel_connection.cpp", SEC29_MARKER,
+        ((SEC29_ANCHOR_RESET, SEC29_RESET),),
+        "the tunnel close keeps logging slot \"?\"",
+    ):
+        done.append("knx_ip_tunnel_connection.cpp")
+    if apply_secure_edits(
+        "ip_data_link_layer.cpp", SEC29_DLL_MARKER,
+        ((SEC29_ANCHOR_HELPER, SEC29_HELPER),
+         (SEC29_ANCHOR_HEARTBEAT, SEC29_HEARTBEAT),
+         (SEC29_ANCHOR_TAKEOVER, SEC29_TAKEOVER),
+         (SEC29_ANCHOR_DISCONNECT, SEC29_DISCONNECT)),
+        "a tunnel close is not logged",
+    ):
+        done.append("ip_data_link_layer.cpp")
+    if done:
+        print("patch_knx.py: tunnel close log with slot and reason applied to %s" % ", ".join(done))
+
+
+patch_tunnel_close_log()

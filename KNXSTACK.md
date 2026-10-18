@@ -64,6 +64,7 @@ E-Mail sind Platzhalter – vor dem Einreichen `git commit --amend --reset-autho
 | 19 | `PID_IP_SBC_CONTROL` im falschen Format, ohne Rückfall | Fehler | – |
 | 20 | Tunnelwahl gibt beim ersten belegten Slot auf | Fehler | – |
 | 21 | cEMI-Server: Funktions-Properties und Transportschicht fehlen | Lücke | – |
+| 22 | Abbau eines Tunnels ohne Slot und Grund im Log | Diagnose | – |
 
 ---
 
@@ -665,6 +666,30 @@ Nachgerüstet in Patch 26 (die beiden PIDs, flüchtig, damit das Speicherabbild
 gleich bleibt) und Patch 28 (lokaler Modus der Transportschicht, Data Secure
 ohne Adressen nach AN203, Funktions-Properties). Upstream gehörte das in den
 cEMI-Server selbst.
+
+---
+
+## 22 – Abbau eines Tunnels ohne Slot und Grund im Log
+
+**Dateien:** `src/knx/knx_ip_tunnel_connection.cpp`, `src/knx/ip_data_link_layer.cpp`
+
+```cpp
+void KnxIpTunnelConnection::Reset()
+{
+    print("Close Tunnel-Connection[");
+    print("?");
+```
+
+Die Verbindung kennt ihren Slot nicht, deshalb steht dort ein festes
+Fragezeichen, und einen Grund nennt die Zeile gar nicht. Der Aufbau meldet
+dagegen `New Tunnel-Connection[0]`. Bei mehreren Clients ist so nicht zu sehen,
+welche Verbindung endet und ob der Client sich abgemeldet hat oder der
+Heartbeat ausblieb.
+
+Patch 29 nimmt die Ausgabe aus `Reset()` heraus. Die drei Aufrufer in
+`ip_data_link_layer.cpp` kennen Slot und Grund und melden den Abbau im Format
+des Aufbaus, mit Kanal und Tunneladresse: `disconnect request`,
+`no heartbeat for 120 s` oder `slot taken over by a new connection`.
 
 ---
 
