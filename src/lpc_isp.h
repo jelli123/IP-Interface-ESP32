@@ -66,6 +66,9 @@ public:
         uint16_t sblib        = 0;  //!< SBLIB_VERSION the emulator was built with
         uint8_t  maxFrame     = 0;  //!< longest frame incl. checksum
         char     name[9]      = {0};
+        uint8_t  features     = 0;  //!< feature bits of identify format 2
+        uint8_t  maxRate      = 0;  //!< highest U_EmuConfigure rate code
+        uint32_t baud         = 19200; //!< what the KNX UART runs at after the query
     };
 
     /** Put both control lines into their idle state. Call once, at startup. */
@@ -156,6 +159,7 @@ private:
     bool waitForReset(uint32_t bootMs);
     size_t collect(uint8_t service, uint8_t* out, size_t max, uint32_t quietMs);
     bool parseIdentify(const uint8_t* data, size_t length);
+    bool configureRate(uint8_t rate);
 
     /* --- ISP protocol ---------------------------------------------------- */
     int  readByte(uint32_t timeoutMs);

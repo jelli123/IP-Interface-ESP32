@@ -64,7 +64,7 @@ Partitionslayout*).
 `loop()` einen Kern. Das ist unkritisch, weil das SB-Interface das zeitkritische
 TP1-Bit-Timing und die ACK-Erzeugung selbst übernimmt – genau der Vorteil dieser
 Architektur gegenüber einem direkt angebundenen Transceiver. Der ESP32 sieht nur
-noch einen 19200-Baud-Bytestrom.
+noch einen Bytestrom mit 19200 Baud, ab Emulator 0.11 mit 115200 Baud.
 
 ---
 
@@ -81,6 +81,19 @@ noch einen 19200-Baud-Bytestrom.
 | GND | GND |
 
 Beide Seiten 3,3 V TTL, kein Pegelwandler. **19200 Baud, 8E1.**
+
+Ab Emulator 0.11 schaltet die Firmware die Verbindung bei jeder Erkennung des
+SB-Interface auf **115200 Baud ohne Drosselung** um (`U_EmuConfigure`, siehe
+[TPUART2-Emu](../TPUART2-Emu/README.md)). Bei 19200 Baud lag ein
+Datentelegramm 26 ms auf der UART, bevor es auf den Bus ging. Das war rund ein
+Drittel jedes Zyklus aus Anfrage und Antwort, etwa beim Selfbus Updater.
+`-DSBIP_TP_RATE=0` lässt es bei 19200 Baud.
+
+Fällt der Emulator auf 19200 Baud zurück, weil der LPC neu gestartet ist oder
+5 s lang keine Anfrage kam, verliert der Stack die Verbindung. Spätestens
+nach 15 s fragt die Firmware das SB-Interface dann neu ab und handelt die Rate
+neu aus. Im Log steht dazu „TP link down at 115200 baud – asking the
+SB-Interface again“.
 
 Die beiden letzten Leitungen sind nur für das Programmieren des LPC nötig,
 siehe *SB-Interface programmieren*. Ohne sie läuft alles andere unverändert.
@@ -1219,7 +1232,7 @@ Löwenanteil aus, und keiner davon ist optional.
 | Flag | Warum nicht |
 | --- | --- |
 | `-DNCN5120` | Der LPC1115 emuliert einen TP-UART 2. Mit diesem Flag erwartet der Stack `U_Configure`, Marker-Mode, Baudratenwechsel auf 38400 und die NCN-Analogregister – nichts davon existiert. |
-| `-DKNX_BAUDRATE` | Bleibt beim TP-UART-2-Standard 19200. |
+| `-DKNX_BAUDRATE` | Bleibt beim TP-UART-2-Standard 19200; die schnellere Rate handelt die Firmware selbst aus, siehe *Verdrahtung*. |
 
 ### Tunnelanzahl
 

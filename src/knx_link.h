@@ -334,10 +334,11 @@ private:
     void applyIdentity();
 
     /**
-     * Take the longest TP frame from what the SB-Interface reported and
-     * announce the APDU length that follows from it. Main task only.
+     * Take the rate of the KNX UART and the longest TP frame from what the
+     * SB-Interface reported, and announce the APDU length that follows from
+     * it. Before the port is opened. Main task only.
      */
-    void applyTpFrameLimit();
+    void applyTransceiver();
     void onActivity(uint8_t info);
     void updateBusLoad();
     void superviseTpLink();

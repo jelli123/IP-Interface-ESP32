@@ -4067,3 +4067,44 @@ def patch_tunnel_close_log():
 
 
 patch_tunnel_close_log()
+
+
+# --------------------------------------------------------------------------
+# 30. The KNX UART at the rate the TP-UART was switched to
+# --------------------------------------------------------------------------
+#
+# Esp32Platform::setupUart() opens the port at 19200 baud, fixed. The TP-UART
+# 2 emulator from 0.11 on can run faster and without pacing (U_EmuConfigure,
+# see src/lpc_isp.cpp); at 19200 baud with two octets per frame octet the
+# UART took about a third of each request/response cycle of the Selfbus
+# updater. src/knx_link.cpp keeps the rate in sbipTpBaud and sets it before
+# the port is opened.
+
+SEC30_MARKER = "// sbip: the KNX UART runs at sbipTpBaud"
+
+SEC30_ANCHOR = (
+    "void Esp32Platform::setupUart()\n"
+    "{\n"
+    "    _knxSerial->begin(19200, SERIAL_8E1, _rxPin, _txPin);\n"
+)
+
+SEC30_NEW = (
+    SEC30_MARKER + "\n"
+    "extern uint32_t sbipTpBaud;\n"
+    "\n"
+    "void Esp32Platform::setupUart()\n"
+    "{\n"
+    "    _knxSerial->begin(sbipTpBaud, SERIAL_8E1, _rxPin, _txPin);\n"
+)
+
+
+def patch_tp_baud():
+    if apply_secure_edits(
+        "../esp32_platform.cpp", SEC30_MARKER,
+        ((SEC30_ANCHOR, SEC30_NEW),),
+        "the KNX UART stays at 19200 baud",
+    ):
+        print("patch_knx.py: KNX UART rate applied to esp32_platform.cpp")
+
+
+patch_tp_baud()

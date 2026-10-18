@@ -15,6 +15,7 @@
 #include "lpc_isp.h"
 
 #include <HardwareSerial.h>
+#include <driver/gpio.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
@@ -50,8 +51,29 @@ const uint8_t  U_STATE_MASK       = 0x07;
 const uint8_t  U_PRODUCT_ID_REQ   = 0x20;
 const uint8_t  U_EMU_IDENTIFY_REQ = 0xFE;
 const uint8_t  EMU_IDENTIFY_MIN   = 14;    //!< payload octets of format 1
+const uint8_t  EMU_IDENTIFY_FMT2  = 16;    //!< payload octets of format 2
 const uint8_t  EMU_IDENTIFY_MAX   = 64;    //!< anything longer is not an answer
 const uint32_t TP_BAUD            = 19200;
+
+/*
+ * U_EmuConfigure (emulator 0.11 and later, feature bit 0 of U_EmuIdentify):
+ * 0xFD, rate code, flags. The emulator answers at the old rate and switches
+ * once the answer is out; it falls back to 19200 baud on its own after a
+ * framing error or 5 s without a request, which is what keeps a restarted
+ * ESP32 from talking past it.
+ */
+const uint8_t  U_EMU_CONFIGURE_REQ  = 0xFD;
+const uint8_t  EMU_FEATURE_CONFIGURE = 0x01;
+const uint8_t  EMU_FLAG_BURST       = 0x01; //!< no pacing, the stack takes bursts
+const uint32_t EMU_RATES[]          = {19200, 38400, 57600, 115200};
+
+/*
+ * The rate code asked for, 3 = 115200 baud. 0 keeps the emulator at 19200
+ * and paced, as a TP-UART 2.
+ */
+#ifndef SBIP_TP_RATE
+#define SBIP_TP_RATE 3
+#endif
 
 /** Internal RAM the rest of the firmware must keep when there is no PSRAM. */
 const uint32_t HEADROOM     = 48u * 1024u;
@@ -716,7 +738,55 @@ bool LpcIsp::parseIdentify(const uint8_t* data, size_t length)
             _tp.name[k] = (c >= 0x20 && c < 0x7F) ? c : '?';
         }
         _tp.name[8] = '\0';
+
+        if (p[0] >= 2 && payload >= EMU_IDENTIFY_FMT2)
+        {
+            _tp.features = p[14];
+            _tp.maxRate  = p[15];
+        }
         return true;
+    }
+    return false;
+}
+
+/**
+ * Switch the emulator to another rate with U_EmuConfigure, without pacing.
+ *
+ * The answer comes at the old rate, after whatever was queued before it -
+ * telegrams from the bus among them - and is told apart by its checksum.
+ * With nothing valid back, the emulator has not switched: it does so only
+ * once the answer is out.
+ */
+bool LpcIsp::configureRate(uint8_t rate)
+{
+    const uint8_t request[] = {U_EMU_CONFIGURE_REQ, rate, EMU_FLAG_BURST};
+
+    while (_uart->read() >= 0) {}
+    _uart->write(request, sizeof(request));
+    _uart->flush();
+
+    uint8_t  window[4] = {0};
+    uint32_t start     = millis();
+    while ((uint32_t)(millis() - start) < 300)
+    {
+        int c = _uart->read();
+        if (c < 0)
+        {
+            vTaskDelay(1);
+            continue;
+        }
+        memmove(window, window + 1, 3);
+        window[3] = (uint8_t)c;
+
+        uint8_t check = (uint8_t)~(window[0] ^ window[1] ^ window[2]);
+        if (window[0] == U_EMU_CONFIGURE_REQ && window[1] == rate &&
+            window[2] == EMU_FLAG_BURST && window[3] == check)
+        {
+            // The emulator switches once this answer has left its UART;
+            // ours reopens at the new rate when the stack resumes.
+            _tp.baud = EMU_RATES[rate];
+            return true;
+        }
     }
     return false;
 }
@@ -775,8 +845,26 @@ void LpcIsp::queryTransceiver(uint32_t bootMs)
         }
     }
 
+    // An emulator that can, runs faster and without pacing from here on.
+    // The stack opens the port at _tp.baud when it resumes.
+    if (_tp.kind == Transceiver::EMULATOR && (_tp.features & EMU_FEATURE_CONFIGURE) && SBIP_TP_RATE > 0)
+    {
+        uint8_t rate = (_tp.maxRate < SBIP_TP_RATE) ? _tp.maxRate : SBIP_TP_RATE;
+        if (rate > 0 && rate < sizeof(EMU_RATES) / sizeof(EMU_RATES[0]) && !configureRate(rate))
+        {
+            sysLog.println("LPC: the emulator did not confirm the faster rate, staying at 19200 baud");
+        }
+    }
+
+    // end() hands the TX pin back to the GPIO matrix, which drives the level
+    // of the GPIO output register - low, unless set first. Until the stack
+    // reopens the port that is a break on the line, and an emulator that was
+    // just switched to a faster rate takes it for a host that started over
+    // at 19200 baud and falls back.
+    gpio_set_level((gpio_num_t)_tx, 1);
     _uart->end();
-    sysLog.printf("LPC: on the KNX UART: %s\n", transceiverText().c_str());
+    sysLog.printf("LPC: on the KNX UART: %s, %u baud%s\n", transceiverText().c_str(),
+                  (unsigned)_tp.baud, _tp.baud != TP_BAUD ? " without pacing" : "");
 }
 
 /* ------------------------------------------------------------------------- *
@@ -1651,6 +1739,7 @@ String LpcIsp::transceiverJson() const
         j += ",\"version\":\"" + String(version) + "\"";
         j += ",\"sblib\":\"" + String(sblib) + "\"";
         j += ",\"max_frame\":" + String(_tp.maxFrame);
+        j += ",\"baud\":" + String(_tp.baud);
     }
 
     // For "nothing answers": whether the bootloader did, and what it found.

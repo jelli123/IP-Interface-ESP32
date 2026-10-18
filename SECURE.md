@@ -114,7 +114,7 @@ IP-Secure-Profil das Profilmodul „S-AL“.
 |---|---|
 | Gesicherte Telegramme unverändert weiterleiten (Filtertabelle wie üblich) | Stack routet APDU-transparent |
 | Security Proxy (AN192) | **nicht umgesetzt** – optionales Profilmodul |
-| **Langrahmen**: ein S-A_Data-Rahmen trägt 13 Oktette Overhead; mit Standardrahmen (15 Oktette APDU) passt praktisch kein gesichertes Management hindurch | Der TP-UART-Emulator ab 0.10 sendet Extended Frames bis 64 Oktette und meldet das per `U_EmuIdentify`. `KnxLink::applyTpFrameLimit()` übernimmt den Wert nach jeder Erkennung, der Router meldet dann `PID_MAX_APDULENGTH_ROUTING` = 55, und Patch 25 bestätigt nur längere Rahmen negativ. Ohne diese Angabe (älterer Emulator, echter TP-UART ohne `-DSBIP_TP_EXTENDED_FRAMES=1`) bleibt es bei 15. **Folge:** Mit dem Emulator ab 0.10 lassen sich Geräte hinter diesem Router sicher programmieren, sonst nicht. Der Router selbst ist davon nicht betroffen – er wird über IP programmiert |
+| **Langrahmen**: ein S-A_Data-Rahmen trägt 13 Oktette Overhead; mit Standardrahmen (15 Oktette APDU) passt praktisch kein gesichertes Management hindurch | Der TP-UART-Emulator ab 0.10 sendet Extended Frames bis 64 Oktette und meldet das per `U_EmuIdentify`. `KnxLink::applyTransceiver()` übernimmt den Wert nach jeder Erkennung, der Router meldet dann `PID_MAX_APDULENGTH_ROUTING` = 55, und Patch 25 bestätigt nur längere Rahmen negativ. Ohne diese Angabe (älterer Emulator, echter TP-UART ohne `-DSBIP_TP_EXTENDED_FRAMES=1`) bleibt es bei 15. **Folge:** Mit dem Emulator ab 0.10 lassen sich Geräte hinter diesem Router sicher programmieren, sonst nicht. Der Router selbst ist davon nicht betroffen – er wird über IP programmiert |
 
 ### 2.5 Tunnelling v2 (3/8/4 3, 5.4.3; TSSK 2.7)
 

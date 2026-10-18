@@ -708,5 +708,6 @@ des Aufbaus, mit Kanal und Tunneladresse: `disconnect request`,
 | KNXnet/IP über TCP und KNXnet/IP Secure (`src/knxip_shim.cpp`) | Liegt außerhalb des Stacks, der beides nicht kennt; er sieht weiter nur UDP. Upstream wäre das eine eigene Transportschicht |
 | Tunnelling-v2-Feature-Dienste (Patch 26), IP System Broadcast (Shim, Patch 27) | Die Werte und Regeln hängen an der Firmware (Busverbindung des SB-Interface, Routing-Multicast, KNX Secure); upstream wären es eigene Klassen im Stack |
 | Kein Rahmen an den TP-UART, der länger ist, als er senden kann (Patch 25) | Der Emulator auf dem SB-Interface sendet ab 0.10 bis 64 Oktette und meldet das per `U_EmuIdentify`; eine Eigenschaft dieser Hardware, nicht des Stacks |
+| KNX-UART mit der ausgehandelten Rate statt fest 19200 Baud (Patch 30) | Die Umschaltung per `U_EmuConfigure` ist eine Erweiterung des Selfbus-Emulators; upstream wäre eine einstellbare Rate in `Platform::setupUart()` sinnvoll, ohne das Aushandeln |
 | IP-Secure-Properties als Callback-Properties (Patch 19) | Halten das Speicherabbild programmierter Geräte gültig; die Werte liegen im NVS der Firmware |
 | Tunnelwahl je Secure-Benutzer (Patch 20) | Gehört upstream in `loopHandleConnectRequest()`, sobald der Stack Secure Sessions kennt |

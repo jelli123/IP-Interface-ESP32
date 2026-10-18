@@ -72,7 +72,7 @@ bool (*sbipCemiAccessHook)(uint16_t objectType, uint8_t propertyId, bool write) 
  * longer the stack refuses with a negative L_Data.con rather than hand over.
  *
  * The TP-UART 2 emulator on the SB-Interface says how long in its answer to
- * U_EmuIdentify (64 octets as of version 0.10), and applyTpFrameLimit() takes
+ * U_EmuIdentify (64 octets as of version 0.10), and applyTransceiver() takes
  * it from there after every identification. A genuine TP-UART does not say;
  * for one of those -DSBIP_TP_EXTENDED_FRAMES=1 allows extended frames, the
  * default is standard frames only. Until the first identification the same
@@ -87,6 +87,14 @@ static constexpr uint16_t TP_MAX_APDU      = 220; //!< what the stack handles at
 static constexpr uint16_t TP_DEFAULT_MAX_FRAME =
     SBIP_TP_EXTENDED_FRAMES ? (TP_MAX_APDU + TP_EXT_OVERHEAD) : TP_STD_MAX_FRAME;
 uint16_t sbipTpMaxFrame = TP_DEFAULT_MAX_FRAME;
+
+/*
+ * Rate of the KNX UART, see patch 30: Esp32Platform::setupUart() opens the
+ * port with it. 19200 baud as a TP-UART 2 has it, until the emulator was
+ * switched to a faster one with U_EmuConfigure, see LpcIsp::configureRate().
+ */
+static constexpr uint32_t TP_DEFAULT_BAUD = 19200;
+uint32_t sbipTpBaud = TP_DEFAULT_BAUD;
 
 /*
  * Tunnelling v2 interface features (03_08_04 3.6), see patch 26. The stack
@@ -1178,7 +1186,7 @@ bool KnxLink::begin()
 
     knx.readMemory();
     loadSecurityObject();
-    applyTpFrameLimit();
+    applyTransceiver();
 
     knx.start();
 
@@ -1266,8 +1274,13 @@ void KnxLink::loop()
     {
         _suspended = false;
 
+        // Every job ends with asking the SB-Interface what it is: a newly
+        // flashed emulator may take longer frames than the old one, and the
+        // query may have switched it to a faster rate.
+        applyTransceiver();
+
         // reset() calls setupUart() only the very first time, so the port
-        // closed by suspend() has to be reopened here, at 19200 baud and 8E1.
+        // closed by suspend() has to be reopened here, 8E1 at sbipTpBaud.
         // The SB-Interface is usually still starting at this point and misses
         // the reset handshake; the stack's U_State.req once a second picks
         // the link up again as soon as it answers.
@@ -1276,10 +1289,6 @@ void KnxLink::loop()
         if (tp != nullptr) tp->reset();
         _lastLinkCheck = millis();
         sysLog.println("KNX: stack resumed");
-
-        // Every job ends with asking the SB-Interface what it is, and a
-        // newly flashed emulator may take longer frames than the old one.
-        applyTpFrameLimit();
     }
 
     knx.loop();
@@ -1358,6 +1367,20 @@ void KnxLink::superviseTpLink()
     TpUartDataLinkLayer* tp = knxBau.getSecondaryDataLinkLayer();
     if (tp != nullptr && !tp->isConnected())
     {
+        // At a faster rate the emulator may have fallen back to 19200 baud,
+        // after a reset of the LPC for example; a handshake at our rate
+        // would never reach it. Asking it again starts at 19200 and
+        // negotiates the rate anew.
+        if (sbipTpBaud != TP_DEFAULT_BAUD && !lpcIsp.busy())
+        {
+            String error;
+            if (lpcIsp.startIdentify(error))
+            {
+                sysLog.printf("TP link down at %u baud - asking the SB-Interface again\n",
+                              (unsigned)sbipTpBaud);
+                return;
+            }
+        }
         sysLog.println("TP link down - re-running the TP-UART reset handshake");
         tp->reset();
     }
@@ -1645,9 +1668,16 @@ HardwareSerial* KnxLink::uart() const
     return knxSerial;
 }
 
-void KnxLink::applyTpFrameLimit()
+void KnxLink::applyTransceiver()
 {
     const LpcIsp::Transceiver& tp = lpcIsp.transceiver();
+
+    uint32_t baud = (tp.kind == LpcIsp::Transceiver::EMULATOR) ? tp.baud : TP_DEFAULT_BAUD;
+    if (baud != sbipTpBaud)
+    {
+        sysLog.printf("KNX: TP-UART at %u baud\n", (unsigned)baud);
+        sbipTpBaud = baud;
+    }
 
     uint16_t maxFrame = TP_DEFAULT_MAX_FRAME;
     if (tp.kind == LpcIsp::Transceiver::EMULATOR && tp.maxFrame != 0)
