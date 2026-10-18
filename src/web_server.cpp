@@ -370,6 +370,11 @@ static String statusJson()
     json += "\"transceiver\":" + lpcIsp.transceiverJson() + ",";
     json += "\"lpc_busy\":" + String(lpcIsp.busy() ? "true" : "false") + ",";
     json += "\"connected\":" + String(knxLink.tpConnected() ? "true" : "false") + ",";
+    {
+        // /LPC_READY: null when not wired or not driven by the emulator.
+        int8_t ready = knxLink.lpcReady();
+        json += "\"lpc_ready\":" + String(ready < 0 ? "null" : ready ? "true" : "false") + ",";
+    }
     json += "\"baud\":" + String(SBIP_KNX_BAUDRATE) + ",";
     json += "\"rx_frames\":" + String(stats.tpRxFrames) + ",";
     json += "\"rx_ignored\":" + String(stats.tpRxIgnored) + ",";

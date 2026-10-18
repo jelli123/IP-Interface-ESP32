@@ -301,6 +301,7 @@ small{color:var(--dim)} small.warn{color:var(--warn)}
   <section class="card">
     <h2>KNX TP1 &ndash; SB-Interface</h2>
     <div class="row"><span>Verbindung</span><span id="tpConn">-</span></div>
+    <div class="row" id="tpBusRow"><span>Busspannung</span><span id="tpBus">-</span></div>
     <div class="row"><span>Schnittstelle</span><span id="tpType">-</span></div>
     <div class="row"><span>Baudrate</span><span id="tpBaud">-</span></div>
     <div class="row"><span>Selbsttest</span><span id="tpTest">-</span></div>
@@ -859,7 +860,12 @@ small{color:var(--dim)} small.warn{color:var(--warn)}
       <div><label>UART-Nummer</label><input id="hwUart" type="number" min="0"></div>
       <div><label>RX</label><input id="hwRx" type="number" min="-1"></div>
       <div><label>TX</label><input id="hwTx" type="number" min="-1"></div>
+      <div><label>/LPC_READY</label><input id="hwLpcRdy" type="number" min="-1"></div>
     </div>
+    <p><small>/LPC_READY ist die Statusleitung des SB-Interface (PIO2_6),
+    low-aktiv: low, solange die TP-UART-Emulation l&auml;uft und Busspannung
+    anliegt. &minus;1 hei&szlig;t nicht verdrahtet. Keinen Pull-down
+    best&uuml;cken, der ESP32 schaltet einen Pull-up zu.</small></p>
   </div>
 
   <div class="grp">
@@ -1127,7 +1133,8 @@ const EN = {
   'Set the operating hours and the start counter to zero?',
 'Physikalische Adresse':'Individual address',
 'ETS-Konfiguration':'ETS configuration', 'Tunnel (max.)':'Tunnels (max.)', 'Tunnel-Adressen':'Tunnel addresses',
-'Programmiermodus':'Programming mode', 'Verbindung':'Connection',
+'Programmiermodus':'Programming mode', 'Verbindung':'Connection', 'Busspannung':'Bus voltage', 'vorhanden':'present',
+'fehlt (oder SB-Interface startet)':'missing (or the SB-Interface is starting)',
 'Schnittstelle':'Interface', 'Baudrate':'Baud rate', 'Selbsttest':'Self test',
 'Buslast':'Bus load', 'TP empfangen':'TP received',
 'TP verworfen (fremd)':'TP discarded (foreign)', 'TP ungültig':'TP invalid',
@@ -1971,6 +1978,12 @@ const EN = {
 'Flash löschen':'Erasing the flash', 'schreiben':'writing',
 'fertig':'finished',
 'Steuerleitungen laufen über Inverter':'Control lines run through inverters',
+['/LPC_READY ist die Statusleitung des SB-Interface (PIO2_6), low-aktiv: low, '
++ 'solange die TP-UART-Emulation läuft und Busspannung anliegt. −1 heißt nicht '
++ 'verdrahtet. Keinen Pull-down bestücken, der ESP32 schaltet einen Pull-up zu.']:
+  '/LPC_READY is the SB-Interface\'s status line (PIO2_6), active low: low '
++ 'while the TP-UART emulation runs and the bus has voltage. −1 means not '
++ 'wired. Fit no pull-down, the ESP32 adds a pull-up.',
 'SB-Interface programmieren – Reset / ISP (−1 = nicht verdrahtet)':
   'Program the SB-Interface – reset / ISP (−1 = not wired)',
 ['Den LPC jetzt löschen und neu programmieren? Die KNX-Verbindung ruht dabei '
@@ -2194,6 +2207,9 @@ async function refresh(){
   }
 
   $('tpConn').innerHTML = dot(s.tp.connected);
+  $('tpBusRow').style.display = s.tp.lpc_ready === null ? 'none' : '';
+  $('tpBus').innerHTML = '<span class="dot ' + (s.tp.lpc_ready ? 'ok' : 'err') + '"></span>'
+      + t(s.tp.lpc_ready ? 'vorhanden' : 'fehlt (oder SB-Interface startet)');
   $('tpType').textContent = tpTypeText(s.tp.transceiver, s.tp.lpc_busy);
   $('tpBaud').textContent = s.tp.baud + ' Bd, 8E1';
   $('tpTest').textContent = s.tp.self_test;
@@ -3753,12 +3769,12 @@ async function sendTime(){
 }
 
 // --- Hardware-Profil ---
-const HWF = ['knx_uart','knx_rx','knx_tx','lpc_reset','lpc_isp',
+const HWF = ['knx_uart','knx_rx','knx_tx','lpc_ready','lpc_reset','lpc_isp',
              'i2c_sda','i2c_scl','rtc_charge_ohms',
              'eth_sck','eth_miso','eth_mosi',
              'eth_cs','eth_irq','eth_rst','eth_spi_mhz',
              'log_kib','monitor_kib'];
-const HWID = {knx_uart:'hwUart', knx_rx:'hwRx', knx_tx:'hwTx',
+const HWID = {knx_uart:'hwUart', knx_rx:'hwRx', knx_tx:'hwTx', lpc_ready:'hwLpcRdy',
               lpc_reset:'hwLpcRst', lpc_isp:'hwLpcIsp',
               i2c_sda:'hwSda', i2c_scl:'hwScl', rtc_charge_ohms:'hwRtcChg',
               eth_sck:'hwSck', eth_miso:'hwMiso', eth_mosi:'hwMosi',
@@ -3803,7 +3819,8 @@ async function refreshHw(){
   if(hwState.reboot_pending)
     $('hwSrc').innerHTML += ' <span class="warnbadge">' + t('Neustart nötig') + '</span>';
 
-  $('hwKnx').textContent = 'UART' + a.knx_uart + ', RX ' + a.knx_rx + ', TX ' + a.knx_tx;
+  $('hwKnx').textContent = 'UART' + a.knx_uart + ', RX ' + a.knx_rx + ', TX ' + a.knx_tx
+      + (a.lpc_ready >= 0 ? ', /LPC_READY ' + a.lpc_ready : '');
   $('hwLpc').textContent = (a.lpc_reset >= 0 && a.lpc_isp >= 0)
       ? 'Reset ' + a.lpc_reset + ', ISP ' + a.lpc_isp
         + (a.lpc_invert ? ', ' + t('invertiert') : '')

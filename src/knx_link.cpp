@@ -1175,6 +1175,11 @@ bool KnxLink::begin()
     // protocol relies on the parity bit for octet level error detection.
     knxPlatform.knxUartPins(hw.knxRxPin, hw.knxTxPin);
 
+    // /LPC_READY, active low. The LPC's own pull-up holds it high while it is
+    // in reset or boots; ours only adds to that.
+    _lpcReadyPin = hw.lpcReadyPin;
+    if (_lpcReadyPin >= 0) pinMode(_lpcReadyPin, INPUT_PULLUP);
+
     // StatusLed drives the programming indicator: it has to work for an
     // addressable LED too, which the stack cannot switch on its own.
     knx.ledPin(-1);
@@ -1288,6 +1293,8 @@ void KnxLink::loop()
         TpUartDataLinkLayer* tp = knxBau.getSecondaryDataLinkLayer();
         if (tp != nullptr) tp->reset();
         _lastLinkCheck = millis();
+        // The job restarted the LPC as often as it needed; that was handled above.
+        _lpcReadyLast = lpcReady();
         sysLog.println("KNX: stack resumed");
     }
 
@@ -1347,6 +1354,30 @@ void KnxLink::loop()
  */
 void KnxLink::superviseTpLink()
 {
+    /*
+     * /LPC_READY tells at once what the stack would only notice after 5 s
+     * without an answer. Going inactive is a missing bus voltage or an LPC
+     * that restarts - both look the same. Coming back after a restart, the
+     * emulator is at 19200 baud and has forgotten the handshake, so the link
+     * is set up anew either way; after a mere bus voltage drop that costs a
+     * moment and nothing else.
+     */
+    int8_t ready = lpcReady();
+    if (ready != _lpcReadyLast)
+    {
+        int8_t last   = _lpcReadyLast;
+        _lpcReadyLast = ready;
+        if (ready == 0)
+        {
+            sysLog.println("TP: /LPC_READY inactive - no bus voltage, or the SB-Interface restarts");
+        }
+        else if (ready == 1 && last == 0)
+        {
+            sysLog.println("TP: /LPC_READY active again - setting up the TP link");
+            restartTpLink();
+        }
+    }
+
     // 03_08_04 3.6.4: tunnels that asked for it hear of every change of the
     // bus connection state.
     bool connected = tpConnected();
@@ -1367,23 +1398,34 @@ void KnxLink::superviseTpLink()
     TpUartDataLinkLayer* tp = knxBau.getSecondaryDataLinkLayer();
     if (tp != nullptr && !tp->isConnected())
     {
-        // At a faster rate the emulator may have fallen back to 19200 baud,
-        // after a reset of the LPC for example; a handshake at our rate
-        // would never reach it. Asking it again starts at 19200 and
-        // negotiates the rate anew.
-        if (sbipTpBaud != TP_DEFAULT_BAUD && !lpcIsp.busy())
-        {
-            String error;
-            if (lpcIsp.startIdentify(error))
-            {
-                sysLog.printf("TP link down at %u baud - asking the SB-Interface again\n",
-                              (unsigned)sbipTpBaud);
-                return;
-            }
-        }
-        sysLog.println("TP link down - re-running the TP-UART reset handshake");
-        tp->reset();
+        sysLog.println("TP link down");
+        restartTpLink();
     }
+}
+
+void KnxLink::restartTpLink()
+{
+    _lastLinkCheck = millis();
+
+    TpUartDataLinkLayer* tp = knxBau.getSecondaryDataLinkLayer();
+    if (tp == nullptr) return;
+
+    // At a faster rate the emulator may have fallen back to 19200 baud,
+    // after a reset of the LPC for example; a handshake at our rate
+    // would never reach it. Asking it again starts at 19200 and
+    // negotiates the rate anew.
+    if (sbipTpBaud != TP_DEFAULT_BAUD && !lpcIsp.busy())
+    {
+        String error;
+        if (lpcIsp.startIdentify(error))
+        {
+            sysLog.printf("TP: asking the SB-Interface again, was at %u baud\n",
+                          (unsigned)sbipTpBaud);
+            return;
+        }
+    }
+    sysLog.println("TP: re-running the TP-UART reset handshake");
+    tp->reset();
 }
 
 void KnxLink::requestStackRestart()
@@ -1774,7 +1816,18 @@ void KnxLink::onActivity(uint8_t info)
 bool KnxLink::tpConnected() const
 {
     TpUartDataLinkLayer* tp = knxBau.getSecondaryDataLinkLayer();
-    return (tp != nullptr) && tp->isConnected();
+    return (tp != nullptr) && tp->isConnected() && lpcReady() != 0;
+}
+
+int8_t KnxLink::lpcReady() const
+{
+    // Read from the web server task too; the transceiver record is only
+    // rewritten by an LPC job.
+    if (_lpcReadyPin < 0 || lpcIsp.busy() || !lpcIsp.transceiver().drivesReadyLine())
+    {
+        return -1;
+    }
+    return digitalRead(_lpcReadyPin) == LOW ? 1 : 0;
 }
 
 bool KnxLink::configured() const

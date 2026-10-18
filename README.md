@@ -78,6 +78,7 @@ noch einen Bytestrom mit 19200 Baud, ab Emulator 0.11 mit 115200 Baud.
 | `PIN_RX` (PIO1_6) | TX (`SBIP_KNX_TX_PIN`) |
 | `/RESET` (PIO0_0) | `SBIP_LPC_RESET_PIN`, optional |
 | `PIO0_1` | `SBIP_LPC_ISP_PIN`, optional |
+| `/LPC_READY` (PIO2_6) | `SBIP_LPC_READY_PIN`, optional |
 | GND | GND |
 
 Beide Seiten 3,3 V TTL, kein Pegelwandler. **19200 Baud, 8E1.**
@@ -92,11 +93,32 @@ Drittel jedes Zyklus aus Anfrage und Antwort, etwa beim Selfbus Updater.
 Fällt der Emulator auf 19200 Baud zurück, weil der LPC neu gestartet ist oder
 5 s lang keine Anfrage kam, verliert der Stack die Verbindung. Spätestens
 nach 15 s fragt die Firmware das SB-Interface dann neu ab und handelt die Rate
-neu aus. Im Log steht dazu „TP link down at 115200 baud – asking the
-SB-Interface again“.
+neu aus. Im Log steht dazu „TP link down“ und „TP: asking the SB-Interface
+again, was at 115200 baud“.
 
-Die beiden letzten Leitungen sind nur für das Programmieren des LPC nötig,
-siehe *SB-Interface programmieren*. Ohne sie läuft alles andere unverändert.
+`/RESET` und `PIO0_1` sind nur für das Programmieren des LPC nötig, siehe
+*SB-Interface programmieren*. Ohne sie läuft alles andere unverändert.
+
+**`/LPC_READY`** (ab Emulator 0.12) ist low-aktiv: low, solange der Emulator
+läuft und der STKNX Busspannung meldet (`KNX_OK` und `VCC_OK`). Im Reset, im
+ISP und beim Booten hält der Pull-up des LPC die Leitung high, die Firmware
+schaltet ihren eigenen Pull-up dazu. **Keinen Pull-down bestücken** – er
+kämpft gegen den Pull-up des LPC und ergibt keinen gültigen Pegel. Mit der
+Leitung
+
+* zeigt das Dashboard die **Busspannung**, und „Verbindung“ sowie der
+  Verbindungsstatus an die Tunnel (Feature 0x03) gehen sofort auf „getrennt“,
+  wenn sie fehlt – ohne die Leitung erst gar nicht, weil der Emulator weiter
+  antwortet;
+* stellt die Firmware die Verbindung sofort neu her, wenn die Leitung wieder
+  aktiv wird, statt bis zu 15 s auf den Timeout zu warten. Ein neu
+  gestarteter LPC und eine zurückgekehrte Busspannung sehen gleich aus, die
+  Firmware behandelt beide wie einen Neustart.
+
+Ausgewertet wird sie nur, wenn `U_EmuIdentify` meldet, dass der Emulator sie
+treibt; eine ältere Firmware lässt den Pin offen. Auf dem ESP32-S3-DevKitC
+liegt sie auf GPIO 6, direkt neben den beiden ISP-Leitungen. Im
+Hardware-Profil heißt das Feld `lpc_ready`, `-1` schaltet sie ab.
 
 Die Stromversorgung des ESP32 sollte **nicht** aus dem SB-Interface kommen. Das
 KNX-Busnetzteil des Selfbus-Interfaces ist für die WLAN-Stromspitzen (bis
@@ -153,6 +175,7 @@ konfigurierbar. Das Dashboard bietet ein Formular, JSON-Upload und -Download.
 | Feld | Bedeutung |
 | --- | --- |
 | `knx_uart`, `knx_rx`, `knx_tx` | KNX-Anbindung zum SB-Interface |
+| `lpc_ready` | `/LPC_READY` vom SB-Interface, siehe *Verdrahtung* |
 | `lpc_reset`, `lpc_isp`, `lpc_invert` | Steuerleitungen zum LPC, siehe *SB-Interface programmieren* |
 | `buttons[]`, `leds[]` | vorhandene Taster und LEDs, siehe *Taster und LEDs* |
 | `button_assign[]`, `led_assign[]` | wozu sie dienen |
@@ -176,6 +199,7 @@ Beispiel:
   "lpc_reset": 4,
   "lpc_isp": 5,
   "lpc_invert": false,
+  "lpc_ready": 6,
   "buttons": [
     { "name": "prog",  "pin": 0, "trigger": 0 },
     { "name": "setup", "pin": 0, "trigger": 1 }

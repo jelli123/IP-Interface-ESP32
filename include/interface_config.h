@@ -199,6 +199,16 @@
 #ifndef SBIP_LPC_ISP_PIN
 #define SBIP_LPC_ISP_PIN       (-1)
 #endif
+/**
+ * /LPC_READY from LPC PIO2_6, an input, active low: the TP-UART 2 emulator
+ * (0.12 and later) runs and the STKNX has bus voltage. In reset, in the ISP
+ * and while booting the LPC's own pull-up keeps it high. The ESP32 adds its
+ * pull-up; a pull-down would fight the LPC's and give no valid level.
+ * -1 when not wired.
+ */
+#ifndef SBIP_LPC_READY_PIN
+#define SBIP_LPC_READY_PIN     (-1)
+#endif
 
 /* ------------------------------------------------------------------------- *
  * Networking

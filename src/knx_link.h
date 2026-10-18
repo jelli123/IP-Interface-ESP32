@@ -72,8 +72,19 @@ public:
      */
     void restartIpLayer();
 
-    /** @return true if the TP-UART emulator is answering */
+    /**
+     * @return true if the TP-UART emulator is answering and, where
+     *         /LPC_READY tells, the bus has voltage
+     */
     bool tpConnected() const;
+
+    /**
+     * State of /LPC_READY.
+     *
+     * @return 1 ready (emulator runs, bus voltage present), 0 not ready,
+     *         -1 unknown: not wired, or the emulator does not drive it
+     */
+    int8_t lpcReady() const;
 
     /** @return true if the device has been programmed by ETS */
     bool configured() const;
@@ -342,6 +353,7 @@ private:
     void onActivity(uint8_t info);
     void updateBusLoad();
     void superviseTpLink();
+    void restartTpLink();
     void superviseMemorySave();
 
     /** Put the effective filter setting in place. */
@@ -376,6 +388,8 @@ private:
     uint32_t _busBitsInWindow   = 0;
     uint32_t _lastLinkCheck     = 0;
     bool     _tpReported        = false; //!< bus state last told to the tunnels
+    int8_t   _lpcReadyPin       = -1;
+    int8_t   _lpcReadyLast      = -1;    //!< lpcReady() at the last look
     bool     _memorySavePending = false;
     bool     _domainAddressPending = false;
     uint32_t _domainAddressSince   = 0;

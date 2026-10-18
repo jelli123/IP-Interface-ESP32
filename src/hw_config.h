@@ -196,6 +196,13 @@ struct HwProfile
     int8_t  lpcIspPin    = -1;
     bool    lpcInvert    = false;
 
+    /*
+     * /LPC_READY of the TP-UART 2 emulator (LPC PIO2_6), an input, active
+     * low: the emulator runs and the STKNX has bus voltage. lpcInvert does
+     * not apply to it.
+     */
+    int8_t  lpcReadyPin  = -1;
+
     // Buttons and LEDs, plus what each one is used for
     uint8_t      buttonCount = 0;
     HwButton     buttons[HW_MAX_BUTTONS];

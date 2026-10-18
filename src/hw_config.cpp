@@ -120,6 +120,7 @@ HwProfile HwConfig::defaults()
     p.knxTxPin     = SBIP_KNX_TX_PIN;
     p.lpcResetPin  = SBIP_LPC_RESET_PIN;
     p.lpcIspPin    = SBIP_LPC_ISP_PIN;
+    p.lpcReadyPin  = SBIP_LPC_READY_PIN;
 
     /*
      * The image ships with the layout the reference board has. Everything
@@ -534,13 +535,14 @@ bool HwConfig::validate(const HwProfile& p, String& error)
 
     /* --- fixed peripherals, plus every pin claimed above ---------------- */
 
-    Entry  entries[13 + HW_MAX_BUTTONS + HW_MAX_LEDS];
+    Entry  entries[14 + HW_MAX_BUTTONS + HW_MAX_LEDS];
     size_t count = 0;
 
     entries[count++] = { "knx_rx",   p.knxRxPin,   false, true  };
     entries[count++] = { "knx_tx",   p.knxTxPin,   true,  true  };
     entries[count++] = { "lpc_reset", p.lpcResetPin, true, false };
     entries[count++] = { "lpc_isp",   p.lpcIspPin,   true, false };
+    entries[count++] = { "lpc_ready", p.lpcReadyPin, false, false };
     entries[count++] = { "i2c_sda",  p.i2cEnabled ? p.i2cSdaPin : (int8_t)-1, true, p.i2cEnabled };
     entries[count++] = { "i2c_scl",  p.i2cEnabled ? p.i2cSclPin : (int8_t)-1, true, p.i2cEnabled };
     entries[count++] = { "eth_sck",  p.ethEnabled ? p.ethSckPin  : (int8_t)-1, true, p.ethEnabled };
@@ -720,6 +722,7 @@ void HwConfig::load()
         _stored.lpcResetPin  = prefs.getChar("lrst", d.lpcResetPin);
         _stored.lpcIspPin    = prefs.getChar("lisp", d.lpcIspPin);
         _stored.lpcInvert    = prefs.getBool("linv", d.lpcInvert);
+        _stored.lpcReadyPin  = prefs.getChar("lrdy", d.lpcReadyPin);
         _stored.i2cEnabled   = prefs.getBool("i2cen", d.i2cEnabled);
         _stored.i2cSdaPin    = prefs.getChar("sda",  d.i2cSdaPin);
         _stored.i2cSclPin    = prefs.getChar("scl",  d.i2cSclPin);
@@ -845,6 +848,7 @@ void HwConfig::store(const HwProfile& p)
     store.putChar("lrst", p.lpcResetPin);
     store.putChar("lisp", p.lpcIspPin);
     store.putBool("linv", p.lpcInvert);
+    store.putChar("lrdy", p.lpcReadyPin);
     store.putBool("i2cen", p.i2cEnabled);
     store.putChar("sda",  p.i2cSdaPin);
     store.putChar("scl",  p.i2cSclPin);
@@ -1034,7 +1038,7 @@ bool HwConfig::sameWiring(const HwProfile& a, const HwProfile& b)
     if (a.knxUartNum != b.knxUartNum || a.knxRxPin != b.knxRxPin ||
         a.knxTxPin != b.knxTxPin ||
         a.lpcResetPin != b.lpcResetPin || a.lpcIspPin != b.lpcIspPin ||
-        a.lpcInvert != b.lpcInvert ||
+        a.lpcInvert != b.lpcInvert || a.lpcReadyPin != b.lpcReadyPin ||
         a.i2cEnabled != b.i2cEnabled || a.i2cSdaPin != b.i2cSdaPin ||
         a.i2cSclPin != b.i2cSclPin || a.rtcChargeOhms != b.rtcChargeOhms ||
         a.ethEnabled != b.ethEnabled || a.ethSckPin != b.ethSckPin ||
@@ -1184,6 +1188,7 @@ bool HwConfig::applyJson(const String& json, String& error)
     p.lpcResetPin  = (int8_t)jsonGetInt(json, "lpc_reset", p.lpcResetPin);
     p.lpcIspPin    = (int8_t)jsonGetInt(json, "lpc_isp",   p.lpcIspPin);
     p.lpcInvert    = jsonGetBool(json, "lpc_invert",       p.lpcInvert);
+    p.lpcReadyPin  = (int8_t)jsonGetInt(json, "lpc_ready", p.lpcReadyPin);
 
     p.i2cEnabled   = jsonGetBool(json, "i2c_enabled",     p.i2cEnabled);
     p.i2cSdaPin    = (int8_t)jsonGetInt(json, "i2c_sda",  p.i2cSdaPin);
@@ -1299,6 +1304,7 @@ String HwConfig::profileToJson(const HwProfile& p)
     j += "\"lpc_reset\":" + String(p.lpcResetPin) + ",";
     j += "\"lpc_isp\":" + String(p.lpcIspPin) + ",";
     j += "\"lpc_invert\":" + String(p.lpcInvert ? "true" : "false") + ",";
+    j += "\"lpc_ready\":" + String(p.lpcReadyPin) + ",";
 
     // Names passed validate(), so they hold nothing that needs escaping.
     // jsonEscape() runs anyway - the day someone adds a way in that skips

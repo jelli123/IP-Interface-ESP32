@@ -69,6 +69,15 @@ public:
         uint8_t  features     = 0;  //!< feature bits of identify format 2
         uint8_t  maxRate      = 0;  //!< highest U_EmuConfigure rate code
         uint32_t baud         = 19200; //!< what the KNX UART runs at after the query
+
+        /** Feature bit: the emulator drives /LPC_READY (0.12 and later). */
+        static constexpr uint8_t FEATURE_READY = 0x02;
+
+        /** @return true if /LPC_READY carries the emulator's state */
+        bool drivesReadyLine() const
+        {
+            return kind == EMULATOR && (features & FEATURE_READY) != 0;
+        }
     };
 
     /** Put both control lines into their idle state. Call once, at startup. */
