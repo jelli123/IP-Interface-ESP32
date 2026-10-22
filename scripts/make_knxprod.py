@@ -214,7 +214,13 @@ def build(args):
         text = attribute(text, "OrderNumber", args.order)
         text = text.replace(encode(BASE_ORDER), encode(args.order))
 
+        # Der Dateiname trägt dieselbe Kennung wie die Ids darin: Das
+        # Dashboard liest Applikation und Version aus ihm.
         target = name.replace("M-%04X" % BASE_MANUFACTURER, folder)
+        target = target.replace(
+            "-%04X-%02X-0000" % (BASE_APP, BASE_APP_VERSION),
+            "-%04X-%02X-0000" % (args.app, args.app_version),
+        )
         files["%s/%s" % (folder, target)] = text
 
     # Herstellerunabhängig, also ohne jede Ersetzung.
