@@ -23,6 +23,7 @@
 #include "knx_link.h"
 #include "knx_secure_crypto.h"
 #include "knx_secure_store.h"
+#include "knx_security_proxy.h"
 #include "knxip_shim.h"
 
 #include "log_buffer.h"
@@ -118,6 +119,18 @@ bool (*sbipBroadcastRouteHook)(bool fromPrimary) = nullptr;
  */
 void (*sbipLocalTransportSend)(bool connected, APDU& apdu) = nullptr;
 bool (*sbipCemiServiceHook)(CemiFrame& frame) = nullptr;
+
+/*
+ * Security Proxy (AN192), see patch 31: the primary router object's PID
+ * 80 - 84 and the last word on every routed frame. Answered by
+ * src/knx_security_proxy.cpp.
+ */
+uint8_t (*sbipProxyRead)(uint8_t side, uint8_t pid, uint16_t start, uint8_t count, uint8_t* data) = nullptr;
+uint8_t (*sbipProxyWrite)(uint8_t side, uint8_t pid, uint16_t start, uint8_t count, const uint8_t* data) = nullptr;
+void (*sbipProxyFunction)(uint8_t side, bool command, uint8_t pid, uint8_t* data, uint8_t length,
+                          uint8_t* result, uint8_t& resultLength) = nullptr;
+NPDU* (*sbipProxyRouteHook)(AddressType addrType, uint16_t destination, bool systemBroadcast,
+                            NPDU& npdu, uint16_t& source, bool fromPrimary) = nullptr;
 
 /** Longest APDU this device sends onto TP, following from sbipTpMaxFrame. */
 static uint16_t maxTpApdu()
@@ -419,7 +432,18 @@ extern uint8_t sbipDomainAddressLength;
 class SbipBau : public Bau091A
 {
 public:
-    using Bau091A::Bau091A;
+    /*
+     * AN192 2.3.1: with a Security Proxy, mask 091A gets a second router
+     * object for the secondary side. It goes behind the stack's objects, so
+     * no index ETS already knows moves.
+     */
+    explicit SbipBau(Platform& platform) : Bau091A(platform)
+    {
+        while (Bau091A::getInterfaceObject(_proxyRouterIndex) != nullptr)
+            _proxyRouterIndex++;
+
+        _deviceObj.property(PID_IO_LIST)->write(_proxyRouterIndex + 1, (uint16_t)OT_ROUTER);
+    }
 
     InterfaceObject* interfaceObject(ObjectType type, uint16_t instance)
     {
@@ -432,7 +456,23 @@ public:
         return getInterfaceObject(index);
     }
 
+    SecureApplicationLayer& secureLayer() { return _appLayer; }
+
 protected:
+    InterfaceObject* getInterfaceObject(uint8_t index) override
+    {
+        if (index == _proxyRouterIndex)
+            return &knxSecurityProxy.secondaryRouterObject();
+        return Bau091A::getInterfaceObject(index);
+    }
+
+    InterfaceObject* getInterfaceObject(ObjectType type, uint16_t instance) override
+    {
+        if (type == OT_ROUTER && instance == 2)
+            return &knxSecurityProxy.secondaryRouterObject();
+        return Bau091A::getInterfaceObject(type, instance);
+    }
+
     /*
      * A_Restart as master reset. The stack calls masterReset() on each object,
      * all of which are empty, and then writes the unchanged memory back - so
@@ -449,6 +489,7 @@ protected:
     void doMasterReset(EraseCode eraseCode, uint8_t channel) override
     {
         Bau091A::doMasterReset(eraseCode, channel);
+        knxSecurityProxy.masterReset(eraseCode);
 
         if (eraseCode != FactoryReset && eraseCode != FactoryResetWithoutIA) return;
 
@@ -495,7 +536,11 @@ public:
             prefs.end();
         }
         knxIpSecure.clearConfiguration();
+        knxSecurityProxy.clearKeys();
     }
+
+private:
+    uint8_t _proxyRouterIndex = 0;
 };
 
 static SbipBau        knxBau(knxPlatform);
@@ -1099,6 +1144,21 @@ bool KnxLink::begin()
     sbipCemiServiceHook    = &cemiService;
     sbipBroadcastRouteHook = [](bool fromPrimary) -> bool { return knxIpShim.broadcastMayRoute(fromPrimary); };
 
+    sbipProxyRead  = [](uint8_t side, uint8_t pid, uint16_t start, uint8_t count, uint8_t* data) -> uint8_t {
+        return knxSecurityProxy.propertyRead(side, pid, start, count, data);
+    };
+    sbipProxyWrite = [](uint8_t side, uint8_t pid, uint16_t start, uint8_t count, const uint8_t* data) -> uint8_t {
+        return knxSecurityProxy.propertyWrite(side, pid, start, count, data);
+    };
+    sbipProxyFunction = [](uint8_t side, bool command, uint8_t pid, uint8_t* data, uint8_t length,
+                           uint8_t* result, uint8_t& resultLength) {
+        knxSecurityProxy.propertyFunction(side, command, pid, data, length, result, resultLength);
+    };
+    sbipProxyRouteHook = [](AddressType addrType, uint16_t destination, bool systemBroadcast,
+                            NPDU& npdu, uint16_t& source, bool fromPrimary) -> NPDU* {
+        return knxSecurityProxy.route(addrType, destination, systemBroadcast, npdu, source, fromPrimary);
+    };
+
     KnxIpShim::Udp udp = {
         [](uint8_t* buffer, uint16_t max, uint32_t& ip, uint16_t& port) -> int {
             return knxPlatform.udpRead(buffer, max, ip, port);
@@ -1191,6 +1251,8 @@ bool KnxLink::begin()
 
     knx.readMemory();
     loadSecurityObject();
+    knxSecurityProxy.begin(knxBau.deviceObject(), *(RouterObject*)knxBau.interfaceObject(OT_ROUTER, 1),
+                           knxBau.security(), knxBau.secureLayer());
     applyTransceiver();
 
     knx.start();
@@ -1301,6 +1363,11 @@ void KnxLink::loop()
     knx.loop();
     knxIpShim.loop();
     knxSecureStore.loop();
+    knxSecurityProxy.loop();
+
+    // The proxy moved last valid sequence numbers on; they live in the
+    // security object, which otherwise is only saved with a download.
+    if (knxSecurityProxy.sequenceSaveDue()) saveSecurityObject();
 
     // Apply a web requested programming mode change from the main task.
     if (_progModePending)
@@ -2232,6 +2299,7 @@ String KnxLink::secureJson() const
     j += ",\"replays\":" + String(ips.replays);
     j += ",\"plain_refused\":" + String(shs.plainConnectRefused + shs.plainRoutingDropped);
     j += ",\"hijack\":" + String(shs.channelHijackDropped);
+    j += ",\"proxy\":" + knxSecurityProxy.json();
     j += "}";
     return j;
 }

@@ -95,6 +95,15 @@ int main()
     expect("on: plain IP SBC control (00C)", property(6, 120, true, plainOn), false);
     expect("on: tool IP SBC control", property(6, 120, true, toolOn), true);
     expect("on: runtime key IP SBC control", property(6, 120, true, runtimeOn), false);
+
+    // Security Proxy, AN192 v06 2.1.1 / 2.3.1.
+    expect("off: plain write PTP config (3FF)", property(6, 80, true, plainOff), true);
+    expect("on: runtime key write PTP config (00C)", property(6, 80, true, runtimeOn), false);
+    expect("on: tool write BC config", property(6, 82, true, toolOn), true);
+    expect("off: plain read proxy group keys (00C)", property(6, 81, false, plainOff), false);
+    expect("off: tool write proxy group keys", property(6, 81, true, toolOff), true);
+    expect("on: runtime key PTP routing temp (0CC)", property(6, 83, true, runtimeOn), true);
+    expect("on: plain BC routing temp", property(6, 84, true, plainOn), false);
     expect("on: description of tool key, tool", propertyDescription(17, 56, toolOn), true);
     expect("on: description of tool key, runtime key", propertyDescription(17, 56, runtimeOn), false);
 

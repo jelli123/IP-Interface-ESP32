@@ -276,6 +276,7 @@ small{color:var(--dim)} small.warn{color:var(--warn)}
     <div class="row"><span>Tool-Key</span><span id="secTool">-</span></div>
     <div class="row"><span>KNXnet/IP Secure</span><span id="secIp">-</span></div>
     <div class="row"><span>Secure Routing</span><span id="secRt">-</span></div>
+    <div class="row"><span>Security Proxy</span><span id="secProxy">-</span></div>
     <div class="row"><span>Sessions</span><span id="secSess">-</span></div>
     <div class="row"><span>TCP (Core v2)</span><span id="secTcp">-</span></div>
     <div class="row"><span>Abgewiesen</span><span id="secRef">-</span></div>
@@ -1769,6 +1770,9 @@ const EN = {
 'veraltet':'stale', 'User':'user', 'nicht angemeldet':'not authenticated',
 'seit dem Start':'since start', 'Verbindungen':'connections', 'ungesichert':'plain',
 'Anmeldung':'authentication', 'Wiederholung':'replay',
+'Gruppenschlüssel':'group keys', 'nicht geladen':'not loaded', 'übersetzt':'translated',
+'gesperrt':'blocked', 'Punkt-zu-Punkt':'point-to-point', 'entschlüsselt':'decrypted',
+'verschlüsselt':'encrypted', 'Absender unbekannt':'sender unknown',
 'Zertifikat (36 Zeichen)':'Certificate (36 characters)', 'Kopieren':'Copy',
 'Zertifikat nicht lesbar.':'Could not read the certificate.',
 ['Der FDSK ist nicht mehr aktiv: Die ETS hat einen eigenen Tool-Key gesetzt. '
@@ -3587,6 +3591,27 @@ function showSecure(x){
         + ' \u00b7 ' + r.in + ' / ' + r.out + ' ' + t('Telegramme')
         + (r.stale ? ' \u00b7 ' + r.stale + ' ' + t('veraltet') : '')
       : '<span class="dot off"></span>' + t('aus');
+
+  // AN192: group keys, and which ways ETS closed for point-to-point and broadcast.
+  const p = x.proxy || {}, ptp = p.ptp || [], bc = p.bc || [];
+  const closed = [];
+  if(ptp[1] === 'block') closed.push(t('Punkt-zu-Punkt') + ' → TP');
+  if(ptp[0] === 'block') closed.push(t('Punkt-zu-Punkt') + ' → IP');
+  if(bc[1] === 'block') closed.push('Broadcast → TP');
+  if(bc[0] === 'block') closed.push('Broadcast → IP');
+  const stopped = (p.blocked || 0) + (p.mac_fail || 0) + (p.replays || 0) + (p.unknown || 0);
+  $('secProxy').innerHTML = (p.keys || closed.length)
+      ? '<span class="dot ' + (p.keys && !p.active ? 'warn' : 'ok') + '"></span>'
+        + p.keys + ' ' + t('Gruppenschlüssel') + (p.keys && !p.active ? ' (' + t('nicht geladen') + ')' : '')
+        + ' · ' + (p.decrypted + p.encrypted) + ' ' + t('übersetzt')
+        + (stopped ? ' · ' + stopped + ' ' + t('gesperrt') : '')
+        + (closed.length ? ' · ' + t('gesperrt') + ': ' + closed.join(', ') : '')
+      : '<span class="dot off"></span>' + t('nicht konfiguriert');
+  $('secProxy').title = p.keys === undefined ? '' :
+      t('entschlüsselt') + ' ' + p.decrypted + ', ' + t('verschlüsselt') + ' ' + p.encrypted
+      + ', MAC ' + p.mac_fail + ', ' + t('Wiederholung') + ' ' + p.replays
+      + ', ' + t('Absender unbekannt') + ' ' + p.unknown
+      + ', ' + t('Punkt-zu-Punkt') + ' ' + p.ptp_blocked + ', Broadcast ' + p.bc_blocked;
 
   const ss = (x.sessions || []).filter(e => e.session);
   $('secSess').textContent = ss.length

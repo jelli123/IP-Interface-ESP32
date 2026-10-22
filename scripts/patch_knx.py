@@ -4108,3 +4108,182 @@ def patch_tp_baud():
 
 
 patch_tp_baud()
+
+
+# --------------------------------------------------------------------------
+# 31. Security Proxy (AN192 v06)
+# --------------------------------------------------------------------------
+#
+# AN192 lets a coupler translate group communication between a side where a
+# group address is secured and one where it is plain, and block
+# point-to-point and broadcast traffic onto a side unless the tool opens it
+# for a minute. All of that lives in the firmware (src/knx_proxy_core.cpp,
+# src/knx_security_proxy.cpp); the stack needs three openings:
+#
+#  - PID 80 - 84 in the router object. Mask 091A has a single one, which
+#    AN192 2.3.1 makes the primary side's; the secondary side's second
+#    router object comes from the firmware (SbipBau). Callback and function
+#    properties save nothing, so the memory image stays as it was - the same
+#    reasoning as patch 19.
+#  - NetworkLayerCoupler::sendMsgHopCount(), once every routing rule has
+#    said yes: the firmware may let the frame pass, replace it by its
+#    decrypted or secured form, or drop it (AN192 2.2.2.3 - 2.2.2.6). Only
+#    routed frames come by here, never the coupler's own (2.3.1.4.4).
+#  - The sequence number of the secure application layer: a frame the proxy
+#    secures counts on the device's one sending counter (AN192 2.2.2.3,
+#    "the proxy's own Data Security SeqNr").
+
+SEC31_MARKER = "// sbip: Security Proxy (AN192), see src/knx_security_proxy.cpp"
+
+SEC31_RO_ANCHOR_INC = '#include "function_property.h"\n'
+
+SEC31_RO_INC = (
+    SEC31_RO_ANCHOR_INC
+    + "\n"
+    + SEC31_MARKER + "\n"
+    "extern uint8_t (*sbipProxyRead)(uint8_t side, uint8_t pid, uint16_t start, uint8_t count, uint8_t* data);\n"
+    "extern uint8_t (*sbipProxyWrite)(uint8_t side, uint8_t pid, uint16_t start, uint8_t count, const uint8_t* data);\n"
+    "extern void (*sbipProxyFunction)(uint8_t side, bool command, uint8_t pid, uint8_t* data, uint8_t length,\n"
+    "                                 uint8_t* result, uint8_t& resultLength);\n"
+)
+
+SEC31_RO_ANCHOR = (
+    "        new DataProperty( PID_MAX_APDU_LENGTH_ROUTER, false, PDT_UNSIGNED_INT, 1, ReadLv3 | WriteLv0, maxApduSize ),\n"
+    "    };\n"
+)
+
+
+def sec31_data(pid, pdt, count):
+    return (
+        "        new CallbackProperty<RouterObject>(this, (PropertyID)%d, true, %s, %s, ReadLv3 | WriteLv3,\n"
+        "            [](RouterObject*, uint16_t start, uint8_t count, uint8_t* data) -> uint8_t\n"
+        "            { return sbipProxyRead ? sbipProxyRead(0, %d, start, count, data) : 0; },\n"
+        "            [](RouterObject*, uint16_t start, uint8_t count, const uint8_t* data) -> uint8_t\n"
+        "            { return sbipProxyWrite ? sbipProxyWrite(0, %d, start, count, data) : 0; }),\n"
+        % (pid, pdt, count, pid, pid)
+    )
+
+
+def sec31_function(pid):
+    return (
+        "        new FunctionProperty<RouterObject>(this, (PropertyID)%d,\n"
+        "            [](RouterObject*, uint8_t* data, uint8_t length, uint8_t* result, uint8_t& resultLength) -> void\n"
+        "            { if (sbipProxyFunction) sbipProxyFunction(0, true, %d, data, length, result, resultLength); else resultLength = 0; },\n"
+        "            [](RouterObject*, uint8_t* data, uint8_t length, uint8_t* result, uint8_t& resultLength) -> void\n"
+        "            { if (sbipProxyFunction) sbipProxyFunction(0, false, %d, data, length, result, resultLength); else resultLength = 0; }),\n"
+        % (pid, pid, pid)
+    )
+
+
+# 128 elements: knxproxy::MAX_GROUP_KEYS in src/knx_proxy_core.h.
+SEC31_RO_NEW = (
+    "        new DataProperty( PID_MAX_APDU_LENGTH_ROUTER, false, PDT_UNSIGNED_INT, 1, ReadLv3 | WriteLv0, maxApduSize ),\n"
+    "#ifdef USE_DATASECURE\n"
+    "        " + SEC31_MARKER + "\n"
+    + sec31_data(80, "PDT_BITSET8", "1")
+    + sec31_data(81, "PDT_GENERIC_19", "128")
+    + sec31_data(82, "PDT_BITSET8", "1")
+    + sec31_function(83)
+    + sec31_function(84).rstrip(",\n") + "\n"
+    "#endif\n"
+    "    };\n"
+)
+
+SEC31_NLC_ANCHOR_DECL = (
+    "void NetworkLayerCoupler::sendMsgHopCount(AckType ack, AddressType addrType, uint16_t destination,"
+    " NPDU& npdu, Priority priority,\n"
+)
+
+SEC31_NLC_DECL = (
+    SEC31_MARKER + "\n"
+    "// Returns the frame to send - npdu itself or its translation - or null to drop it.\n"
+    "extern NPDU* (*sbipProxyRouteHook)(AddressType addrType, uint16_t destination, bool systemBroadcast,\n"
+    "                                   NPDU& npdu, uint16_t& source, bool fromPrimary);\n"
+    "\n"
+    + SEC31_NLC_ANCHOR_DECL
+)
+
+SEC31_NLC_ANCHOR = (
+    "    _netLayerEntities[interfaceIndex].sendDataRequest(npdu, ack, destination, source, priority,"
+    " addrType, broadcastType, doNotRepeat);\n"
+)
+
+SEC31_NLC_NEW = (
+    "    // sbip: the Security Proxy has the last word on a routed frame\n"
+    "    NPDU* sbipOut = &npdu;\n"
+    "\n"
+    "    if (sbipProxyRouteHook != nullptr)\n"
+    "    {\n"
+    "        bool sbipSystem = broadcastType == SysBroadcast || npdu.frame().systemBroadcast() == SysBroadcast;\n"
+    "        sbipOut = sbipProxyRouteHook(addrType, destination, sbipSystem, npdu, source,\n"
+    "                                     sourceInterfaceIndex == kPrimaryIfIndex);\n"
+    "\n"
+    "        if (sbipOut == nullptr)\n"
+    "            return;\n"
+    "    }\n"
+    "\n"
+    "    _netLayerEntities[interfaceIndex].sendDataRequest(*sbipOut, ack, destination, source, priority,"
+    " addrType, broadcastType, doNotRepeat);\n"
+)
+
+SEC31_SALH_ANCHOR = "        void loop();\n"
+
+SEC31_SALH_NEW = (
+    "        void loop();\n"
+    "\n"
+    "        " + SEC31_MARKER + "\n"
+    "        // Hands out the next sending sequence number and counts it as used.\n"
+    "        uint64_t sbipTakeSequenceNumber();\n"
+)
+
+SEC31_SAL_ANCHOR = "uint64_t SecureApplicationLayer::getRandomNumber()\n"
+
+SEC31_SAL_NEW = (
+    SEC31_MARKER + "\n"
+    "uint64_t SecureApplicationLayer::sbipTakeSequenceNumber()\n"
+    "{\n"
+    "    uint64_t seq = nextSequenceNumber(false);\n"
+    "    updateSequenceNumber(false, seq + 1);\n"
+    "    return seq;\n"
+    "}\n"
+    "\n"
+    + SEC31_SAL_ANCHOR
+)
+
+
+def patch_security_proxy():
+    done = []
+
+    if apply_secure_edits(
+        "router_object.cpp", SEC31_MARKER,
+        ((SEC31_RO_ANCHOR_INC, SEC31_RO_INC), (SEC31_RO_ANCHOR, SEC31_RO_NEW)),
+        "the Security Proxy properties are MISSING",
+    ):
+        done.append("router_object.cpp")
+
+    if apply_secure_edits(
+        "network_layer_coupler.cpp", SEC31_MARKER,
+        ((SEC31_NLC_ANCHOR_DECL, SEC31_NLC_DECL), (SEC31_NLC_ANCHOR, SEC31_NLC_NEW)),
+        "the Security Proxy does NOT see routed frames",
+    ):
+        done.append("network_layer_coupler.cpp")
+
+    if apply_secure_edits(
+        "secure_application_layer.h", SEC31_MARKER,
+        ((SEC31_SALH_ANCHOR, SEC31_SALH_NEW),),
+        "the Security Proxy cannot secure frames",
+    ):
+        done.append("secure_application_layer.h")
+
+    if apply_secure_edits(
+        "secure_application_layer.cpp", SEC31_MARKER,
+        ((SEC31_SAL_ANCHOR, SEC31_SAL_NEW),),
+        "the Security Proxy cannot secure frames",
+    ):
+        done.append("secure_application_layer.cpp")
+
+    if done:
+        print("patch_knx.py: Security Proxy applied to %s" % ", ".join(done))
+
+
+patch_security_proxy()

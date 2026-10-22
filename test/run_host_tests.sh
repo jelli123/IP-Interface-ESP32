@@ -38,6 +38,17 @@ ${CXX:-g++} -std=c++17 -Wall -Wextra -O1 \
     "$root/src/knx_access_policy.cpp" \
     -o "$out/access_policy_test"
 
+${CXX:-g++} -std=c++17 -Wall -Wextra -O1 -DKNXSEC_HOST_TEST \
+    -DECB=1 -DCBC=0 -DCTR=0 \
+    -I "$root/src" -I "$stack" \
+    "$root/test/security_proxy_test.cpp" \
+    "$root/src/knx_proxy_core.cpp" \
+    "$root/src/knx_secure_crypto.cpp" \
+    "$out/aes.o" \
+    -o "$out/security_proxy_test"
+
 "$out/secure_crypto_test"
 echo
 "$out/access_policy_test"
+echo
+"$out/security_proxy_test"

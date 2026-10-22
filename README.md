@@ -2909,8 +2909,12 @@ Byte Nutzdaten und praktisch das ganze gesicherte Management brauchen einen
 > Router nicht an den TP-UART weiter, sondern bestätigt sie negativ. Der Router
 > selbst ist nicht betroffen – er wird über IP programmiert.
 
-Die Funktion *Security Proxy* (AN192, Umsetzen zwischen gesicherter und
-ungesicherter Linie) ist nicht umgesetzt.
+Der Router ist ein *Security Proxy* nach AN192: Ist eine Gruppenadresse auf
+einer Seite gesichert und auf der anderen nicht, übersetzt er zwischen beiden,
+und Punkt-zu-Punkt- sowie Broadcast-Telegramme lassen sich auf eine Seite
+sperren. Die Karte *KNX Secure* zeigt Schlüssel, Übersetzungen und Sperren.
+Ob die ETS ihn dafür anbietet, hängt an der Produktdatenbank und ist noch
+offen – Einzelheiten in [SECURE.md](SECURE.md), Abschnitt 2.8.
 
 ---
 

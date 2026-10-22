@@ -113,7 +113,7 @@ IP-Secure-Profil das Profilmodul „S-AL“.
 | Anforderung | Umsetzung |
 |---|---|
 | Gesicherte Telegramme unverändert weiterleiten (Filtertabelle wie üblich) | Stack routet APDU-transparent |
-| Security Proxy (AN192) | **nicht umgesetzt** – optionales Profilmodul |
+| Security Proxy (AN192) | umgesetzt, siehe 2.8 |
 | **Langrahmen**: ein S-A_Data-Rahmen trägt 13 Oktette Overhead; mit Standardrahmen (15 Oktette APDU) passt praktisch kein gesichertes Management hindurch | Der TP-UART-Emulator ab 0.10 sendet Extended Frames bis 64 Oktette und meldet das per `U_EmuIdentify`. `KnxLink::applyTransceiver()` übernimmt den Wert nach jeder Erkennung, der Router meldet dann `PID_MAX_APDULENGTH_ROUTING` = 55, und Patch 25 bestätigt nur längere Rahmen negativ. Ohne diese Angabe (älterer Emulator, echter TP-UART ohne `-DSBIP_TP_EXTENDED_FRAMES=1`) bleibt es bei 15. **Folge:** Mit dem Emulator ab 0.10 lassen sich Geräte hinter diesem Router sicher programmieren, sonst nicht. Der Router selbst ist davon nicht betroffen – er wird über IP programmiert |
 
 ### 2.5 Tunnelling v2 (3/8/4 3, 5.4.3; TSSK 2.7)
@@ -155,9 +155,62 @@ Der Stack leitete System-Broadcast-Dienste im Koppler überhaupt nicht weiter
 | Data Secure ohne Adressen und Transport-Sequenznummer in B0 (AN158, AN203) | Patch 28 in der Secure Application Layer |
 | `M_FuncPropCommand.req`, `M_FuncPropStateRead.req` (auch für v1 Pflicht; der Stack meldete „not implemented“) | `cemiService()`; ohne Funktions-Property ohne Rückgabecode, abgewiesen mit 0Bh |
 
-### 2.8 Was fehlt
+### 2.8 Security Proxy (AN192 v06)
 
-* **Security Proxy** (AN192) – optional.
+Eine Gruppenadresse kann auf einer Seite des Routers mit Data Secure
+gesichert und auf der anderen ungesichert sein. Der Proxy übersetzt dann
+zwischen beiden; Punkt-zu-Punkt- und Broadcast-Telegramme kann die ETS auf
+eine Seite sperren und sich selbst für jeweils 60 s freigeben. Primär ist IP,
+sekundär TP. Logik in `src/knx_proxy_core.cpp` (ohne Stack, Host-Test),
+Anbindung in `src/knx_security_proxy.cpp`, Öffnungen im Stack: Patch 31.
+
+| Anforderung | Abschnitt | Umsetzung |
+|---|---|---|
+| PID 80 `PID_PTP_CONFIG`, 82 `PID_BC_CONFIG` je Seite; Vorgabe RULE, nichtflüchtig, unabhängig vom Ladezustand | 2.3.1.1, 2.3.1.2 | primär im Router-Objekt des Stacks (Callback-Properties, Patch 31), sekundär im zweiten Router-Objekt; NVS `sbip-proxy` |
+| Zweites Router-Objekt bei Maske 091A, nur mit den Proxy-Properties der Sekundärseite | 2.3.1 | `SbipBau`, hinter den Objekten des Stacks (Index 6, PID_IO_LIST Element 7, Instanz 2) – kein bekannter Index verschiebt sich |
+| PID 81 `PID_SECURITY_PROXY_GRP_KEY_TABLE`, GA + Schlüssel + Einstellungen, 19 Oktette | 2.3.1.5 | 128 Einträge; wirkt nur, solange das Router-Objekt geladen ist |
+| Tabelle 8: entschlüsseln, verschlüsseln, durchleiten oder sperren; gleiche Einstellung auf beiden Seiten sperrt | 2.2.2.3, 2.3.1.5.6 | `knxproxy::groupAction()` |
+| SAI muss zu den Security Flags passen; Folgenummer > letzte gültige aus der Sicherheits-IA-Tabelle, danach fortschreiben | 2.2.2.3, 2.3.3.1 | Absender ohne Eintrag in PID 54 wird gesperrt – ohne letzte gültige Nummer wäre jede Aufnahme wiederholbar |
+| Verschlüsselt mit der eigenen Adresse und der eigenen Folgenummer | 2.2.2.3 | ein Sendezähler mit der Secure Application Layer (Patch 31) |
+| S-A_Sync über Gruppenadressen nie weiterleiten | 2.2.2.3, 2.2.2.4 | ja, auch ohne Tabelle |
+| Punkt-zu-Punkt: BLOCK lässt nur durch, was eine Temporary Unicast White List erlaubt | 2.2.2.5 | 8 Listen mit je 8 Bereichen, unabhängig von der Richtung |
+| PID 83 `PID_PTP_ROUTING_TEMP`: Hinzufügen, Widerrufen, Nachtriggern, Prüfen; 60 s; Fehlercodes | 2.3.1.3 | nur primär; Prüfung bereichsweise, nicht Adresse für Adresse |
+| (System-)Broadcast: BC_BLOCK lässt nur durch, was PID 84 auf Zeit freigibt | 2.2.2.6 | UND-verknüpft mit `PID_IP_SBC_CONTROL` und dessen Regeln (2.6) |
+| PID 84 `PID_BC_ROUTING_TEMP`: BC- und SBC-Modus, ein Timer je Objekt; SBC-Modus auf TP1 unzulässig | 2.3.1.4, 2.7.2.1 | ja; auf TP läuft ein System Broadcast als Broadcast und fällt unter den BC-Modus |
+| Master Reset nach den Tabellen der Properties | je Property | `Proxy::masterReset()`; „Secure-Konfiguration löschen“ nimmt die Schlüssel mit |
+| Zugriff 80/82 3FF/00C, 81 00C/00C, 83/84 3FF/0CC | 2.1.1 | `knx_access_policy.cpp`; 2.1.1 nennt für 80/82 0CC, die Property-Definitionen 00C – genommen ist die strengere |
+
+**Tunnel gehören zu TP.** Ihre Telegramme erreichen die Linie, ohne den
+Koppler zu durchlaufen; ihre Adressen gehören zur TP-Linie. Ein ungesicherter
+Tunnel-Client auf einer Adresse, die auf TP gesichert ist, wird deshalb nicht
+übersetzt – wie ein ungesichertes TP-Gerät auch.
+
+**Letzte gültige Folgenummern.** Sie stehen im Sicherheitsobjekt, das nur mit
+dem Speicherabbild gespeichert wird. Der Proxy schreibt sie mit jedem
+entschlüsselten Telegramm fort; gespeichert wird höchstens alle fünf Minuten,
+sonst nutzt sich der Flash ab. Nach einem Stromausfall ließe sich ein
+Telegramm aus den Minuten davor einmal wiederholen.
+
+**Länge.** Ein gesichertes Gruppentelegramm ist 13 Oktette länger. Ab vier
+Oktetten APDU (z. B. DPT 9) braucht es auf TP einen Langrahmen, also den
+Emulator ab 0.10 (2.4); sonst lehnt Patch 25 den Rahmen ab.
+
+**ETS.** Ob die ETS den Router als Proxy anbietet, entscheidet die
+Produktdatenbank (AN192 3.5.1: `SupportsSecurityProxy`,
+`MaxSecureProxyGrpKeyTableSize`). Diese Attribute gibt es im Schema
+`project/14`, das `make_knxprod.py` erzeugt, nicht; der genaue Name in den
+neueren Schemata ist hier nicht belegt. Bis dahin lässt sich der Proxy nur
+über die Properties selbst einrichten.
+
+**Nicht umgesetzt:** die Security Proxy Zone Key Table (LTE, Objekttyp 7) –
+der Stack kennt keinen LTE-Modus, und die ETS füllt sie nicht (3.5.2.1); und
+die Segmentkoppler-Funktion (AN195), die 2.7 als Voraussetzung nennt. Sie
+betrifft TP/TP-Koppler, nicht diesen IP-Router.
+
+### 2.9 Was fehlt
+
+* **Security Proxy:** Zonenschlüsseltabelle (LTE) und Eintrag in der
+  Produktdatenbank, siehe 2.8.
 * **Extended Frames über 64 Oktette auf TP** – der Emulator begrenzt auf 64, siehe 2.4.
 * **IP System Broadcast bei anderer Routing-Multicast-Adresse** als
   224.0.23.12: dazu müsste der Socket die Zielgruppe eines Pakets kennen
@@ -202,6 +255,7 @@ Eingriffe im Stack, alle in `scripts/patch_knx.py`:
 | 26 | `ip_data_link_layer.cpp/.h`, `cemi_server_object.cpp` | Tunnelling-v2-Feature-Dienste, Abfragen für Slots und Device-Management-Verbindung, PID 68/69 im cEMI-Server-Objekt |
 | 27 | `router_object.cpp`, `network_layer_coupler.cpp`, `application_layer.cpp` | `PID_IP_SBC_CONTROL`, System-Broadcast-Dienste über den Koppler, Routing-Freigabe IP → TP, Länge der Domain-Adresse, gesicherte Domain-Adresse an die BAU |
 | 28 | `transport_layer.cpp/.h`, `secure_application_layer.cpp`, `cemi_server.cpp` | lokaler Modus der Transportschicht (cEMI), B0 ohne Adressen, Funktions-Properties und Transportrahmen über cEMI |
+| 31 | `router_object.cpp`, `network_layer_coupler.cpp`, `secure_application_layer.cpp/.h` | Security Proxy: PID 80 – 84 im Router-Objekt, letzte Entscheidung über jeden gerouteten Rahmen, gemeinsamer Sendezähler |
 
 ---
 
@@ -215,6 +269,9 @@ test/run_host_tests.sh
   (Session Response, Session Authenticate, Wrapper in beide Richtungen,
   Routing Indication, TIMER_NOTIFY), dazu Data Secure mit und ohne
   Verschlüsselung.
+* `test/security_proxy_test.cpp` – AN192: Rahmen gegen den Gruppenvektor von
+  bussard in beiden Richtungen, Tabelle 8, Gruppenschlüsseltabelle, das
+  Beispiel 3 zu den White Lists, PID 83/84 und Master Reset.
 * `test/access_policy_test.cpp` – AN193, vor allem: ohne Secure-Modus bleibt
   alles, wie es war, nur die Schlüssel sind geschützt.
 
@@ -244,6 +301,11 @@ auf der Karte *KNX Secure*.
    Tunnel, ist das der erste Praxistest dieses Wegs.
 7. **IP System Broadcast**: Seriennummer lesen und Domain-Adresse schreiben
    für KNX-IP-Geräte hinter bzw. vor dem Router.
+8. **Security Proxy**: ob die ETS PID 81 – 84 so schreibt und liest, wie
+   AN192 es beschreibt; ob sie die Absender in die Sicherheits-IA-Tabelle des
+   Proxys einträgt (ohne Eintrag sperrt der Proxy, 2.8); ob sie die
+   Antwort auf das Schreiben der Schlüsseltabelle prüft. Und zuerst: welches
+   Attribut der Produktdatenbank sie dafür sehen will.
 
 ### Testplan
 

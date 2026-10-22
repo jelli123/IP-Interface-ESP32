@@ -60,10 +60,13 @@ const Entry PROPERTIES[] = {
     // Router object
     {OT_ROUTER, 51, policy(0x3FF, 0x1FF)},   // PID_LINE_STATUS
     {OT_ROUTER, 58, policy(0x3FF, 0x1FF)},   // PID_MAX_APDULENGTH_ROUTING
-    {OT_ROUTER, 80, policy(0x00C, 0x00C)},   // PID_SECURITY_ROUTING_CONTROL
+    // Security Proxy, AN192 v06 2.3.1 - it renamed and renumbered what
+    // AN193 v04 lists here. For 80 and 82 the overview in 2.1.1 says 0CC,
+    // the property definitions 00C; the stricter one, ETS writes them with
+    // the tool key anyway. 83 and 84 are 3FF/0CC, the default.
+    {OT_ROUTER, 80, policy(0x3FF, 0x00C)},   // PID_PTP_CONFIG
     {OT_ROUTER, 81, policy(0x00C, 0x00C)},   // PID_SECURITY_PROXY_GRP_KEY_TABLE
-    {OT_ROUTER, 82, policy(0x00C, 0x00C)},   // PID_SECURITY_PROXY_ZONE_KEY_TABLE
-    {OT_ROUTER, 83, policy(0x00C, 0x00C)},   // PID_SECURITY_PROXY_INDIVIDUAL_ADDRESS_TABLE
+    {OT_ROUTER, 82, policy(0x3FF, 0x00C)},   // PID_BC_CONFIG
     {OT_ROUTER, 120, policy(0x3FF, 0x00C)},  // PID_IP_SBC_CONTROL (03_05_01 4.5.16.1)
 
     // cEMI server object
