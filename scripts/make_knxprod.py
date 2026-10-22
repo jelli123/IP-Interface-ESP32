@@ -36,6 +36,10 @@ unter eine eigene Applikationsversion:
 
     python3 scripts/make_knxprod.py --secure --app-version 3
 
+Alle Fassungen tragen dieselbe Bestellnummer. Auseinanderhalten lassen sie
+sich am Namen: Katalogeintrag und Applikation bekommen den Zusatz "Secure"
+bzw. "Secure Proxy", oder mit --title einen eigenen Katalognamen.
+
 Das Gegenstück im Gerät ist die Karte "Geräteidentität" im Dashboard. Mit
 --identity schreibt dieses Skript die JSON-Datei, die sich dort über "JSON
 laden" einspielen lässt; alternativ die erzeugte .knxprod im Bearbeiten-Dialog
@@ -70,6 +74,17 @@ MASK = 0x091A
 #: Bestellnummer, die in den mitgelieferten Ids steckt - kodiert, siehe
 #: encode().
 BASE_ORDER = "SBIP-1"
+
+#: Katalog- und Applikationsname in den mitgelieferten Dateien. Die Fassungen
+#: bekommen einen Zusatz, damit ETS und SB-Project sie auseinanderhalten -
+#: dieselbe Bestellnummer tragen sie alle.
+BASE_CATALOG_NAME = "KNX/IP Interface"
+BASE_APP_NAME = "Selfbus KNX/IP"
+
+
+def variant(args):
+    """Zusatz zum Namen, aus den Schaltern der Fassung."""
+    return "Secure Proxy" if args.proxy else "Secure" if args.secure else ""
 
 
 def encode(text):
@@ -118,21 +133,26 @@ def secure_attributes(tunnels):
 #: knxproxy::MAX_GROUP_KEYS in src/knx_proxy_core.h.
 PROXY_GROUP_KEYS = 128
 
-#: Schema, das die Proxy-Attribute kennt. Das von ABB (LK/S4.3, ETS 6.3)
-#: ist project/23; project/14 hat CouplerCapabilities noch nicht.
+#: Schema der ETS 6, das die Proxy-Attribute kennt; project/14 hat
+#: CouplerCapabilities noch nicht.
 PROXY_SCHEMA = "http://knx.org/xml/project/23"
 
 
 def proxy_attributes():
-    """Security Proxy nach AN192 3.5.1, mit den Namen, die die ETS liest.
+    """Security Proxy nach AN192 3.5.1, mit den Namen des ETS-6-Schemas.
 
-    Belegt an der Produktdatenbank des ABB LK/S4.3: CouplerCapabilities
-    am Hardware2Program (dort "SecurityProxy SegmentCoupler" - ein
+    CouplerCapabilities am Hardware2Program (nur "SecurityProxy" - ein
     Segmentkoppler ist dieser IP-Router nicht), die Tabellengröße am
-    Applikationsprogramm. PID 80 - 84 schreibt die ETS selbst; weder die
-    Ladeprozedur der Maske 0912 noch die von 091A nennt sie.
+    Applikationsprogramm. PID 80 - 84 schreibt die ETS selbst; die
+    Ladeprozedur der Maske 091A nennt sie nicht.
     """
     return ' MaxSecurityProxyGroupKeyTableEntries="%d"' % PROXY_GROUP_KEYS
+
+
+def xml_attr(value):
+    """Text für ein XML-Attribut in doppelten Anführungszeichen."""
+    return (value.replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;"))
 
 
 def attribute(text, name, value):
@@ -212,6 +232,16 @@ def build(args):
         # den Ids von Produkt und Katalogeintrag. Nur OrderNumber, nicht
         # jedes Number=: das der Katalogsektion ist deren eigene Nummer.
         text = attribute(text, "OrderNumber", args.order)
+
+        # Sprechende Namen: der Katalogeintrag so, wie --title ihn nennt, oder
+        # mit dem Zusatz der Fassung; die Applikation immer mit dem Zusatz.
+        suffix = variant(args)
+        catalog = args.title or ("%s %s" % (BASE_CATALOG_NAME, suffix)).strip()
+        app_name = ("%s %s" % (BASE_APP_NAME, suffix)).strip()
+        text = re.sub(r'(<CatalogItem\b[^>]*?\bName=")[^"]*(")',
+                      lambda m: m.group(1) + xml_attr(catalog) + m.group(2), text)
+        text = re.sub(r'(<ApplicationProgram\b[^>]*?\bName=")[^"]*(")',
+                      lambda m: m.group(1) + xml_attr(app_name) + m.group(2), text)
         text = text.replace(encode(BASE_ORDER), encode(args.order))
 
         # Der Dateiname trägt dieselbe Kennung wie die Ids darin: Das
@@ -295,6 +325,10 @@ def main():
                              "der Firmware passen, Vorgabe 10")
     parser.add_argument("--order", default="SBIP-1",
                         help="Bestellnummer, höchstens zehn Zeichen")
+    parser.add_argument("--title",
+                        help="Name des Katalogeintrags, Vorgabe \"%s\" mit "
+                             "dem Zusatz der Fassung (Secure, Secure Proxy)"
+                             % BASE_CATALOG_NAME)
     parser.add_argument("--name", default="Selfbus KNX/IP",
                         help="Produktname für die Identitätsdatei")
     parser.add_argument("--out", help="Zieldatei, Vorgabe knxprod/<name>.knxprod")
@@ -338,6 +372,7 @@ def main():
     print("geschrieben: %s" % out)
     for name in sorted(files):
         print("  %s" % name)
+    print("  Katalog: \"%s\"" % (args.title or ("%s %s" % (BASE_CATALOG_NAME, variant(args))).strip()))
     print("  Hersteller 0x%04X, Applikation 0x%04X v0x%02X, Maske MV-%04X, "
           "%d Tunneladressen" % (args.manufacturer, args.app, args.app_version,
                                  MASK, args.tunnels))

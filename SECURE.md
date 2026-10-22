@@ -207,18 +207,17 @@ Oktetten APDU (z. B. DPT 9) braucht es auf TP einen Langrahmen, also den
 Emulator ab 0.10 (2.4); sonst lehnt Patch 25 den Rahmen ab.
 
 **ETS.** Ob die ETS den Router als Proxy anbietet, entscheidet die
-Produktdatenbank. AN192 3.5.1 nennt die Angaben nur sinngemäß; die echten
-Namen zeigt die Datenbank des ABB LK/S4.3 (Linienkoppler, Maske 0912,
-Schema `project/23`, ETS 6.3):
+Produktdatenbank (AN192 3.5.1). Im Schema der ETS 6 (`project/23`) heißen die
+Angaben:
 
-* `CouplerCapabilities="SecurityProxy SegmentCoupler"` am `Hardware2Program`,
-* `MaxSecurityProxyGroupKeyTableEntries="1023"` am `ApplicationProgram`,
-  daneben `IsSecureEnabled` und `MaxSecurityIndividualAddressEntries="300"`.
+* `CouplerCapabilities="SecurityProxy"` am `Hardware2Program`,
+* `MaxSecurityProxyGroupKeyTableEntries` am `ApplicationProgram`,
+  daneben wie bisher `IsSecureEnabled` und `MaxSecurityIndividualAddressEntries`.
 
-PID 80 – 84 stehen weder in der Applikation noch in den Ladeprozeduren der
-Masken 0912 und 091A in `knx_master.xml` – die ETS schreibt sie selbst, wenn
-die Fähigkeit angesagt ist. Wie sie das zweite Router-Objekt anspricht
-(Objektindex oder Typ und Instanz), verrät die Datenbank nicht.
+PID 80 – 84 stehen nicht in den Ladeprozeduren der Masken 0912 und 091A in
+`knx_master.xml` – die ETS schreibt sie selbst, wenn die Fähigkeit angesagt
+ist; nach AN192 2.5.2 mit dem Download der Filtertabelle. Wie sie das zweite
+Router-Objekt anspricht (Objektindex oder Typ und Instanz), ist offen.
 
 `make_knxprod.py --proxy` setzt `CouplerCapabilities="SecurityProxy"`
 (Segmentkoppler ist dieser Router nicht), 128 Gruppenschlüssel,
@@ -228,8 +227,8 @@ OpenKNXproducer und die ETS ihn unter dem neuen Schema annehmen, zeigt erst
 das Signieren.
 
 **Sicherheits-IA-Tabelle.** Sie muss jeden gesicherten Absender auf einer
-übersetzten Gruppenadresse fassen. Der Stack hat 32 Einträge, ABB 300.
-Reicht das nicht, ist die Größe in `security_interface_object.cpp` (Patch)
+übersetzten Gruppenadresse fassen. Der Stack hat 32 Einträge. Reicht das
+nicht, ist die Größe in `security_interface_object.cpp` (Patch)
 und `SECURITY_IA_ENTRIES` in `make_knxprod.py` gemeinsam zu erhöhen; das
 Objekt liegt in NVS, das Speicherabbild bleibt davon unberührt.
 
