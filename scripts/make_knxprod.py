@@ -114,6 +114,27 @@ def secure_attributes(tunnels):
             % (tunnels + 1, tunnels, SECURITY_IA_ENTRIES))
 
 
+#: Einträge der Security Proxy Group Key Table (PID 81), siehe
+#: knxproxy::MAX_GROUP_KEYS in src/knx_proxy_core.h.
+PROXY_GROUP_KEYS = 128
+
+#: Schema, das die Proxy-Attribute kennt. Das von ABB (LK/S4.3, ETS 6.3)
+#: ist project/23; project/14 hat CouplerCapabilities noch nicht.
+PROXY_SCHEMA = "http://knx.org/xml/project/23"
+
+
+def proxy_attributes():
+    """Security Proxy nach AN192 3.5.1, mit den Namen, die die ETS liest.
+
+    Belegt an der Produktdatenbank des ABB LK/S4.3: CouplerCapabilities
+    am Hardware2Program (dort "SecurityProxy SegmentCoupler" - ein
+    Segmentkoppler ist dieser IP-Router nicht), die Tabellengröße am
+    Applikationsprogramm. PID 80 - 84 schreibt die ETS selbst; weder die
+    Ladeprozedur der Maske 0912 noch die von 091A nennt sie.
+    """
+    return ' MaxSecurityProxyGroupKeyTableEntries="%d"' % PROXY_GROUP_KEYS
+
+
 def attribute(text, name, value):
     """Ersetzt jedes name="..." durch den neuen Wert."""
     pattern = re.compile(r'(\b%s=")[^"]*(")' % re.escape(name))
@@ -175,6 +196,17 @@ def build(args):
         if args.secure and "IsSecureEnabled" not in text:
             text = re.sub(r'(<ApplicationProgram\b[^>]*?AdditionalAddressesCount="\d+")',
                           lambda m: m.group(1) + secure_attributes(args.tunnels), text)
+
+        # Security Proxy: Fähigkeit am Hardware2Program, Tabellengröße an der
+        # Applikation, ETS 6 und ein Schema, das beides kennt.
+        if args.proxy:
+            text = text.replace('xmlns="http://knx.org/xml/project/14"', 'xmlns="%s"' % PROXY_SCHEMA)
+            text = re.sub(r'(<Hardware2Program\b[^>]*?MediumTypes="[^"]*")',
+                          lambda m: m.group(1) + ' CouplerCapabilities="SecurityProxy"', text)
+            if "MaxSecurityProxyGroupKeyTableEntries" not in text:
+                text = re.sub(r'(<ApplicationProgram\b[^>]*?AdditionalAddressesCount="\d+")',
+                              lambda m: m.group(1) + proxy_attributes(), text)
+            text = attribute(text, "MinEtsVersion", "6.0")
 
         # Die Bestellnummer steht einmal im Klartext und mehrfach kodiert in
         # den Ids von Produkt und Katalogeintrag. Nur OrderNumber, nicht
@@ -269,9 +301,15 @@ def main():
                         help="Fassung für KNX Secure: IsSecureEnabled, "
                              "Benutzer- und Tabellengrößen, BusInterfaces. "
                              "Mit eigener Applikationsversion bauen")
+    parser.add_argument("--proxy", action="store_true",
+                        help="zusätzlich Security Proxy (AN192): "
+                             "CouplerCapabilities, Größe der Proxy-"
+                             "Schlüsseltabelle, Schema project/23, ab ETS 6. "
+                             "Schließt --secure ein")
     parser.add_argument("--identity", help="zusätzlich die passende JSON-Kennung "
                                            "für das Dashboard schreiben")
     args = parser.parse_args()
+    args.secure = args.secure or args.proxy
 
     if len(args.order) > 10:
         sys.stderr.write("Die Bestellnummer passt nur mit zehn Zeichen in "
@@ -300,6 +338,9 @@ def main():
     if args.secure:
         print("  KNX Secure: IsSecureEnabled, %d Benutzer, %d Tunnel-Benutzer"
               % (args.tunnels + 1, args.tunnels))
+        if args.proxy:
+            print("  Security Proxy: %d Gruppenschlüssel, Schema %s, ab ETS 6.0"
+                  % (PROXY_GROUP_KEYS, PROXY_SCHEMA.rsplit("/", 1)[1]))
         if args.app_version == BASE_APP_VERSION:
             print("  Hinweis: dieselbe Applikationsversion wie die Fassung ohne "
                   "Secure - besser --app-version 3")

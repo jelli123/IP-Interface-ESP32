@@ -196,11 +196,31 @@ Oktetten APDU (z. B. DPT 9) braucht es auf TP einen Langrahmen, also den
 Emulator ab 0.10 (2.4); sonst lehnt Patch 25 den Rahmen ab.
 
 **ETS.** Ob die ETS den Router als Proxy anbietet, entscheidet die
-Produktdatenbank (AN192 3.5.1: `SupportsSecurityProxy`,
-`MaxSecureProxyGrpKeyTableSize`). Diese Attribute gibt es im Schema
-`project/14`, das `make_knxprod.py` erzeugt, nicht; der genaue Name in den
-neueren Schemata ist hier nicht belegt. Bis dahin lässt sich der Proxy nur
-über die Properties selbst einrichten.
+Produktdatenbank. AN192 3.5.1 nennt die Angaben nur sinngemäß; die echten
+Namen zeigt die Datenbank des ABB LK/S4.3 (Linienkoppler, Maske 0912,
+Schema `project/23`, ETS 6.3):
+
+* `CouplerCapabilities="SecurityProxy SegmentCoupler"` am `Hardware2Program`,
+* `MaxSecurityProxyGroupKeyTableEntries="1023"` am `ApplicationProgram`,
+  daneben `IsSecureEnabled` und `MaxSecurityIndividualAddressEntries="300"`.
+
+PID 80 – 84 stehen weder in der Applikation noch in den Ladeprozeduren der
+Masken 0912 und 091A in `knx_master.xml` – die ETS schreibt sie selbst, wenn
+die Fähigkeit angesagt ist. Wie sie das zweite Router-Objekt anspricht
+(Objektindex oder Typ und Instanz), verrät die Datenbank nicht.
+
+`make_knxprod.py --proxy` setzt `CouplerCapabilities="SecurityProxy"`
+(Segmentkoppler ist dieser Router nicht), 128 Gruppenschlüssel,
+`MinEtsVersion="6.0"` und das Schema `project/23`; `--secure` ist
+eingeschlossen. Der Rest der Datenbank stammt aus `project/14` – ob
+OpenKNXproducer und die ETS ihn unter dem neuen Schema annehmen, zeigt erst
+das Signieren.
+
+**Sicherheits-IA-Tabelle.** Sie muss jeden gesicherten Absender auf einer
+übersetzten Gruppenadresse fassen. Der Stack hat 32 Einträge, ABB 300.
+Reicht das nicht, ist die Größe in `security_interface_object.cpp` (Patch)
+und `SECURITY_IA_ENTRIES` in `make_knxprod.py` gemeinsam zu erhöhen; das
+Objekt liegt in NVS, das Speicherabbild bleibt davon unberührt.
 
 **Nicht umgesetzt:** die Security Proxy Zone Key Table (LTE, Objekttyp 7) –
 der Stack kennt keinen LTE-Modus, und die ETS füllt sie nicht (3.5.2.1); und
@@ -209,8 +229,8 @@ betrifft TP/TP-Koppler, nicht diesen IP-Router.
 
 ### 2.9 Was fehlt
 
-* **Security Proxy:** Zonenschlüsseltabelle (LTE) und Eintrag in der
-  Produktdatenbank, siehe 2.8.
+* **Security Proxy:** Zonenschlüsseltabelle (LTE); die Datenbank mit
+  `--proxy` ist noch nicht signiert und nicht mit der ETS geprüft, siehe 2.8.
 * **Extended Frames über 64 Oktette auf TP** – der Emulator begrenzt auf 64, siehe 2.4.
 * **IP System Broadcast bei anderer Routing-Multicast-Adresse** als
   224.0.23.12: dazu müsste der Socket die Zielgruppe eines Pakets kennen
@@ -304,8 +324,9 @@ auf der Karte *KNX Secure*.
 8. **Security Proxy**: ob die ETS PID 81 – 84 so schreibt und liest, wie
    AN192 es beschreibt; ob sie die Absender in die Sicherheits-IA-Tabelle des
    Proxys einträgt (ohne Eintrag sperrt der Proxy, 2.8); ob sie die
-   Antwort auf das Schreiben der Schlüsseltabelle prüft. Und zuerst: welches
-   Attribut der Produktdatenbank sie dafür sehen will.
+   Antwort auf das Schreiben der Schlüsseltabelle prüft. Und zuerst: ob sie
+   eine mit `make_knxprod.py --proxy` gebaute Datenbank signiert annimmt und
+   den Router dann als Proxy führt.
 
 ### Testplan
 

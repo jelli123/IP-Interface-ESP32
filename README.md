@@ -2913,8 +2913,9 @@ Der Router ist ein *Security Proxy* nach AN192: Ist eine Gruppenadresse auf
 einer Seite gesichert und auf der anderen nicht, übersetzt er zwischen beiden,
 und Punkt-zu-Punkt- sowie Broadcast-Telegramme lassen sich auf eine Seite
 sperren. Die Karte *KNX Secure* zeigt Schlüssel, Übersetzungen und Sperren.
-Ob die ETS ihn dafür anbietet, hängt an der Produktdatenbank und ist noch
-offen – Einzelheiten in [SECURE.md](SECURE.md), Abschnitt 2.8.
+Die ETS bietet ihn nur mit einer Produktdatenbank an, die das ansagt:
+`python3 scripts/make_knxprod.py --proxy --app-version 4` (ab ETS 6, noch
+ungeprüft) – Einzelheiten in [SECURE.md](SECURE.md), Abschnitt 2.8.
 
 ---
 
