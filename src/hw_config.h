@@ -230,6 +230,15 @@ struct HwProfile
      */
     uint16_t rtcChargeOhms = 0;
 
+    /**
+     * A FRAM at I2C address 0x50 (2-byte addressing, 64 kbit or more) holds
+     * the Security Proxy's last valid sequence numbers, see
+     * knx_seq_backup.h. A Fujitsu MB85RC is found without this by its
+     * Device ID; set it for parts that have none, such as the FM24CL64B.
+     * Never for an EEPROM: it would be written with every telegram.
+     */
+    bool    framFitted   = false;
+
     // W5500 Ethernet
     bool    ethEnabled   = false;
     int8_t  ethSckPin    = -1;

@@ -187,9 +187,20 @@ Tunnel-Client auf einer Adresse, die auf TP gesichert ist, wird deshalb nicht
 
 **Letzte gültige Folgenummern.** Sie stehen im Sicherheitsobjekt, das nur mit
 dem Speicherabbild gespeichert wird. Der Proxy schreibt sie mit jedem
-entschlüsselten Telegramm fort; gespeichert wird höchstens alle fünf Minuten,
-sonst nutzt sich der Flash ab. Nach einem Stromausfall ließe sich ein
-Telegramm aus den Minuten davor einmal wiederholen.
+entschlüsselten Telegramm fort, und zwar sofort in eine Sicherung
+(`src/knx_seq_backup.cpp`), die beim Start zurückgespielt wird – die größere
+Nummer gewinnt:
+
+| Sicherung | wann | übersteht | NVS |
+|---|---|---|---|
+| FRAM an I2C 0x50 | Fujitsu MB85RC ab 64 kbit per Device-ID erkannt, oder `fram_fitted` im Hardware-Profil | alles | nicht mehr nötig |
+| RTC-RAM des ESP32 | sonst | Neustart, Watchdog, Absturz – keinen Stromausfall | höchstens alle 5 min |
+
+Ohne FRAM ließe sich nach einem Stromausfall ein Telegramm aus den Minuten
+davor einmal wiederholen. Ein EEPROM an 0x50 wird nie benutzt: Ohne Device-ID
+und ohne Eintrag im Profil bleibt es beim RTC-RAM. Der Flash selbst ist kein
+Engpass – das Sicherheitsobjekt ist bei diesem Koppler rund 350 Byte groß,
+alle 5 min gespeichert reicht der 20-KiB-NVS-Bereich rechnerisch Jahrzehnte.
 
 **Länge.** Ein gesichertes Gruppentelegramm ist 13 Oktette länger. Ab vier
 Oktetten APDU (z. B. DPT 9) braucht es auf TP einen Langrahmen, also den

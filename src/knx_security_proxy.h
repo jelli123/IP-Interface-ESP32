@@ -86,7 +86,7 @@ public:
     /**
      * True when the last valid sequence numbers in the security object
      * changed and the last save is long enough ago. The caller saves the
-     * object; see SAVE_INTERVAL_MS.
+     * object; see SAVE_INTERVAL_MS. Never with a FRAM, which holds them.
      */
     bool sequenceSaveDue();
 
@@ -97,6 +97,7 @@ public:
 
 private:
     bool groupKeysApply() const;
+    void restoreSequences();
     void persist();
     void report(const char* what, uint16_t source, uint16_t destination, bool group);
 

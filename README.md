@@ -181,6 +181,7 @@ konfigurierbar. Das Dashboard bietet ein Formular, JSON-Upload und -Download.
 | `button_assign[]`, `led_assign[]` | wozu sie dienen |
 | `i2c_enabled`, `i2c_sda`, `i2c_scl` | RV-3028-C7 |
 | `rtc_charge_ohms` | Ladewiderstand im RV-3028 für dessen Puffer, `0` = nicht laden |
+| `fram_fitted` | FRAM ohne Device-ID an I2C 0x50 für die Folgenummern des Security Proxys; ein Fujitsu MB85RC wird ohne erkannt. Nie ein EEPROM |
 | `eth_enabled`, `eth_sck`, `eth_miso`, `eth_mosi`, `eth_cs`, `eth_irq`, `eth_rst`, `eth_spi_mhz` | W5500 |
 | `log_kib`, `monitor_kib` | PSRAM für Protokoll und Busmonitor, siehe *PSRAM aufteilen* |
 

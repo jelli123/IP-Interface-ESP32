@@ -319,6 +319,15 @@
 #define SBIP_RTC_CHARGE_OHMS    0
 #endif
 
+/**
+ * A FRAM without Device ID at I2C 0x50, for the sequence numbers of the
+ * Security Proxy (see src/knx_seq_backup.h). 0: only a FRAM that names
+ * itself is used. Can be changed per device in the hardware profile.
+ */
+#ifndef SBIP_FRAM_FITTED
+#define SBIP_FRAM_FITTED        0
+#endif
+
 /* ------------------------------------------------------------------------- *
  * Firmware update
  * ------------------------------------------------------------------------- */

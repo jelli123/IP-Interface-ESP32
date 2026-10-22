@@ -213,6 +213,7 @@ HwProfile HwConfig::defaults()
     p.i2cSdaPin    = SBIP_I2C_SDA_PIN;
     p.i2cSclPin    = SBIP_I2C_SCL_PIN;
     p.rtcChargeOhms = SBIP_RTC_CHARGE_OHMS;
+    p.framFitted    = SBIP_FRAM_FITTED != 0;
 
     p.ethSckPin    = SBIP_ETH_SCK_PIN;
     p.ethMisoPin   = SBIP_ETH_MISO_PIN;
@@ -727,6 +728,7 @@ void HwConfig::load()
         _stored.i2cSdaPin    = prefs.getChar("sda",  d.i2cSdaPin);
         _stored.i2cSclPin    = prefs.getChar("scl",  d.i2cSclPin);
         _stored.rtcChargeOhms = prefs.getUShort("rtcchg", d.rtcChargeOhms);
+        _stored.framFitted   = prefs.getBool("fram", d.framFitted);
         _stored.ethEnabled   = prefs.getBool("ethen", d.ethEnabled);
         _stored.ethSckPin    = prefs.getChar("esck", d.ethSckPin);
         _stored.ethMisoPin   = prefs.getChar("emiso", d.ethMisoPin);
@@ -853,6 +855,7 @@ void HwConfig::store(const HwProfile& p)
     store.putChar("sda",  p.i2cSdaPin);
     store.putChar("scl",  p.i2cSclPin);
     store.putUShort("rtcchg", p.rtcChargeOhms);
+    store.putBool("fram", p.framFitted);
     store.putBool("ethen", p.ethEnabled);
     store.putChar("esck", p.ethSckPin);
     store.putChar("emiso", p.ethMisoPin);
@@ -1041,6 +1044,7 @@ bool HwConfig::sameWiring(const HwProfile& a, const HwProfile& b)
         a.lpcInvert != b.lpcInvert || a.lpcReadyPin != b.lpcReadyPin ||
         a.i2cEnabled != b.i2cEnabled || a.i2cSdaPin != b.i2cSdaPin ||
         a.i2cSclPin != b.i2cSclPin || a.rtcChargeOhms != b.rtcChargeOhms ||
+        a.framFitted != b.framFitted ||
         a.ethEnabled != b.ethEnabled || a.ethSckPin != b.ethSckPin ||
         a.ethMisoPin != b.ethMisoPin || a.ethMosiPin != b.ethMosiPin ||
         a.ethCsPin != b.ethCsPin || a.ethIrqPin != b.ethIrqPin ||
@@ -1194,6 +1198,7 @@ bool HwConfig::applyJson(const String& json, String& error)
     p.i2cSdaPin    = (int8_t)jsonGetInt(json, "i2c_sda",  p.i2cSdaPin);
     p.i2cSclPin    = (int8_t)jsonGetInt(json, "i2c_scl",  p.i2cSclPin);
     p.rtcChargeOhms = (uint16_t)jsonGetInt(json, "rtc_charge_ohms", p.rtcChargeOhms);
+    p.framFitted    = jsonGetBool(json, "fram_fitted", p.framFitted);
 
     p.ethEnabled   = jsonGetBool(json, "eth_enabled",     p.ethEnabled);
     p.ethSckPin    = (int8_t)jsonGetInt(json, "eth_sck",  p.ethSckPin);
@@ -1350,6 +1355,7 @@ String HwConfig::profileToJson(const HwProfile& p)
     j += "\"i2c_sda\":" + String(p.i2cSdaPin) + ",";
     j += "\"i2c_scl\":" + String(p.i2cSclPin) + ",";
     j += "\"rtc_charge_ohms\":" + String(p.rtcChargeOhms) + ",";
+    j += "\"fram_fitted\":" + String(p.framFitted ? "true" : "false") + ",";
     j += "\"eth_enabled\":" + String(p.ethEnabled ? "true" : "false") + ",";
     j += "\"eth_sck\":" + String(p.ethSckPin) + ",";
     j += "\"eth_miso\":" + String(p.ethMisoPin) + ",";

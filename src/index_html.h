@@ -958,6 +958,10 @@ small{color:var(--dim)} small.warn{color:var(--warn)}
       <option value="9000">9 kΩ</option>
       <option value="15000">15 kΩ – kleinster Ladestrom</option>
     </select>
+    <label class="chk"><input type="checkbox" id="hwFram"> FRAM ohne Device-ID an I2C 0x50</label>
+    <p><small>Für die Folgenummern des Security Proxys. Ein Fujitsu MB85RC wird
+    auch ohne diesen Haken erkannt. Nie für ein EEPROM: Es würde mit jedem
+    Telegramm beschrieben.</small></p>
     <p><small class="warn">Nur einschalten, wenn am Pufferanschluss der RTC
     ein Super-Cap oder ein Akku sitzt.</small></p>
     <p><small>Die RTC legt VDD dann über einen ihrer eingebauten Widerstände
@@ -1595,6 +1599,12 @@ const EN = {
 + 'tells the states apart by pattern alone.',
 'LED low-aktiv':'LED active low',
 'RTC über I2C aktivieren':'Enable the RTC on I2C',
+'FRAM ohne Device-ID an I2C 0x50':'FRAM without Device ID at I2C 0x50',
+['Für die Folgenummern des Security Proxys. Ein Fujitsu MB85RC wird auch ohne '
++ 'diesen Haken erkannt. Nie für ein EEPROM: Es würde mit jedem Telegramm '
++ 'beschrieben.']:
+  'For the sequence numbers of the Security Proxy. A Fujitsu MB85RC is found '
++ 'without this. Never for an EEPROM: it would be written with every telegram.',
 'Pufferzelle laden (interner Ladewiderstand)':
   'Charge the backup cell (built-in series resistor)',
 '3 kΩ – größter Ladestrom':'3 kΩ – largest charge current',
@@ -1773,6 +1783,7 @@ const EN = {
 'Gruppenschlüssel':'group keys', 'nicht geladen':'not loaded', 'übersetzt':'translated',
 'gesperrt':'blocked', 'Punkt-zu-Punkt':'point-to-point', 'entschlüsselt':'decrypted',
 'verschlüsselt':'encrypted', 'Absender unbekannt':'sender unknown',
+'Folgenummern in':'sequence numbers kept in',
 'Zertifikat (36 Zeichen)':'Certificate (36 characters)', 'Kopieren':'Copy',
 'Zertifikat nicht lesbar.':'Could not read the certificate.',
 ['Der FDSK ist nicht mehr aktiv: Die ETS hat einen eigenen Tool-Key gesetzt. '
@@ -3611,7 +3622,8 @@ function showSecure(x){
       t('entschlüsselt') + ' ' + p.decrypted + ', ' + t('verschlüsselt') + ' ' + p.encrypted
       + ', MAC ' + p.mac_fail + ', ' + t('Wiederholung') + ' ' + p.replays
       + ', ' + t('Absender unbekannt') + ' ' + p.unknown
-      + ', ' + t('Punkt-zu-Punkt') + ' ' + p.ptp_blocked + ', Broadcast ' + p.bc_blocked;
+      + ', ' + t('Punkt-zu-Punkt') + ' ' + p.ptp_blocked + ', Broadcast ' + p.bc_blocked
+      + ' \u00b7 ' + t('Folgenummern in') + ' ' + (p.seq_backup || '-');
 
   const ss = (x.sessions || []).filter(e => e.session);
   $('secSess').textContent = ss.length
@@ -3861,7 +3873,8 @@ async function refreshHw(){
   $('hwI2c').textContent = a.i2c_enabled
       ? ('SDA ' + a.i2c_sda + ', SCL ' + a.i2c_scl + ', '
          + (a.rtc_charge_ohms ? t('Ladung') + ' ' + (a.rtc_charge_ohms/1000) + ' kΩ'
-                              : t('ohne Ladung')))
+                              : t('ohne Ladung'))
+         + (a.fram_fitted ? ', FRAM' : ''))
       : t('aus');
   $('hwEth').textContent = a.eth_enabled
       ? ('SCK ' + a.eth_sck + ', MISO ' + a.eth_miso + ', MOSI ' + a.eth_mosi + ', CS ' + a.eth_cs)
@@ -3876,6 +3889,7 @@ function hwFill(p){
   for(const k of HWF){ if(HWID[k]) $(HWID[k]).value = p[k]; }
   $('hwLpcInv').checked = p.lpc_invert;
   $('hwI2cEn').checked  = p.i2c_enabled;
+  $('hwFram').checked   = p.fram_fitted;
   $('hwEthEn').checked  = p.eth_enabled;
   $('hwUpdUrl').value   = p.update_url || '';
   $('hwLpcUrl').value   = p.lpc_url || '';
@@ -4190,6 +4204,7 @@ function hwCollect(){
   for(const k of HWF){ if(HWID[k]) p[k] = parseInt($(HWID[k]).value, 10); }
   p.lpc_invert     = $('hwLpcInv').checked;
   p.i2c_enabled    = $('hwI2cEn').checked;
+  p.fram_fitted    = $('hwFram').checked;
   p.eth_enabled    = $('hwEthEn').checked;
   p.update_url     = $('hwUpdUrl').value.trim();
   p.lpc_url        = $('hwLpcUrl').value.trim();

@@ -15,6 +15,7 @@
 #include <knx/security_interface_object.h>
 
 #include "knx_secure_crypto.h"
+#include "knx_seq_backup.h"
 #include "log_buffer.h"
 
 KnxSecurityProxy knxSecurityProxy;
@@ -36,8 +37,9 @@ const uint32_t PERSIST_DELAY_MS = 2000;
  * security object, which is saved with the stack's memory image. Between
  * downloads the proxy moves them on with every telegram it decrypts, and
  * saving the object that often would wear out the flash. Every five minutes
- * at most: after a power cut, a telegram recorded in the last few minutes
- * before it could be replayed once.
+ * at most - knx_seq_backup.cpp keeps every single number in RTC RAM, which
+ * covers restarts; only a power cut falls back to this. With a FRAM there
+ * is no need for it at all.
  */
 const uint32_t SAVE_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -103,6 +105,11 @@ void KnxSecurityProxy::begin(DeviceObject& device, RouterObject& primary, Securi
     _security    = &security;
     _secureLayer = &secureLayer;
 
+    // Before anything can return early: the backup is needed with or
+    // without a stored configuration.
+    restoreSequences();
+
+    // Fails on the very first start - the namespace does not exist yet.
     Preferences prefs;
     if (!prefs.begin(NVS_NAMESPACE, true))
         return;
@@ -140,6 +147,37 @@ void KnxSecurityProxy::begin(DeviceObject& device, RouterObject& primary, Securi
                       _core.ptpConfig(SECONDARY) & 0x03 ? "rule" : "block",
                       _core.bcConfig(PRIMARY) & 0x03 ? "rule" : "block",
                       _core.bcConfig(SECONDARY) & 0x03 ? "rule" : "block");
+    }
+}
+
+void KnxSecurityProxy::restoreSequences()
+{
+    knxSeqBackup.begin();
+
+    // The larger number wins: whatever the security object says may be up
+    // to five minutes old, and a sender's counter only ever goes up.
+    uint8_t restored = 0;
+
+    for (uint8_t slot = 0; slot < KnxSeqBackup::SLOTS; slot++)
+    {
+        uint16_t address;
+        uint64_t seq;
+
+        if (!knxSeqBackup.load(slot, address, seq) || _security->indAddressIndex(address) == 0)
+            continue;
+
+        if (seq > _security->getLastValidSequenceNumber(address))
+        {
+            _security->setLastValidSequenceNumber(address, seq);
+            restored++;
+        }
+    }
+
+    if (restored > 0)
+    {
+        _seqDirty = true;
+        sysLog.printf("PROXY: %u last valid sequence numbers taken from %s\n", restored,
+                      knxSeqBackup.mediumName());
     }
 }
 
@@ -252,7 +290,9 @@ NPDU* KnxSecurityProxy::route(AddressType addrType, uint16_t destination, bool s
         {
             // The sender has to be known: its last valid sequence number is
             // what keeps a recorded telegram from being played back.
-            if (_security->indAddressIndex(source) == 0)
+            uint16_t index = _security->indAddressIndex(source);
+
+            if (index == 0)
             {
                 _stats.unknownSource++;
                 report("sender not in the security IA table", source, destination, true);
@@ -278,6 +318,7 @@ NPDU* KnxSecurityProxy::route(AddressType addrType, uint16_t destination, bool s
             }
 
             _security->setLastValidSequenceNumber(source, seq);
+            knxSeqBackup.store((uint8_t)(index - 1), source, seq);
             _seqDirty = true;
             _stats.decrypted++;
             break;
@@ -401,18 +442,31 @@ void KnxSecurityProxy::masterReset(uint8_t eraseCode)
 {
     if (_core.masterReset(eraseCode))
         persist();
+
+    // With the keys go the senders they were for (02h and 07h reset the
+    // security object as well).
+    if (eraseCode == FactoryReset || eraseCode == FactoryResetWithoutIA)
+        knxSeqBackup.clear();
 }
 
 void KnxSecurityProxy::clearKeys()
 {
     _core.groupKeys().clear();
     persist();
+    knxSeqBackup.clear();
 }
 
 bool KnxSecurityProxy::sequenceSaveDue()
 {
     if (!_seqDirty)
         return false;
+
+    // The FRAM has every number already, at no cost.
+    if (knxSeqBackup.medium() == KnxSeqBackup::FRAM)
+    {
+        _seqDirty = false;
+        return false;
+    }
 
     uint32_t now = millis();
     if (_seqSavedAt != 0 && now - _seqSavedAt < SAVE_INTERVAL_MS)
@@ -440,6 +494,7 @@ String KnxSecurityProxy::json() const
     j += ",\"unknown\":" + String(_stats.unknownSource);
     j += ",\"ptp_blocked\":" + String(_stats.ptpBlocked);
     j += ",\"bc_blocked\":" + String(_stats.bcBlocked);
+    j += ",\"seq_backup\":\"" + String(knxSeqBackup.mediumName()) + "\"";
     j += "}";
     return j;
 }

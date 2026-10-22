@@ -8,6 +8,7 @@
 #include <sys/time.h>
 
 #include "hw_config.h"
+#include "i2c_bus.h"
 #include "interface_config.h"
 #include "knx_link.h"
 #include "time_service.h"
@@ -144,10 +145,8 @@ void TimeService::begin()
         sysLog.printf("Time: carried over the reset, %s\n", localTimeString().c_str());
     }
 
-    const HwProfile& hw = hwConfig.active();
-    if (hw.i2cEnabled)
+    if (i2cBusBegin())
     {
-        Wire.begin(hw.i2cSdaPin, hw.i2cSclPin);
         probeRtc();
 
         if (_rtc.present())
