@@ -32,6 +32,31 @@
 
 #include "log_buffer.h"
 /*
+ * Stack of loopTask, which runs the KNX stack. Arduino gives it 8 KiB; a
+ * secured answer over a transport connection goes from the transport layer
+ * through the secure application layer (several 263 octet frames and the
+ * AES buffers on the stack), the network and data link layers, the tunnel
+ * and the shim down into lwIP and the WiFi driver - and overran it. The
+ * stack sits on the heap, so the overrun showed up as a corrupt heap in the
+ * next malloc. See watchStack() for how close it gets.
+ */
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);
+
+/*
+ * Log every new low of free loop stack below 4 KiB, so a tight spot shows
+ * in the log long before it crashes.
+ */
+static void watchStack()
+{
+    static UBaseType_t lowest = 4096;
+    UBaseType_t free = uxTaskGetStackHighWaterMark(nullptr);
+    if (free >= lowest) return;
+    lowest = free;
+    sysLog.printf("Loop stack: only %u of %u bytes left at the deepest point so far\n",
+                  (unsigned)free, (unsigned)getArduinoLoopTaskStackSize());
+}
+
+/*
  * Passed to NetManager so the device stays alive during the provisioning
  * window. That window can last two minutes, and loop() has not started yet -
  * without this the status LED would sit dark exactly while someone is
@@ -263,4 +288,5 @@ void loop()
     statusLed.loop();
     cpuLoad.loop();
     hourMeter.loop();
+    watchStack();
 }
