@@ -4,6 +4,7 @@
  */
 
 #include "knxip_shim.h"
+#include "heap_check.h"
 
 #include <Network.h>
 #include <NetworkClient.h>
@@ -164,6 +165,7 @@ uint8_t KnxIpShim::tcpConnections() const
 
 int KnxIpShim::receive(uint8_t* buffer, uint16_t max, uint32_t& ip, uint16_t& port)
 {
+    HEAP_GUARD("shim receive");
     // A few inputs per call at most: the stack's loop also serves TP1.
     for (uint8_t budget = 0; budget < 6; budget++)
     {
@@ -686,6 +688,7 @@ void KnxIpShim::refuseConnect(const uint8_t* frame, uint16_t length, const Sourc
 
 bool KnxIpShim::sendUnicast(uint32_t ip, uint16_t port, uint8_t* buffer, uint16_t length)
 {
+    HEAP_GUARD("shim sendUnicast");
     // The stack answers "to where it came from" as 0.0.0.0:0 - the NAT form
     // of the request's HPAI, and the only form a TCP client sends.
     if (ip == 0 || port == 0)
@@ -1174,6 +1177,7 @@ uint16_t KnxIpShim::tunnellingInfo(uint8_t* out, uint16_t room, const Source& to
 
 bool KnxIpShim::sendMulticast(uint8_t* buffer, uint16_t length)
 {
+    HEAP_GUARD("shim sendMulticast");
     if (sendSystemBroadcast(buffer, length)) return true;
 
     // 2.2.1.4.5: every routing frame wrapped once routing is secured.
@@ -1311,6 +1315,7 @@ void KnxIpShim::sessionEnded(uint8_t session, uint8_t status)
 
 void KnxIpShim::loop()
 {
+    HEAP_GUARD("shim loop");
     // Secure routing starts with a timer request on the multicast, which
     // needs an address to go out from.
     knxIpSecure.loop(_udp.ownIp != nullptr && _udp.ownIp() != 0);

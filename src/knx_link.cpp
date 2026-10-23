@@ -20,6 +20,7 @@
 #include "interface_config.h"
 #include "knx_access_policy.h"
 #include "knx_identity.h"
+#include "heap_check.h"
 #include "knx_link.h"
 #include "knx_secure_crypto.h"
 #include "knx_secure_store.h"
@@ -1395,8 +1396,11 @@ void KnxLink::loop()
         sysLog.println("KNX: stack resumed");
     }
 
+    HEAP_CHECK("loop: before knx.loop()");
     knx.loop();
+    HEAP_CHECK("loop: after knx.loop()");
     knxIpShim.loop();
+    HEAP_CHECK("loop: after knxIpShim.loop()");
     knxSecureStore.loop();
     knxSecurityProxy.loop();
 

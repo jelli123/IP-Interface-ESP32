@@ -3,6 +3,7 @@
  */
 
 #include "bus_monitor.h"
+#include "heap_check.h"
 
 #include <Arduino.h>
 #include <esp_attr.h>
@@ -189,6 +190,15 @@ void BusMonitor::remember(uint8_t side, bool outgoing, const uint8_t* cemi,
 
 void BusMonitor::hook(uint8_t side, bool outgoing, const uint8_t* cemi, uint16_t length)
 {
+#if SBIP_HEAP_CHECK
+    // Every frame of every side passes here: the finest grid there is.
+    static char label[80];
+    int at = snprintf(label, sizeof(label), "frame %s %s", side == 0 ? "IP" : side == 1 ? "TP" : "tunnel",
+                      outgoing ? "tx" : "rx");
+    for (uint16_t i = 0; i < length && i < 20 && at < (int)sizeof(label) - 3; i++)
+        at += snprintf(label + at, sizeof(label) - at, " %02X", cemi[i]);
+    HEAP_GUARD(label);
+#endif
     // The only place that has the side and the frame length together, so this
     // is where the bus load figure gets its input.
     if (side == SIDE_TP) knxLink.noteBusFrame(cemi, length);

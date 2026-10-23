@@ -17,6 +17,7 @@
 #include "cpu_load.h"
 #include "ets_access.h"
 #include "hour_meter.h"
+#include "heap_check.h"
 #include "hw_config.h"
 #include "interface_config.h"
 #include "improv_service.h"
@@ -79,6 +80,7 @@ void setup()
     // Before anything reports anything, so the dashboard can show the whole
     // startup afterwards.
     sysLog.begin();
+    sbipHeapReport();
 
     /*
      * Right behind it, because every log line is stamped with local time: a
