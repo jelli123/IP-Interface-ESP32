@@ -364,6 +364,8 @@ private:
 
     /** Say so when the address makes the coupler logic drop everything. */
     void warnAboutCouplerAddress();
+    /** Tunnel addresses the stack filled in move with the device's line. */
+    void followTunnelAddresses();
     void persistAddress();
     void superviseRestart();
 
@@ -398,6 +400,7 @@ private:
 
     uint32_t _lastRoutingCheck  = 0;
     uint16_t _lastCheckedAddress = 0xFFFF;
+    uint16_t _tunnelLineAddress  = 0xFFFF;
     uint16_t _savedAddress      = 0xFFFF;  //!< what the flash holds
     uint16_t _pendingAddress    = 0xFFFF;  //!< changed, waiting to settle
     uint32_t _pendingSince      = 0;

@@ -1672,6 +1672,7 @@ void KnxLink::superviseRouting()
     }
 
     warnAboutCouplerAddress();
+    followTunnelAddresses();
     persistAddress();
 }
 
@@ -1818,6 +1819,48 @@ void KnxLink::warnAboutCouplerAddress()
                       (unsigned)(address & 0xFF),
                       (unsigned)(address >> 12), (unsigned)((address >> 8) & 0x0F));
     }
+}
+
+/*
+ * Tunnel addresses the stack filled in itself follow a new device address.
+ *
+ * At the first tunnel connection the stack stores the device's line, 1 to n,
+ * in PID_ADDITIONAL_INDIVIDUAL_ADDRESSES - 15.15.1 to 15.15.10 for a device
+ * fresh from the box. ETS then sets, say, 1.1.0 and goes on in the same
+ * connection; search and description answers kept offering 15.15.x, a line
+ * ETS knows no way to, until the next connect (patch 33). A list ETS wrote
+ * is left alone.
+ */
+void KnxLink::followTunnelAddresses()
+{
+    uint16_t address = knx.individualAddress();
+    if (address == _tunnelLineAddress) return;
+    _tunnelLineAddress = address;
+
+    uint16_t addresses[KNX_TUNNELING];
+    if (tunnelAddresses(addresses, KNX_TUNNELING) != KNX_TUNNELING) return;
+
+    uint16_t line = addresses[0] & 0xFF00;
+    if (line == (address & 0xFF00)) return;
+
+    for (uint8_t i = 0; i < KNX_TUNNELING; i++)
+        if (addresses[i] != (line | (i + 1))) return;
+
+    uint8_t list[KNX_TUNNELING * 2];
+    for (uint8_t i = 0; i < KNX_TUNNELING; i++)
+    {
+        list[i * 2]     = (uint8_t)(address >> 8);
+        list[i * 2 + 1] = (uint8_t)(i + 1);
+    }
+
+    uint8_t count = KNX_TUNNELING;
+    knxBau.propertyValueWrite(OT_IP_PARAMETER, 1, PID_ADDITIONAL_INDIVIDUAL_ADDRESSES,
+                              count, 1, list, sizeof(list));
+    saveMemorySoon();
+
+    sysLog.printf("KNX: tunnel addresses moved from line %u.%u to %u.%u\n",
+                  (unsigned)(line >> 12), (unsigned)((line >> 8) & 0x0F),
+                  (unsigned)(address >> 12), (unsigned)((address >> 8) & 0x0F));
 }
 
 void KnxLink::activityTrampoline(uint8_t info)
