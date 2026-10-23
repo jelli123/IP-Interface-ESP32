@@ -230,9 +230,13 @@ def build(args):
         # Was der Router weiterreicht - für gesicherte Telegramme unverzichtbar,
         # also mit jeder Secure-Fassung, sonst nur auf Wunsch.
         routing_apdu = args.routing_apdu or (ROUTING_APDU if args.secure else 0)
-        if routing_apdu and "MaxRoutingApduLength" not in text:
-            text = re.sub(r'(<ApplicationProgram\b[^>]*?AdditionalAddressesCount="\d+")',
-                          lambda m: m.group(1) + ' MaxRoutingApduLength="%d"' % routing_apdu, text)
+        # Es gehört an Options, nicht an ApplicationProgram - dort liest die
+        # ETS es nicht.
+        if routing_apdu and "<ApplicationProgram" in text and "MaxRoutingApduLength" not in text:
+            text, n = re.subn(r'(<Options\b)', lambda m: m.group(1) + ' MaxRoutingApduLength="%d"' % routing_apdu,
+                              text, count=1)
+            if n != 1:
+                sys.stderr.write("Kein <Options> in der Applikation - MaxRoutingApduLength fehlt.\n")
 
         # Security Proxy: Fähigkeit am Hardware2Program, Tabellengröße an der
         # Applikation, ETS 6 und ein Schema, das beides kennt.
