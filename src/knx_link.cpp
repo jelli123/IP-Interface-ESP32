@@ -1770,7 +1770,10 @@ void KnxLink::persistAddress()
         return;
     }
 
-    if ((uint32_t)(millis() - _pendingSince) < 10000 || knx.progMode())
+    // In programming mode only once ETS has let go of the device: a commissioning
+    // that ends without an application download (or a crash in it) would
+    // otherwise lose the address.
+    if ((uint32_t)(millis() - _pendingSince) < 10000 || (knx.progMode() && tunnelOpen()))
     {
         return;
     }
