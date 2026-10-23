@@ -4409,3 +4409,57 @@ def patch_tunnel_addresses_follow():
 
 
 patch_tunnel_addresses_follow()
+
+
+# --------------------------------------------------------------------------
+# 34. Extended search: the requested DIBs, and the address in DIB 5
+# --------------------------------------------------------------------------
+#
+# ETS searches with SEARCH_REQUEST_EXTENDED and a "request DIBs" SRP, and got
+# no answer at all. KnxIpSearchRequestExtended never clears requestedDIBs:
+# whatever the stack frame held decided which DIBs went in, and the answer
+# mostly never left. A plain search was answered, so ETS found the device -
+# without the extended device information (the local APDU length) and
+# without the tunnelling slots. The bound check let code 9 write one past
+# the array as well.
+#
+# DIB 5 wrote the device's own address with pushInt, four octets: two zero
+# octets went in as the address and the address itself was overwritten by
+# the first additional one.
+
+SEC34_MARKER = "// sbip: requested DIBs start cleared, see scripts/patch_knx.py 34"
+
+SEC34_HEADER_ANCHOR = "        bool requestedDIBs[REQUESTED_DIBS_MAX]; //for now only 1 to 8\n"
+
+SEC34_HEADER_NEW = (
+    "        " + SEC34_MARKER + "\n"
+    "        bool requestedDIBs[REQUESTED_DIBS_MAX + 1] = {};\n"
+)
+
+SEC34_DIB5_MARKER = "// sbip: two octets, see scripts/patch_knx.py 34"
+
+SEC34_DIB5_ANCHOR = "    pushInt(addr, _data + 2);\n"
+
+SEC34_DIB5_NEW = (
+    "    " + SEC34_DIB5_MARKER + "\n"
+    "    pushWord(addr, _data + 2);\n"
+)
+
+
+def patch_search_extended():
+    if apply_secure_edits(
+        "knx_ip_search_request_extended.h", SEC34_MARKER,
+        ((SEC34_HEADER_ANCHOR, SEC34_HEADER_NEW),),
+        "extended search answers depend on uninitialised memory",
+    ):
+        print("patch_knx.py: requested DIBs cleared in knx_ip_search_request_extended.h")
+
+    if apply_secure_edits(
+        "knx_ip_knx_addresses_dib.cpp", SEC34_DIB5_MARKER,
+        ((SEC34_DIB5_ANCHOR, SEC34_DIB5_NEW),),
+        "DIB 5 carries 0.0.0 as the device address",
+    ):
+        print("patch_knx.py: DIB 5 address fixed in knx_ip_knx_addresses_dib.cpp")
+
+
+patch_search_extended()
