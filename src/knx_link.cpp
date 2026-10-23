@@ -659,6 +659,16 @@ static bool isTunnelSource(uint16_t address)
     return ip != nullptr && ip->isTunnelAddress(address);
 }
 
+/** Is any tunnel connection open? */
+static bool tunnelOpen()
+{
+    IpDataLinkLayer* ip = knxBau.getPrimaryDataLinkLayer();
+    if (ip == nullptr) return false;
+    for (uint8_t slot = 0; slot < KNX_TUNNELING; slot++)
+        if (ip->sbipSlotOpen(slot)) return true;
+    return false;
+}
+
 /** Pointer used by the static activity trampoline. */
 static KnxLink* s_instance = nullptr;
 
@@ -1094,6 +1104,30 @@ static void applyDomainAddress(SbipBau& bau, const SecurityControl& secCtrl, con
     uint8_t one  = 1;
     uint8_t mc[4];
     memcpy(mc, domainAddress, 4);
+
+    /*
+     * ETS writes the domain address during every secure commissioning, as a
+     * rule unchanged. A restart then would only cut the tunnel ETS is still
+     * working through - it reports a poor connection and gives up.
+     */
+    uint8_t  count   = 1;
+    uint32_t length0 = 0;
+    uint8_t* current = nullptr;
+    bau.propertyValueRead(OT_IP_PARAMETER, 1, PID_ROUTING_MULTICAST_ADDRESS, count, 1, &current, length0);
+    bool sameAddress = current != nullptr && count == 1 && length0 >= 4 && memcmp(current, mc, 4) == 0;
+    delete[] current;
+
+    bool sameSecurity = !secure
+        || (length == 21 ? knxIpSecure.routingSecure() && knxIpSecure.backboneKeyIs(domainAddress + 5)
+                         : !knxIpSecure.routingSecure() && !knxIpSecure.hasBackboneKey());
+
+    if (sameAddress && sameSecurity)
+    {
+        sysLog.printf("KNX: domain address written by serial number (%u octets%s) - unchanged, no restart\n",
+                      length, secure ? ", secured" : "");
+        return;
+    }
+
     bau.propertyValueWrite(OT_IP_PARAMETER, 1, PID_ROUTING_MULTICAST_ADDRESS, one, 1, mc, sizeof(mc));
 
     if (secure)
@@ -1119,7 +1153,8 @@ static void applyDomainAddress(SbipBau& bau, const SecurityControl& secCtrl, con
         knxIpSecure.propertyFunction(true, 94, routing, sizeof(routing), result, resultLength);
     }
 
-    sysLog.printf("KNX: domain address written by serial number (%u octets%s) - routing multicast %u.%u.%u.%u, restarting\n",
+    sysLog.printf("KNX: domain address written by serial number (%u octets%s) - routing multicast %u.%u.%u.%u, "
+                  "restarting once ETS is done\n",
                   length, secure ? ", secured" : "", mc[0], mc[1], mc[2], mc[3]);
     knxLink.restartForDomainAddress();
 }
@@ -1675,8 +1710,10 @@ void KnxLink::saveMemorySoon()
 void KnxLink::superviseMemorySave()
 {
     // A new domain address: saved and restarted once the answer is out and
-    // the KNXnet/IP Secure settings are stored (they wait 1 s).
-    if (_domainAddressPending && (uint32_t)(millis() - _domainAddressSince) > 2000)
+    // the KNXnet/IP Secure settings are stored (they wait 1 s) - and not in
+    // the middle of a commissioning: programming mode off, no tunnel open.
+    if (_domainAddressPending && (uint32_t)(millis() - _domainAddressSince) > 2000 &&
+        !knx.progMode() && !tunnelOpen())
     {
         _domainAddressPending = false;
         _memorySavePending    = false;

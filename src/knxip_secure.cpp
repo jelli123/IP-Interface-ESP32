@@ -176,6 +176,11 @@ bool KnxIpSecure::describe(uint8_t pid, ArrayProperty& out)
     }
 }
 
+bool KnxIpSecure::backboneKeyIs(const uint8_t key[16]) const
+{
+    return hasBackboneKey() && knxsec::equal(_cfg.backboneKey, key, 16);
+}
+
 uint8_t KnxIpSecure::propertyRead(uint8_t pid, uint16_t start, uint8_t count, uint8_t* data)
 {
     ArrayProperty p;

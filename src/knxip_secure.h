@@ -105,6 +105,9 @@ public:
     uint16_t securedFamilies() const { return _cfg.securedFamilies; }
 
     bool hasBackboneKey() const { return _cfg.flags & FLAG_BACKBONE; }
+
+    /** Is this the backbone key in use? Compared without an early exit. */
+    bool backboneKeyIs(const uint8_t key[16]) const;
     bool authCodeFromEts() const { return _cfg.flags & FLAG_AUTH; }
     uint8_t passwordCount() const { return _cfg.passwordCount; }
     uint8_t userSlotCount() const { return _cfg.userCount; }
