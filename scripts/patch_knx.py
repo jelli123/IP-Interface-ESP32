@@ -4351,3 +4351,61 @@ def patch_sbc_flag():
 
 
 patch_sbc_flag()
+
+
+# --------------------------------------------------------------------------
+# 33. Tunnel addresses follow the device to its line until ETS writes them
+# --------------------------------------------------------------------------
+#
+# At the first tunnel connection the stack fills PID_ADDITIONAL_INDIVIDUAL_-
+# ADDRESSES with the device's own line, 1 to n, and stores it. A device still
+# at 15.15.0 gets 15.15.1 - 15.15.10 - and keeps them after ETS has assigned
+# it, say, 1.1.0. ETS then works through a tunnel on a line it does not know,
+# assumes couplers between it and the device, and limits the APDU to 15
+# octets: secured commissioning stops with "insufficient APDU length".
+#
+# On every connection: if the stored list is still exactly that filling, but
+# for another line than the device's, it is filled anew for the current one.
+# A list ETS wrote is never touched - tunnel addresses belong to the device's
+# line anyway (03_08_03 2.5.4).
+
+SEC33_MARKER = "// sbip: tunnel addresses follow the device, see scripts/patch_knx.py 33"
+
+SEC33_ANCHOR = (
+    "    if (propCount == KNX_TUNNELING)\n"
+    "    {\n"
+    "        addresses = _ipParameters.propertyData(PID_ADDITIONAL_INDIVIDUAL_ADDRESSES);\n"
+)
+
+SEC33_NEW = (
+    "    " + SEC33_MARKER + "\n"
+    "    // The stack's own filling for another line than the device's is stale.\n"
+    "    bool sbipStale = false;\n"
+    "\n"
+    "    if (propCount == KNX_TUNNELING)\n"
+    "    {\n"
+    "        const uint8_t* stored = _ipParameters.propertyData(PID_ADDITIONAL_INDIVIDUAL_ADDRESSES);\n"
+    "        bool filled = stored != nullptr;\n"
+    "\n"
+    "        for (int i = 0; filled && i < KNX_TUNNELING; i++)\n"
+    "            filled = stored[i * 2] == stored[0] && stored[i * 2 + 1] == i + 1;\n"
+    "\n"
+    "        sbipStale = filled && stored[0] != _deviceObject.individualAddress() / 0x0100;\n"
+    "    }\n"
+    "\n"
+    "    if (propCount == KNX_TUNNELING && !sbipStale)\n"
+    "    {\n"
+    "        addresses = _ipParameters.propertyData(PID_ADDITIONAL_INDIVIDUAL_ADDRESSES);\n"
+)
+
+
+def patch_tunnel_addresses_follow():
+    if apply_secure_edits(
+        "ip_data_link_layer.cpp", SEC33_MARKER,
+        ((SEC33_ANCHOR, SEC33_NEW),),
+        "tunnel addresses stay on the line the device had at its first connection",
+    ):
+        print("patch_knx.py: tunnel addresses follow the device in ip_data_link_layer.cpp")
+
+
+patch_tunnel_addresses_follow()
