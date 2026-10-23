@@ -916,6 +916,18 @@ uint16_t KnxIpShim::rewriteDescription(const uint8_t* frame, uint16_t length, co
 
             outFrame[start] = (uint8_t)(out - start);
         }
+        else if (type == 0x08 && dibLength >= 6)
+        {
+            // The stack puts 254 here too.
+            memcpy(outFrame + out, frame + pos, dibLength);
+            if (_tunnels.maxApdu != nullptr)
+            {
+                uint16_t apdu = _tunnels.maxApdu();
+                outFrame[out + 4] = (uint8_t)(apdu >> 8);
+                outFrame[out + 5] = (uint8_t)apdu;
+            }
+            out += dibLength;
+        }
         else if (type != 0x06)
         {
             memcpy(outFrame + out, frame + pos, dibLength);
@@ -932,6 +944,20 @@ uint16_t KnxIpShim::rewriteDescription(const uint8_t* frame, uint16_t length, co
         uint16_t added = tunnellingInfo(outFrame + out, (uint16_t)(max - out), to);
         if (added == 0) return 0;
         out += added;
+
+        // Extended device information, as in the extended search answer:
+        // the local APDU length. Without it a client has to guess what the
+        // TP side can take.
+        if (out + 8 > max) return 0;
+        uint16_t apdu = _tunnels.maxApdu ? _tunnels.maxApdu() : 15;
+        outFrame[out++] = 8;
+        outFrame[out++] = 0x08;
+        outFrame[out++] = 0x01;                  // medium status: communication possible
+        outFrame[out++] = 0;
+        outFrame[out++] = (uint8_t)(apdu >> 8);
+        outFrame[out++] = (uint8_t)apdu;
+        outFrame[out++] = (uint8_t)(MASK_VERSION >> 8);
+        outFrame[out++] = (uint8_t)MASK_VERSION;
     }
 
     const uint16_t families = knxIpSecure.securedFamilies() &
