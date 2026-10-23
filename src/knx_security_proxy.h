@@ -80,6 +80,9 @@ public:
     /** AN192's master reset tables. */
     void masterReset(uint8_t eraseCode);
 
+    /** PID 58 of the secondary router object: that of the first one. */
+    uint8_t routingApdu(uint16_t start, uint8_t count, uint8_t* data);
+
     /** Forget the group keys, with the rest of the Secure configuration. */
     void clearKeys();
 

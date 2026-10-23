@@ -60,6 +60,12 @@ public:
         {
             new DataProperty(PID_OBJECT_TYPE, false, PDT_UNSIGNED_INT, 1, ReadLv3 | WriteLv0, (uint16_t)OT_ROUTER),
             new DataProperty(PID_MEDIUM, false, PDT_ENUM8, 1, ReadLv3 | WriteLv0, (uint8_t)DptMedium::KNX_TP1),
+            // The routing limit of the first router object: ETS reads PID 58 of
+            // "the" router object and, finding two, may ask this one.
+            new CallbackProperty<SecondaryRouterObject>(this, PID_MAX_APDU_LENGTH_ROUTER, false, PDT_UNSIGNED_INT, 1,
+                ReadLv3 | WriteLv0,
+                [](SecondaryRouterObject*, uint16_t start, uint8_t count, uint8_t* data) -> uint8_t
+                { return knxSecurityProxy.routingApdu(start, count, data); }),
             new CallbackProperty<SecondaryRouterObject>(this, (PropertyID)80, true, PDT_BITSET8, 1, ReadLv3 | WriteLv3,
                 [](SecondaryRouterObject*, uint16_t start, uint8_t count, uint8_t* data) -> uint8_t
                 { return knxSecurityProxy.propertyRead(SECONDARY, 80, start, count, data); },
@@ -436,6 +442,21 @@ void KnxSecurityProxy::propertyFunction(uint8_t side, bool command, uint8_t pid,
 
     result[0]    = E_COMMAND_INVALID;
     resultLength = 1;
+}
+
+uint8_t KnxSecurityProxy::routingApdu(uint16_t start, uint8_t count, uint8_t* data)
+{
+    if (start == 0)
+    {
+        data[0] = 0;
+        data[1] = 1;
+        return 1;
+    }
+    if (_primary == nullptr || start != 1 || count != 1)
+        return 0;
+
+    Property* p = _primary->property(PID_MAX_APDU_LENGTH_ROUTER);
+    return p != nullptr ? p->read(1, 1, data) : 0;
 }
 
 void KnxSecurityProxy::masterReset(uint8_t eraseCode)
