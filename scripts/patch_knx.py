@@ -4463,3 +4463,63 @@ def patch_search_extended():
 
 
 patch_search_extended()
+
+
+# --------------------------------------------------------------------------
+# 35. Extended function property services on a property that is not there
+# --------------------------------------------------------------------------
+#
+# A_FunctionPropertyExtCommand and ..._StateRead look the property up and call
+# Type() on whatever comes back - a property the object does not have is a
+# null pointer, and the device restarts (LoadProhibited at address 0xc). ETS
+# found that with the load state control of the proxy's second router object.
+# Such a request is now answered with a generic error, as for a missing object.
+
+SEC35_MARKER = "// sbip: a missing property is an error answer, see scripts/patch_knx.py 35"
+
+SEC35_ANCHOR = (
+    "    InterfaceObject* obj = getInterfaceObject(objectType, objectInstance);\n"
+    "\n"
+    "    if (obj)\n"
+    "    {\n"
+    "        PropertyDataType propType = obj->property((PropertyID)propertyId)->Type();\n"
+)
+
+SEC35_NEW = (
+    "    InterfaceObject* obj = getInterfaceObject(objectType, objectInstance);\n"
+    "\n"
+    "    " + SEC35_MARKER + "\n"
+    "    if (obj != nullptr && obj->property((PropertyID)propertyId) == nullptr)\n"
+    "        obj = nullptr;\n"
+    "\n"
+    "    if (obj)\n"
+    "    {\n"
+    "        PropertyDataType propType = obj->property((PropertyID)propertyId)->Type();\n"
+)
+
+
+def patch_function_property_null():
+    path = knx_source("bau_systemB.cpp")
+    if not os.path.isfile(path):
+        return
+
+    with open(path, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    if SEC35_MARKER in source:
+        return
+
+    if source.count(SEC35_ANCHOR) != 2:
+        sys.stderr.write(
+            "patch_knx.py: anchor not found twice in bau_systemB.cpp, "
+            "extended function property services crash on a missing property\n"
+        )
+        return
+
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source.replace(SEC35_ANCHOR, SEC35_NEW))
+
+    print("patch_knx.py: missing property guarded in bau_systemB.cpp")
+
+
+patch_function_property_null()
