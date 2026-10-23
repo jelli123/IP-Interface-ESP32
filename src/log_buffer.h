@@ -106,6 +106,9 @@ public:
     int peek() override { return -1; }
 
 private:
+    /** Summary of a core dump left by a panic, into the log, then erased. */
+    void reportCoreDump();
+
     void store(const char* data, size_t len);
 
     /** Settle the count of ESP-IDF lines held back as repeats, if any. */

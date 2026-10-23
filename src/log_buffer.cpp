@@ -4,6 +4,7 @@
 
 #include <Preferences.h>
 #include <esp_heap_caps.h>
+#include <esp_core_dump.h>
 #include <esp_log.h>
 #include <esp_system.h>
 
@@ -160,6 +161,40 @@ void LogBuffer::begin()
     printf("Log: %u KiB ring in %s, reset reason %s, %u bytes carried over\n",
            (unsigned)(_size / 1024), _psram ? "PSRAM" : "internal RAM",
            resetReason(), (unsigned)carried);
+
+    reportCoreDump();
+}
+
+/*
+ * After a panic the IDF has written a core dump to the coredump partition.
+ * Nothing read it, and the serial console with the backtrace is rarely
+ * attached. Its summary goes into the log once, then it is erased: task,
+ * program counter and backtrace, which addr2line on the firmware.elf of the
+ * same build turns into file and line.
+ */
+void LogBuffer::reportCoreDump()
+{
+    if (esp_core_dump_image_check() != ESP_OK) return;
+
+    esp_core_dump_summary_t* s = (esp_core_dump_summary_t*)calloc(1, sizeof(esp_core_dump_summary_t));
+    if (s != nullptr && esp_core_dump_get_summary(s) == ESP_OK)
+    {
+#if CONFIG_IDF_TARGET_ARCH_XTENSA
+        char bt[16 * 11 + 1] = {0};
+        size_t used = 0;
+        for (uint32_t i = 0; i < s->exc_bt_info.depth && i < 16; i++)
+            used += snprintf(bt + used, sizeof(bt) - used, " 0x%08lx", (unsigned long)s->exc_bt_info.bt[i]);
+        printf("Crash before this start: task %s, PC 0x%08lx, cause %lu, address 0x%08lx, backtrace%s%s\n",
+               s->exc_task, (unsigned long)s->exc_pc, (unsigned long)s->ex_info.exc_cause,
+               (unsigned long)s->ex_info.exc_vaddr, bt, s->exc_bt_info.corrupted ? " (corrupted)" : "");
+#else
+        printf("Crash before this start: task %s, PC 0x%08lx, mcause 0x%08lx, mtval 0x%08lx, ra 0x%08lx\n",
+               s->exc_task, (unsigned long)s->exc_pc, (unsigned long)s->ex_info.mcause,
+               (unsigned long)s->ex_info.mtval, (unsigned long)s->ex_info.ra);
+#endif
+    }
+    free(s);
+    esp_core_dump_image_erase();
 }
 
 /*
