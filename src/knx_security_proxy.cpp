@@ -59,6 +59,31 @@ public:
         Property* properties[] =
         {
             new DataProperty(PID_OBJECT_TYPE, false, PDT_UNSIGNED_INT, 1, ReadLv3 | WriteLv0, (uint16_t)OT_ROUTER),
+            // ETS unloads, loads and completes this object together with the
+            // first one. Until it does, it reports the first one's state.
+            new CallbackProperty<SecondaryRouterObject>(this, PID_LOAD_STATE_CONTROL, true, PDT_CONTROL, 1,
+                ReadLv3 | WriteLv3,
+                [](SecondaryRouterObject* obj, uint16_t start, uint8_t, uint8_t* data) -> uint8_t
+                {
+                    if (start == 0)
+                    {
+                        pushWord(1, data);
+                        return 1;
+                    }
+                    data[0] = obj->_state >= 0 ? (uint8_t)obj->_state : knxSecurityProxy.primaryLoadState();
+                    return 1;
+                },
+                [](SecondaryRouterObject* obj, uint16_t, uint8_t, const uint8_t* data) -> uint8_t
+                {
+                    switch (data[0])
+                    {
+                        case LE_START_LOADING:  obj->_state = LS_LOADING;  break;
+                        case LE_LOAD_COMPLETED: obj->_state = LS_LOADED;   break;
+                        case LE_UNLOAD:         obj->_state = LS_UNLOADED; break;
+                        default:                break;
+                    }
+                    return 1;
+                }),
             new DataProperty(PID_MEDIUM, false, PDT_ENUM8, 1, ReadLv3 | WriteLv0, (uint8_t)DptMedium::KNX_TP1),
             // The routing limit of the first router object: ETS reads PID 58 of
             // "the" router object and, finding two, may ask this one.
@@ -84,6 +109,8 @@ public:
         };
         initializeProperties(sizeof(properties), properties);
     }
+
+    int16_t _state = -1; //!< LoadState once ETS wrote an event, -1 before
 };
 
 void formatAddress(char* out, size_t size, uint16_t address, bool group)
@@ -442,6 +469,11 @@ void KnxSecurityProxy::propertyFunction(uint8_t side, bool command, uint8_t pid,
 
     result[0]    = E_COMMAND_INVALID;
     resultLength = 1;
+}
+
+uint8_t KnxSecurityProxy::primaryLoadState()
+{
+    return _primary != nullptr ? (uint8_t)_primary->loadState() : (uint8_t)LS_UNLOADED;
 }
 
 uint8_t KnxSecurityProxy::routingApdu(uint16_t start, uint8_t count, uint8_t* data)
