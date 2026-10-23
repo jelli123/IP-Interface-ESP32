@@ -114,6 +114,16 @@ def bus_interfaces(app_id, count):
 SECURITY_IA_ENTRIES = 32
 
 
+#: Längste APDU, die der Router zwischen IP und TP weiterreicht: mit dem
+#: TP-UART-Emulator ab 0.10 Extended Frames bis 64 Oktette, also 55 - der
+#: Wert, den das Gerät auch in PID_MAX_APDULENGTH_ROUTING meldet. Ohne die
+#: Angabe rechnet die ETS für einen Koppler mit 15, und gesicherte
+#: Telegramme (34 Oktette und mehr) gehen dann nicht über ihn - auch nicht
+#: an den Router selbst, solange sein Tunnel noch eine Adresse außerhalb
+#: seiner Linie hat.
+ROUTING_APDU = 55
+
+
 def secure_attributes(tunnels):
     """Was die ETS über die Secure-Fähigkeiten des Geräts wissen muss.
 
@@ -216,6 +226,13 @@ def build(args):
         if args.secure and "IsSecureEnabled" not in text:
             text = re.sub(r'(<ApplicationProgram\b[^>]*?AdditionalAddressesCount="\d+")',
                           lambda m: m.group(1) + secure_attributes(args.tunnels), text)
+
+        # Was der Router weiterreicht - für gesicherte Telegramme unverzichtbar,
+        # also mit jeder Secure-Fassung, sonst nur auf Wunsch.
+        routing_apdu = args.routing_apdu or (ROUTING_APDU if args.secure else 0)
+        if routing_apdu and "MaxRoutingApduLength" not in text:
+            text = re.sub(r'(<ApplicationProgram\b[^>]*?AdditionalAddressesCount="\d+")',
+                          lambda m: m.group(1) + ' MaxRoutingApduLength="%d"' % routing_apdu, text)
 
         # Security Proxy: Fähigkeit am Hardware2Program, Tabellengröße an der
         # Applikation, ETS 6 und ein Schema, das beides kennt.
@@ -346,6 +363,11 @@ def main():
                              "CouplerCapabilities, Größe der Proxy-"
                              "Schlüsseltabelle, Schema project/23, ab ETS 6. "
                              "Schließt --secure ein")
+    parser.add_argument("--routing-apdu", type=int, default=0,
+                        help="MaxRoutingApduLength: längste APDU, die der Router "
+                             "weiterreicht. Vorgabe %d mit --secure/--proxy "
+                             "(TP-UART-Emulator ab 0.10), 15 für einen echten "
+                             "TP-UART ohne Extended Frames" % ROUTING_APDU)
     parser.add_argument("--identity", help="zusätzlich die passende JSON-Kennung "
                                            "für das Dashboard schreiben")
     args = parser.parse_args()
