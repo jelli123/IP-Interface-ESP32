@@ -745,6 +745,40 @@ Broadcast – und für nichts, was an ein Gerät geht.
 
 ---
 
+## 25 – Erweiterte Suche mit angeforderten DIBs bleibt unbeantwortet
+
+`KnxIpSearchRequestExtended` löscht `requestedDIBs` nie. Was vorher auf dem
+Stack lag, bestimmt, welche DIBs in die Antwort kommen, und meist geht gar
+keine hinaus. Die ETS sucht immer mit dem SRP „Request DIBs“; sie bekam nur
+die einfache Suchantwort, ohne Extended Device Information (lokale
+APDU-Länge) und ohne Tunnel-Slots, und rechnete deshalb mit 15 Oktetten:
+„Unzureichende APDU Länge (beschränkt auf 15 …)“. Außerdem lässt die
+Grenzprüfung Code 9 eine Stelle hinter das Feld schreiben.
+
+Im DIB 5 schreibt `KnxIpKnxAddressesDIB::individualAddress()` die Adresse
+mit `pushInt`, vier Oktette: Als eigene Adresse steht 0.0.0 darin, und die
+erste Zusatzadresse überschreibt die echte.
+
+Patch 34 löscht das Feld, macht es eine Stelle größer und schreibt die
+Adresse mit `pushWord`. Die APDU-Länge in DIB 08, die der Stack fest auf
+254 setzt, korrigiert der Shim auf das, was TP wirklich trägt.
+
+---
+
+## 26 – Erweiterte Funktions-Properties: Absturz bei fehlender Property
+
+`functionPropertyExtCommandIndication()` und
+`functionPropertyExtStateIndication()` rufen `Type()` auf das Ergebnis von
+`property()` auf, ohne es zu prüfen. Fragt ein Client eine Property, die das
+Objekt nicht hat, ist das ein Nullzeiger, und das Gerät startet neu
+(LoadProhibited an 0xc). Die ETS traf das beim Entladen des zweiten
+Router-Objekts des Security Proxy.
+
+Patch 35 behandelt eine fehlende Property wie ein fehlendes Objekt: Die
+Antwort trägt einen allgemeinen Fehler.
+
+---
+
 ## Was hier bleibt und nicht nach oben gehört
 
 | Änderung in `patch_knx.py` | Warum sie projektspezifisch ist |
