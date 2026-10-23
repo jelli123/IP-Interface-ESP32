@@ -57,38 +57,48 @@ void KnxSecureStore::begin()
     _loaded = true;
 }
 
+/** CRC-4, generator x^4 + x + 1, a nibble at a time, high nibble first. */
+static uint8_t crc4(const uint8_t* data, size_t length)
+{
+    static const uint8_t TABLE[16] = {0x0, 0x3, 0x6, 0x5, 0xC, 0xF, 0xA, 0x9,
+                                      0xB, 0x8, 0xD, 0xE, 0x7, 0x4, 0x1, 0x2};
+    uint8_t crc = 0;
+    for (size_t i = 0; i < length; i++)
+    {
+        crc = TABLE[crc ^ (data[i] >> 4)];
+        crc = TABLE[crc ^ (data[i] & 0x0F)];
+    }
+    return crc;
+}
+
 String KnxSecureStore::certificate(const uint8_t serial[6]) const
 {
     static const char ALPHABET[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
-    uint8_t data[22];
+    // Serial number, FDSK, and the check value in the high nibble of a 23rd octet
+    uint8_t data[23];
     memcpy(data, serial, 6);
     memcpy(data + 6, _fdsk, 16);
+    data[22] = (uint8_t)(crc4(data, 22) << 4);
 
     String   out;
     uint32_t buffer = 0;
     int      bits   = 0;
     int      chars  = 0;
 
+    // 180 of the 184 bits: 36 characters, the last four bits of the 23rd octet unused
     for (size_t i = 0; i < sizeof(data); i++)
     {
         buffer = (buffer << 8) | data[i];
         bits += 8;
 
-        while (bits >= 5)
+        while (bits >= 5 && chars < 36)
         {
             if (chars && chars % 6 == 0) out += '-';
             out += ALPHABET[(buffer >> (bits - 5)) & 0x1F];
             bits -= 5;
             chars++;
         }
-    }
-
-    // 176 bits leave one last character of which four bits are spare.
-    if (bits > 0)
-    {
-        if (chars % 6 == 0) out += '-';
-        out += ALPHABET[(buffer << (5 - bits)) & 0x1F];
     }
 
     knxsec::wipe(data, sizeof(data));

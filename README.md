@@ -2799,10 +2799,9 @@ Das Dashboard zeigt ihn auf der Karte *KNX Secure* unter
 ETS – aber nur, solange er noch der Tool-Key ist. Die Spezifikation verbietet,
 den FDSK über irgendeine Schnittstelle auslesbar zu machen (03_05_01 6.1);
 das Dashboard ersetzt hier nur den Aufkleber, den dieses Gerät nicht hat, und
-schweigt, sobald die ETS einen eigenen Tool-Key gesetzt hat. Wie die ETS diese 36 Zeichen genau erwartet, ist öffentlich nicht
-beschrieben – hier steht Base32 aus Seriennummer und FDSK. Nimmt die ETS
-das Zertifikat nicht an, bitte melden; Seriennummer und FDSK darüber sind in
-jedem Fall die richtigen.
+schweigt, sobald die ETS einen eigenen Tool-Key gesetzt hat. Die 36 Zeichen
+sind Base32 aus Seriennummer, FDSK und einer 4-Bit-Prüfsumme (CRC-4), ohne
+die die ETS das Zertifikat ablehnt.
 
 Im Auslieferungszustand ist der FDSK auch der Geräte-Authentifizierungscode
 für KNXnet/IP Secure, und Benutzer 1 hat das leere Passwort (03_08_09

@@ -60,13 +60,11 @@ public:
 
     /**
      * The device certificate as the label would carry it: KNX serial number
-     * and FDSK, 22 octets, Base32 (RFC 4648 alphabet), six groups of six
-     * characters.
-     *
-     * The alphabet and length are what ETS documents (36 characters, no 0 or
-     * 1). Whether ETS expects a check value in the four spare bits is not
-     * public; they are left at zero. Serial number and FDSK are shown in hex
-     * alongside for exactly that reason.
+     * and FDSK, 22 octets, then a CRC-4 (x^4 + x + 1) over them in the four
+     * remaining bits - 180 bits, 36 characters Base32 (RFC 4648 alphabet),
+     * six groups of six. ETS refuses a certificate whose check value does
+     * not match; the KNX stack's examples/knx-linux/fdsk.cpp builds it the
+     * same way.
      */
     String certificate(const uint8_t serial[6]) const;
 

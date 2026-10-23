@@ -314,10 +314,11 @@ auf der Karte *KNX Secure*.
 
 ## 5. Was sich nur mit der ETS prüfen lässt
 
-1. **Gerätezertifikat.** Die ETS will 36 Zeichen Base32 aus Seriennummer und
-   FDSK. Die Spezifikation beschreibt die Kodierung nicht (3/5/1 6.1.3: „no
-   storage standardised“); ob in den vier überzähligen Bits eine Prüfsumme
-   steht, ist offen. Hier sind sie 0.
+1. **Gerätezertifikat.** Die ETS will 36 Zeichen Base32 aus Seriennummer,
+   FDSK und einem CRC-4 (x⁴ + x + 1) über beide in den letzten vier Bits; ohne
+   passende Prüfsumme lehnt sie ab. Die Spezifikation beschreibt die Kodierung
+   nicht (3/5/1 6.1.3: „no storage standardised“), der KNX-Stack bildet sie in
+   `examples/knx-linux/fdsk.cpp` genauso.
 2. **TCP.** Die ETS 6 baut Tunnel über TCP auf, sobald das Gerät Core 2
    ankündigt – jetzt auch ohne Secure. Bei Problemen TCP abschalten; dann
    gibt es allerdings auch keine Secure Sessions.
