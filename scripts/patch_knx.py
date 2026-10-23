@@ -3876,13 +3876,34 @@ SEC28_SAL_SECURE = (
 SEC28_SAL_ANCHOR_SYNC = (
     "        // ignore sync.reqs not addressed to us\n"
     "        if (!memcmp(knxSerialNumber, _deviceObj.propertyData(PID_SERIAL_NUMBER), 6))\n"
+    "        {\n"
+    "            uint8_t emptySerialNumber[6] = {0};\n"
+    "\n"
+    "            if (systemBroadcast || dstAddr != _deviceObj.individualAddress() || !memcmp(knxSerialNumber, emptySerialNumber, 6))\n"
+    "                return false;\n"
+    "        }\n"
 )
 
+# Upstream compared the serial number the wrong way round: a sync.req that
+# names our serial number by broadcast - the one ETS sends before it assigns
+# the address securely - was dropped, and ETS reported the device as secured
+# with an unknown key. See KNXSTACK.md 23.
 SEC28_SAL_SYNC = (
-    "        // ignore sync.reqs not addressed to us - the local client has no\n"
-    "        // address, but there is no one else it could mean\n"
-    "        if (!(_transportLayer->sbipLocalActive() && srcAddr == 0 && dstAddr == 0) &&\n"
-    "                !memcmp(knxSerialNumber, _deviceObj.propertyData(PID_SERIAL_NUMBER), 6))\n"
+    "        // sbip: which sync.reqs are ours. By broadcast: only with our serial\n"
+    "        // number. To an individual address: only ours, with our serial number\n"
+    "        // or none. The local client has no address, but there is no one else\n"
+    "        // it could mean.\n"
+    "        {\n"
+    "            uint8_t emptySerialNumber[6] = {0};\n"
+    "            bool ourSerial = !memcmp(knxSerialNumber, _deviceObj.propertyData(PID_SERIAL_NUMBER), 6);\n"
+    "            bool noSerial = !memcmp(knxSerialNumber, emptySerialNumber, 6);\n"
+    "            bool local = _transportLayer->sbipLocalActive() && srcAddr == 0 && dstAddr == 0;\n"
+    "            bool broadcast = dstAddrIsGroupAddr && dstAddr == 0;\n"
+    "\n"
+    "            if (!local && (broadcast ? !ourSerial\n"
+    "                           : dstAddrIsGroupAddr || dstAddr != _deviceObj.individualAddress() || !(ourSerial || noSerial)))\n"
+    "                return false;\n"
+    "        }\n"
 )
 
 SEC28_CEMI_ANCHOR_DECL = "void CemiServer::frameReceived(CemiFrame& frame)\n"

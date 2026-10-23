@@ -65,6 +65,7 @@ E-Mail sind Platzhalter – vor dem Einreichen `git commit --amend --reset-autho
 | 20 | Tunnelwahl gibt beim ersten belegten Slot auf | Fehler | – |
 | 21 | cEMI-Server: Funktions-Properties und Transportschicht fehlen | Lücke | – |
 | 22 | Abbau eines Tunnels ohne Slot und Grund im Log | Diagnose | – |
+| 23 | Data Secure: Sync-Anfrage per Seriennummer wird verworfen | Fehler | – |
 
 ---
 
@@ -690,6 +691,34 @@ Patch 29 nimmt die Ausgabe aus `Reset()` heraus. Die drei Aufrufer in
 `ip_data_link_layer.cpp` kennen Slot und Grund und melden den Abbau im Format
 des Aufbaus, mit Kanal und Tunneladresse: `disconnect request`,
 `no heartbeat for 120 s` oder `slot taken over by a new connection`.
+
+---
+
+## 23 – Sync-Anfrage per Seriennummer wird verworfen
+
+**Datei:** `src/knx/secure_application_layer.cpp`, `decrypt()`
+
+```cpp
+// ignore sync.reqs not addressed to us
+if (!memcmp(knxSerialNumber, _deviceObj.propertyData(PID_SERIAL_NUMBER), 6))
+{
+    uint8_t emptySerialNumber[6] = {0};
+
+    if (systemBroadcast || dstAddr != _deviceObj.individualAddress() || !memcmp(knxSerialNumber, emptySerialNumber, 6))
+        return false;
+}
+```
+
+`!memcmp` ist wahr, wenn die Seriennummer **die eigene** ist – genau dann
+verwirft der Block jede Anfrage per Broadcast. So spricht die ETS ein Gerät an,
+bevor sie ihm die physikalische Adresse sicher vergibt: S-A_Sync_Req mit Tool
+Key, Ziel 0/0/0, darin die Seriennummer. Das Gerät schweigt, und die ETS meldet,
+es sei „mit einem in diesem Projekt nicht bekannten Schlüssel gesichert“.
+Anfragen mit fremder Seriennummer dagegen kamen durch.
+
+Richtig ist: per Broadcast nur mit der eigenen Seriennummer, an eine
+Einzeladresse nur an die eigene, mit eigener oder leerer Seriennummer.
+Patch 28 setzt das so um.
 
 ---
 
