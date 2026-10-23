@@ -232,7 +232,7 @@ def build(args):
         routing_apdu = args.routing_apdu or (ROUTING_APDU if args.secure else 0)
         # Es gehört an Options, nicht an ApplicationProgram - dort liest die
         # ETS es nicht.
-        if routing_apdu and "<ApplicationProgram" in text and "MaxRoutingApduLength" not in text:
+        if routing_apdu and re.search(r"<ApplicationProgram\b", text) and "MaxRoutingApduLength" not in text:
             text, n = re.subn(r'(<Options\b)', lambda m: m.group(1) + ' MaxRoutingApduLength="%d"' % routing_apdu,
                               text, count=1)
             if n != 1:
