@@ -4308,3 +4308,46 @@ def patch_security_proxy():
 
 
 patch_security_proxy()
+
+
+# --------------------------------------------------------------------------
+# 32. Data Secure: the SBC flag of the SCF
+# --------------------------------------------------------------------------
+#
+# createSecureApdu() and decodeSecureApdu() turn frame().systemBroadcast()
+# straight into a bool. The enum is Broadcast = 0x10 for an ordinary frame
+# and SysBroadcast = 0 for a system broadcast - the wrong way round: every
+# secured individual and connected frame went out with the SBC flag set.
+# ETS takes such an answer as not meant for it. Seen right after the
+# security mode was switched on during a secure commissioning, the first
+# secured answer over the transport connection. See KNXSTACK.md 24.
+#
+# Set now for a frame to 0/0/0 - broadcast or system broadcast - as before
+# for everything ETS already accepted (the serial number services), and no
+# longer for anything addressed to a device.
+
+SEC32_MARKER = "// sbip: SBC flag only for frames to 0/0/0, see scripts/patch_knx.py 32"
+
+SEC32_ANCHOR_DEC = "    bool isSystemBroadcast = secureApdu.frame().systemBroadcast();\n"
+SEC32_NEW_DEC = (
+    "    " + SEC32_MARKER + "\n"
+    "    bool isSystemBroadcast = isDstAddrGroupAddr && dstAddress == 0;\n"
+)
+
+SEC32_ANCHOR_ENC = "    bool isSystemBroadcast = plainApdu.frame().systemBroadcast();\n"
+SEC32_NEW_ENC = (
+    "    // sbip: see above\n"
+    "    bool isSystemBroadcast = isDstAddrGroupAddr && dstAddress == 0;\n"
+)
+
+
+def patch_sbc_flag():
+    if apply_secure_edits(
+        "secure_application_layer.cpp", SEC32_MARKER,
+        ((SEC32_ANCHOR_DEC, SEC32_NEW_DEC), (SEC32_ANCHOR_ENC, SEC32_NEW_ENC)),
+        "secured individual frames keep the SBC flag set - ETS ignores the answers",
+    ):
+        print("patch_knx.py: SBC flag of secured frames fixed in secure_application_layer.cpp")
+
+
+patch_sbc_flag()

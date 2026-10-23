@@ -66,6 +66,7 @@ E-Mail sind Platzhalter – vor dem Einreichen `git commit --amend --reset-autho
 | 21 | cEMI-Server: Funktions-Properties und Transportschicht fehlen | Lücke | – |
 | 22 | Abbau eines Tunnels ohne Slot und Grund im Log | Diagnose | – |
 | 23 | Data Secure: Sync-Anfrage per Seriennummer wird verworfen | Fehler | – |
+| 24 | Data Secure: SBC-Bit verkehrt herum gesetzt | Fehler | – |
 
 ---
 
@@ -719,6 +720,28 @@ Anfragen mit fremder Seriennummer dagegen kamen durch.
 Richtig ist: per Broadcast nur mit der eigenen Seriennummer, an eine
 Einzeladresse nur an die eigene, mit eigener oder leerer Seriennummer.
 Patch 28 setzt das so um.
+
+---
+
+## 24 – SBC-Bit verkehrt herum gesetzt
+
+**Datei:** `src/knx/secure_application_layer.cpp`, `createSecureApdu()` und `decodeSecureApdu()`
+
+```cpp
+bool isSystemBroadcast = plainApdu.frame().systemBroadcast();
+```
+
+`systemBroadcast()` liefert die Aufzählung `SystemBroadcast` – `Broadcast = 0x10`
+für ein gewöhnliches Telegramm, `SysBroadcast = 0` für einen System Broadcast.
+Als `bool` gelesen ist das genau verkehrt: Jedes gesicherte Einzel- und
+Verbindungstelegramm geht mit gesetztem SBC-Bit im SCF hinaus, ein echter
+System Broadcast ohne. Die ETS nimmt solche Antworten nicht als ihre. Zu
+sehen bei der sicheren Inbetriebnahme gleich nach dem Einschalten des
+Security-Modus, an der ersten gesicherten Antwort über die
+Transportverbindung.
+
+Patch 32 setzt das Bit für Telegramme an 0/0/0 – Broadcast und System
+Broadcast – und für nichts, was an ein Gerät geht.
 
 ---
 
