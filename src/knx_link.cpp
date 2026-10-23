@@ -626,11 +626,26 @@ static uint16_t objectTypeOf(uint8_t index)
     return count ? (uint16_t)((objectType[0] << 8) | objectType[1]) : 0xFFFF;
 }
 
+#ifndef SBIP_MGMT_TRACE
+#define SBIP_MGMT_TRACE 0
+#endif
+
 static uint8_t checkServiceAccess(uint16_t apduType, const uint8_t* data, uint16_t length,
                                   bool toolAccess, uint8_t dataSecurity)
 {
     knxaccess::Caller caller{knxBau.security().isSecurityModeEnabled(), toolAccess, dataSecurity};
     knxaccess::Result result = knxaccess::service(apduType, data, length, caller, objectTypeOf);
+
+#if SBIP_MGMT_TRACE
+    // Diagnosis: every management request as the application layer sees it,
+    // secured ones decrypted. Built with -DSBIP_MGMT_TRACE=1 only.
+    char hex[3 * 12 + 1] = {0};
+    for (uint16_t i = 0; i < length && i < 12; i++)
+        snprintf(hex + 3 * i, 4, " %02X", data[i]);
+    sysLog.printf("MGMT: 0x%03X%s (%s)%s\n", (unsigned)apduType, hex,
+                  dataSecurity == 0 ? "plain" : toolAccess ? "tool key" : "runtime key",
+                  result == knxaccess::ALLOWED ? "" : " refused");
+#endif
 
     if (result != knxaccess::ALLOWED)
         sysLog.printf("SECURE: management service 0x%03X refused (%s)\n", (unsigned)apduType,
