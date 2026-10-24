@@ -9,6 +9,9 @@
 #if SBIP_ETH_COMPILED
 #include <ETH.h>
 #include <SPI.h>
+#include <driver/gpio.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include "hw_config.h"
 #include "log_buffer.h"
@@ -184,6 +187,35 @@ bool EthInterface::probeChip()
     return false;
 }
 
+/*
+ * Clean up after ETH.begin() failed in esp_eth_driver_install().
+ *
+ * Arduino then returns without deleting the MAC object, and the W5500 MAC
+ * keeps its receive task and INT handler - while the driver they report to
+ * is already freed. The next interrupt (a frame arrives once there is a
+ * link) makes the task call through that freed driver: a panic in w5500_tsk
+ * with PC 0xfffffffd, at every boot, until the crash-loop guard of the
+ * hardware profile gives up on the profile. The MAC object itself cannot be
+ * reached from here and stays allocated; its task and interrupt go.
+ */
+void EthInterface::abandonDriver()
+{
+    const HwProfile& hw = hwConfig.active();
+
+    if (hw.ethIrqPin >= 0)
+    {
+        gpio_intr_disable((gpio_num_t)hw.ethIrqPin);
+        gpio_isr_handler_remove((gpio_num_t)hw.ethIrqPin);
+    }
+
+    TaskHandle_t task = xTaskGetHandle("w5500_tsk");
+    if (task != nullptr)
+    {
+        vTaskDelete(task);
+        sysLog.println("ETH: receive task of the failed driver stopped");
+    }
+}
+
 bool EthInterface::begin(void (*keepAlive)())
 {
     const HwProfile& hw = hwConfig.active();
@@ -210,6 +242,7 @@ bool EthInterface::begin(void (*keepAlive)())
                    hw.ethIrqPin, -1, SPI, hw.ethSpiMhz))
     {
         sysLog.println("ETH: driver failed to start");
+        abandonDriver();
         return false;
     }
     _started = true;

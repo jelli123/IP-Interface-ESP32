@@ -80,6 +80,7 @@ private:
     static void resetChip();
     static uint8_t readVersion();
     bool stopOnDriverErrors();
+    static void abandonDriver();
 
     bool     _present     = false;
     bool     _started     = false;
