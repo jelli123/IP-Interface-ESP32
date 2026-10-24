@@ -104,11 +104,13 @@ void KnxIpShim::begin(const Udp& udp, const Tunnels& tunnels)
     _tunnels = tunnels;
 
     knxIpSecure.begin(
-        [](int8_t tcp, const uint8_t* frame, size_t length) {
+        [](int8_t tcp, const uint8_t* frame, size_t length) -> bool {
             if (tcp >= 0)
+            {
                 knxIpShim.tcpWrite((uint8_t)tcp, frame, (uint16_t)length);
-            else
-                knxIpShim._udp.multicast(frame, (uint16_t)length);
+                return true;
+            }
+            return knxIpShim._udp.multicast(frame, (uint16_t)length);
         },
         [](uint8_t session, uint8_t status) { knxIpShim.sessionEnded(session, status); });
 

@@ -780,8 +780,20 @@ void KnxIpSecure::sendTimerNotify(uint16_t tag, const uint8_t* serial)
 
     uint8_t frame[knxsec::TIMER_NOTIFY_LEN];
     knxsec::timerNotify(_cfg.backboneKey, timerValue(), serial, tag, frame);
-    _send(-1, frame, sizeof(frame));
-    _stats.timerNotifies++;
+
+    if (_send(-1, frame, sizeof(frame)))
+    {
+        _stats.timerNotifies++;
+        return;
+    }
+
+    _stats.timerNotifiesFailed++;
+    if (_stats.timerNotifiesFailed == 1 || (uint32_t)(millis() - _notifyFailLogged) > 60000)
+    {
+        _notifyFailLogged = millis();
+        sysLog.printf("SECURE: TIMER_NOTIFY could not be sent, the multicast socket refused it "
+                      "(%u time(s) so far)\n", (unsigned)_stats.timerNotifiesFailed);
+    }
 }
 
 /*
@@ -859,6 +871,7 @@ void KnxIpSecure::timerNotify(const uint8_t* frame, size_t length)
         _stats.macFailures++;
         return;
     }
+    _stats.timerNotifiesIn++;
 
     if (!_authentic)
     {
@@ -1010,7 +1023,20 @@ void KnxIpSecure::loop(bool networkUp)
 
             if (_schedUpdate)
             {
+                // 2.2.2.3.1.2: tells the sender of an outdated frame the
+                // current time, with its own serial number and tag.
                 sendTimerNotify(_updateTag, _updateSerial);
+                _stats.timerUpdates++;
+
+                if ((uint32_t)(t - _updateLogged) > 60000 || _stats.timerUpdates == 1)
+                {
+                    _updateLogged = t;
+                    sysLog.printf("SECURE: TIMER_NOTIFY sent to correct an outdated timer of "
+                                  "%02X%02X:%02X%02X%02X%02X (%u so far)\n",
+                                  _updateSerial[0], _updateSerial[1], _updateSerial[2],
+                                  _updateSerial[3], _updateSerial[4], _updateSerial[5],
+                                  (unsigned)_stats.timerUpdates);
+                }
             }
             else
             {

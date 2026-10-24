@@ -82,7 +82,8 @@ public:
      * Sends a frame. Set by the shim: tcp >= 0 selects a TCP connection,
      * -1 the routing multicast.
      */
-    typedef void (*SendFn)(int8_t tcp, const uint8_t* frame, size_t length);
+    /** @return false if the frame could not be handed to the network */
+    typedef bool (*SendFn)(int8_t tcp, const uint8_t* frame, size_t length);
 
     /** A session ended; @p status is what the client was told. */
     typedef void (*SessionEndFn)(uint8_t index, uint8_t status);
@@ -192,7 +193,10 @@ public:
         uint32_t routingIn;
         uint32_t routingOut;
         uint32_t routingStale;
-        uint32_t timerNotifies;
+        uint32_t timerNotifies;      //!< sent
+        uint32_t timerNotifiesFailed; //!< refused by the UDP socket
+        uint32_t timerNotifiesIn;     //!< received with a valid MAC
+        uint32_t timerUpdates;        //!< sent to correct an outdated timer
         uint32_t plainRefused;
     };
     const Stats& stats() const { return _stats; }
@@ -269,6 +273,8 @@ private:
     bool     _routingOn      = false;
     bool     _poweredUp      = true;  //!< the next start is the one after power-up
     bool     _timekeeper     = false;
+    uint32_t _updateLogged   = 0;
+    uint32_t _notifyFailLogged = 0;
     bool     _authentic      = false;
     bool     _syncWaiting    = false; //!< acquisition deadline running
     uint32_t _syncDeadline   = 0;

@@ -2468,7 +2468,11 @@ String KnxLink::secureJson() const
     j += ",\"synced\":" + String(knxIpSecure.timerSynced() ? "true" : "false");
     j += ",\"keeper\":" + String(knxIpSecure.timekeeper() ? "true" : "false");
     j += ",\"in\":" + String(ips.routingIn) + ",\"out\":" + String(ips.routingOut);
-    j += ",\"stale\":" + String(ips.routingStale) + "}";
+    j += ",\"stale\":" + String(ips.routingStale);
+    j += ",\"notify_out\":" + String(ips.timerNotifies);
+    j += ",\"notify_failed\":" + String(ips.timerNotifiesFailed);
+    j += ",\"notify_in\":" + String(ips.timerNotifiesIn);
+    j += ",\"updates\":" + String(ips.timerUpdates) + "}";
     j += ",\"sessions\":" + knxIpShim.connectionsJson();
     j += ",\"opened\":" + String(ips.sessionsOpened);
     j += ",\"auth_fail\":" + String(ips.authFailures);
