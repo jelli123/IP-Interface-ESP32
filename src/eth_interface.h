@@ -28,7 +28,8 @@ public:
         STATE_ABSENT,   //!< configured, but no W5500 answered the probe
         STATE_NO_LINK,  //!< chip found, cable unplugged or no partner
         STATE_NO_IP,    //!< link up, waiting for DHCP
-        STATE_READY     //!< link up and addressed
+        STATE_READY,    //!< link up and addressed
+        STATE_FAILED    //!< driver stopped, the chip kept failing
     };
 
     /**
@@ -78,6 +79,7 @@ private:
     static bool probeChip();
     static void resetChip();
     static uint8_t readVersion();
+    bool stopOnDriverErrors();
 
     bool     _present     = false;
     bool     _started     = false;
@@ -86,6 +88,9 @@ private:
     bool     _leaseWarned = false;
     uint32_t _linkSince   = 0;
     uint32_t _lastCheckMs = 0;
+    bool     _stopped     = false;
+    uint32_t _errorWindowStart = 0;
+    uint32_t _errorWindowCount = 0;
 };
 
 extern EthInterface ethInterface;

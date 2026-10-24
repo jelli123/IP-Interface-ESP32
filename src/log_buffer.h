@@ -31,6 +31,13 @@ public:
      */
     bool resize(size_t bytes);
 
+    /**
+     * Have every ESP-IDF error line passed to @p hook as well, after the
+     * repeat filter has seen it - including the repeats it holds back.
+     * Called in the context of whatever task logs, so keep it short.
+     */
+    static void setIdfErrorHook(void (*hook)(const char* line, size_t len));
+
     /** Bytes the ring can hold. */
     size_t capacity() const { return _size; }
 

@@ -56,12 +56,15 @@ static vprintf_like_t s_previousHook = nullptr;
  * exactly the lines that would explain why the device restarted.
  *
  * So the ring keeps the first occurrence and a count instead. The console
- * still gets every line. Two slots, because the noisy drivers tend to
- * alternate between an error and its follow-up.
+ * still gets every line. Four slots, because the noisy drivers go round a few
+ * lines: a W5500 that hangs alternates three (send command timeout, OPEN
+ * failed, change link failed), and two slots never saw any of them again.
  */
 static const uint32_t REPEAT_WINDOW_MS  = 10000UL; //!< older than this counts as new
 static const uint32_t REPEAT_SUMMARY_MS = 30000UL; //!< report a running flood this often
-static const size_t   REPEAT_SLOTS      = 2;
+static const size_t   REPEAT_SLOTS      = 4;
+
+static void (*s_idfErrorHook)(const char* line, size_t len) = nullptr;
 
 static portMUX_TYPE s_repeatLock = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t     s_recentHash[REPEAT_SLOTS];
@@ -395,8 +398,11 @@ int LogBuffer::idfHook(const char* format, va_list args)
             report       = s_suppressed;
             s_suppressed = 0;
 
-            s_recentHash[1] = s_recentHash[0];
-            s_recentAt[1]   = s_recentAt[0];
+            for (size_t i = REPEAT_SLOTS - 1; i > 0; i--)
+            {
+                s_recentHash[i] = s_recentHash[i - 1];
+                s_recentAt[i]   = s_recentAt[i - 1];
+            }
             s_recentHash[0] = hash;
             s_recentAt[0]   = (now != 0) ? now : 1;
         }
@@ -405,9 +411,19 @@ int LogBuffer::idfHook(const char* format, va_list args)
 
         if (report > 0) storeRepeatCount(report);
         if (!repeat) sysLog.store(line, len);
+
+        // "E (12345) tag: ...", possibly behind a colour sequence.
+        const char* level = strstr(line, " (");
+        if (s_idfErrorHook != nullptr && level != nullptr && level > line && level[-1] == 'E')
+            s_idfErrorHook(line, len);
     }
 
     return (s_previousHook != nullptr) ? s_previousHook(format, args) : 0;
+}
+
+void LogBuffer::setIdfErrorHook(void (*hook)(const char* line, size_t len))
+{
+    s_idfErrorHook = hook;
 }
 
 void LogBuffer::storeRepeatCount(uint32_t count)
