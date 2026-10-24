@@ -4708,3 +4708,70 @@ def patch_secure_reject_report():
 
 
 patch_secure_reject_report()
+
+
+# --------------------------------------------------------------------------
+# 38. A coupler at x.y.z is still the coupler of line x.y
+# --------------------------------------------------------------------------
+#
+# evaluateCouplerType() only knows x.y.0 and x.0.0; for any other address its
+# else branch is commented out upstream and _couplerType keeps whatever it
+# held. routeDataIndividual() then drops every frame the device itself sends
+# to an individual address ("unknown coupler type"): requests to the device
+# still arrive, but no answer and no T_ACK leaves, and the address can only
+# be corrected by serial number. It is also evaluated once, in the
+# constructor, before the address is loaded, and _currentAddress is never
+# updated, so a new address is only seen by isRoutedIndividualAddress().
+#
+# Now x.y.z counts as the coupler of line x.y (x.0.z of area x), the address
+# is remembered, and the local path re-evaluates it as well. src/knx_link.cpp
+# still warns, ETS expects a coupler at x.y.0.
+
+SEC38_MARKER = "// sbip: a coupler at x.y.z serves line x.y, see scripts/patch_knx.py 38"
+
+SEC38_EDITS = (
+    (
+        "void NetworkLayerCoupler::evaluateCouplerType()\n"
+        "{\n",
+        "void NetworkLayerCoupler::evaluateCouplerType()\n"
+        "{\n"
+        "    " + SEC38_MARKER + "\n"
+        "    _currentAddress = _deviceObj.individualAddress();\n"
+        "\n",
+    ),
+    (
+        "    else\n"
+        "    {\n"
+        "        // Device is not a router, check if TP1 bridge or TP1 repeater\n",
+        "    else\n"
+        "    {\n"
+        "        // sbip: not a coupler address, but still the device's line - the\n"
+        "        // answers of its own management have to leave somewhere.\n"
+        "        _couplerType = (_deviceObj.individualAddress() & 0x0F00) == 0x0 ? BackboneCoupler : LineCoupler;\n"
+        "\n"
+        "        // Device is not a router, check if TP1 bridge or TP1 repeater\n",
+    ),
+    (
+        "    // Local to main or sub line\n"
+        "    if (srcIfIndex == kLocalIfIndex)\n"
+        "    {\n",
+        "    // Local to main or sub line\n"
+        "    if (srcIfIndex == kLocalIfIndex)\n"
+        "    {\n"
+        "        // sbip: the address may have changed since, see patch 38\n"
+        "        if (_currentAddress != _deviceObj.individualAddress())\n"
+        "            evaluateCouplerType();\n"
+        "\n",
+    ),
+)
+
+
+def patch_coupler_any_address():
+    if apply_secure_edits(
+        "network_layer_coupler.cpp", SEC38_MARKER, SEC38_EDITS,
+        "a device at x.y.z sends no answer to an individual address",
+    ):
+        print("patch_knx.py: coupler type for any address in network_layer_coupler.cpp")
+
+
+patch_coupler_any_address()

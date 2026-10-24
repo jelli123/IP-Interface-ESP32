@@ -1810,12 +1810,12 @@ void KnxLink::persistAddress()
 /*
  * A coupler needs an address ending in .0, and the stack does not say so.
  *
- * NetworkLayerCoupler::evaluateCouplerType() only recognises x.y.0 and x.0.0;
- * its else branch - "not a router" - is entirely commented out upstream, so
- * _couplerType keeps whatever it held. routeDataIndividual() then bails out
- * on "unknown coupler type" and every physically addressed telegram is
- * silently dropped. The device still answers broadcasts, which is exactly
- * what makes this hard to see: ETS finds the device but cannot talk to it.
+ * NetworkLayerCoupler::evaluateCouplerType() only recognised x.y.0 and x.0.0,
+ * and with any other address routeDataIndividual() dropped every frame the
+ * device sent to an individual address: ETS found the device but got no
+ * answer. Patch 38 makes x.y.z the coupler of line x.y, so the device stays
+ * reachable and its address can be corrected - but ETS still expects a
+ * coupler at x.y.0.
  */
 void KnxLink::warnAboutCouplerAddress()
 {
@@ -1829,12 +1829,12 @@ void KnxLink::warnAboutCouplerAddress()
 
     if ((address & 0x00FF) != 0x0000)
     {
-        sysLog.printf("KNX: WARNING - address %u.%u.%u does not end in .0, so "
-                      "the stack cannot tell which coupler this is and drops "
-                      "every physically addressed telegram. Give the device an "
-                      "address like %u.%u.0 in the ETS.\n",
+        sysLog.printf("KNX: WARNING - address %u.%u.%u does not end in .0. The device "
+                      "works as the coupler of line %u.%u, but ETS expects a coupler "
+                      "at %u.%u.0 - give it that address.\n",
                       (unsigned)(address >> 12), (unsigned)((address >> 8) & 0x0F),
                       (unsigned)(address & 0xFF),
+                      (unsigned)(address >> 12), (unsigned)((address >> 8) & 0x0F),
                       (unsigned)(address >> 12), (unsigned)((address >> 8) & 0x0F));
     }
 }
