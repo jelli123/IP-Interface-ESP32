@@ -1611,7 +1611,7 @@ struct MonitorCursor
 };
 
 /** Longest JSON an entry can produce, so a chunk never has to split one. */
-const size_t MON_LINE_MAX = 320;
+const size_t MON_LINE_MAX = 416;
 
 const char* apciName(uint16_t apci)
 {
@@ -1694,6 +1694,26 @@ const char* serviceName(const uint8_t* tpdu, uint8_t tpduLen, bool group,
         return scratch;
     }
 
+    /*
+     * A_SecureService (AN158): the Security Control Field after the APCI
+     * tells what it carries - bit 7 tool access, bits 2..0 the service.
+     */
+    if (apci == 0x3F1)
+    {
+        if (tpduLen < 3) return "SecureService";
+
+        uint8_t     scf  = tpdu[2];
+        const char* kind = "SecureService";
+        switch (scf & 0x07)
+        {
+        case 0x00: kind = "SecureData"; break;
+        case 0x02: kind = "SecureSyncRequest"; break;
+        case 0x03: kind = "SecureSyncResponse"; break;
+        }
+        snprintf(scratch, scratchLen, "%s%s", kind, (scf & 0x80) ? " (Tool Access)" : "");
+        return scratch;
+    }
+
     return apciName(apci);
 }
 
@@ -1740,14 +1760,24 @@ int monitorEntryJson(char* out, size_t max, uint32_t seq,
     bool isData = entry.stored >= 2 &&
                   (cemi[0] == 0x11 || cemi[0] == 0x29 || cemi[0] == 0x2E);
 
+    // The frame as it was captured, for a report. "cut" says how many
+    // octets beyond it the frame had - the ring keeps RAW_MAX, the frames
+    // carried over a restart even fewer.
+    char raw[2 * BusMonitor::RAW_MAX + 1] = {0};
+    for (uint8_t i = 0; i < entry.stored; i++)
+    {
+        snprintf(raw + 2 * i, 3, "%02X", cemi[i]);
+    }
+
+    char cut[16] = "";
+    if (entry.length > entry.stored)
+    {
+        snprintf(cut, sizeof(cut), ",\"cut\":%u", (unsigned)(entry.length - entry.stored));
+    }
+
     if (!isData || entry.stored < ctrl + 7)
     {
-        char raw[2 * BusMonitor::RAW_MAX + 1] = {0};
-        for (uint8_t i = 0; i < entry.stored; i++)
-        {
-            snprintf(raw + 2 * i, 3, "%02X", cemi[i]);
-        }
-        return snprintf(out, max, "%s,\"raw\":\"%s\"}", head, raw);
+        return snprintf(out, max, "%s%s,\"raw\":\"%s\"}", head, cut, raw);
     }
 
     uint8_t  ctrl1 = cemi[ctrl];
@@ -1776,7 +1806,7 @@ int monitorEntryJson(char* out, size_t max, uint32_t seq,
     const uint8_t* tpdu    = cemi + ctrl + 7;
     uint8_t        tpduLen = (uint8_t)(entry.stored - (ctrl + 7));
 
-    char     service[16] = {0};
+    char     service[40] = {0};
     char     data[2 * BusMonitor::RAW_MAX + 1] = {0};
     const char* name = serviceName(tpdu, tpduLen, group, service, sizeof(service));
 
@@ -1807,12 +1837,12 @@ int monitorEntryJson(char* out, size_t max, uint32_t seq,
     return snprintf(out, max,
                     "%s,\"src\":\"%s\",\"dst\":\"%s\",\"g\":%u,\"p\":\"%s\","
                     "\"r\":%u,\"h\":%u,\"x\":%u,\"n\":%u,\"c\":%u,"
-                    "\"a\":\"%s\",\"d\":\"%s\"}",
+                    "\"a\":\"%s\",\"d\":\"%s\",\"cemi\":\"%s\"%s}",
                     head, source, target, group ? 1u : 0u, priorityName(ctrl1),
                     (ctrl1 & 0x20) ? 0u : 1u,          // bit clear means repeated
                     (ctrl2 >> 4) & 0x07,
                     (ctrl1 & 0x80) ? 0u : 1u,          // bit clear means extended
-                    (unsigned)count, confirm, name, data);
+                    (unsigned)count, confirm, name, data, raw, cut);
 }
 
 String monitorStateJson()

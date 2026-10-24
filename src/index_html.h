@@ -2940,6 +2940,13 @@ function monFilter(list){
  * Tunnel-Client traegt Adressen und Dienst des bestaetigten Telegramms und
  * saehe ohne ihn aus wie dasselbe Telegramm ein zweites Mal.
  */
+/* Nutzdaten, und wenn der Rahmen nur gekuerzt gespeichert ist, wie viel
+ * fehlt - sonst sieht ein gekuerztes Telegramm aus wie ein kurzes. */
+function monData(r){
+  const d = r.d || r.raw || '';
+  return r.cut ? d + ' \u2026 (+' + r.cut + ' ' + t('Byte') + ')' : d;
+}
+
 function monSvc(r){
   const a = r.a || (r.raw ? t('unlesbar') : '');
   if(!r.c) return a;
@@ -2968,7 +2975,8 @@ function monRender(scroll){
               + (monSel && r.dst === monSel ? ' mark' : '')
               + (r.c ? ' con' : '')
               + (r.b ? ' prior' : '');
-    return '<tr class="' + cls + '" data-s="' + r.s + '" onclick="monPick(\'' + esc(r.dst || '') + '\')">'
+    return '<tr class="' + cls + '" data-s="' + r.s + '" title="cEMI ' + esc(r.cemi || r.raw || '') + '"'
+      + ' onclick="monPick(\'' + esc(r.dst || '') + '\')">'
       + '<td>' + monTime(r) + '</td>'
       + '<td class="dim">' + gap + '</td>'
       + '<td>' + SIDE_TXT[r.t] + '</td>'
@@ -2978,7 +2986,7 @@ function monRender(scroll){
       + '<td class="dim">' + esc(r.p || '') + '</td>'
       + '<td>' + esc(monSvc(r)) + '</td>'
       + '<td class="dim">' + monBits(r) + '</td>'
-      + '<td class="w dim">' + esc(r.d || r.raw || '') + '</td>'
+      + '<td class="w dim">' + esc(monData(r)) + '</td>'
       + '<td class="val w">' + esc(monValue(r)) + '</td></tr>';
   }).join('');
 
@@ -3251,10 +3259,11 @@ async function monTick(){
 /* Spalten fuer Datei und Zwischenablage; ohne Liste das gerade Geladene. */
 function monText(sep, list){
   const head = ['ms','Seite','Richtung','Quelle','Ziel','Prio','Wdh','Hop',
-                'Dienst','Daten','Wert'].join(sep);
+                'Dienst','Daten','Wert','cEMI'].join(sep);
   const body = (list || monRows).map(r => [r.ms, SIDE_TXT[r.t], r.o ? 'TX' : 'RX',
       r.src || '', r.dst || '', r.p || '', r.r || 0, r.h === undefined ? '' : r.h,
-      monSvc(r), r.d || r.raw || '', monValue(r)].join(sep)).join('\n');
+      monSvc(r), monData(r), monValue(r),
+      (r.cemi || r.raw || '') + (r.cut ? ' (+' + r.cut + ')' : '')].join(sep)).join('\n');
   return head + '\n' + body;
 }
 

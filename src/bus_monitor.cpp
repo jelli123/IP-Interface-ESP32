@@ -33,12 +33,14 @@ const uint32_t MIN_FRAMES = 200;
  * led up to a restart - an A_Restart from ETS, a crash in the middle of a
  * download - was gone exactly when it mattered. RTC memory keeps its content
  * over a software reset, a panic and a watchdog, as it does for the log.
- * It is small: 64 frames of up to 28 bytes, 2.3 KiB next to the log's 3.
- * Every frame goes in, whether or not the monitor is recording.
+ * It is small: 64 frames of up to 36 bytes, 2.8 KiB next to the log's 3.
+ * 36 holds a whole Secure sync frame (34 octets of cEMI); what does not fit
+ * is reported as cut. Every frame goes in, whether or not the monitor is
+ * recording. A new magic for every change of the layout.
  */
-const uint32_t TAIL_MAGIC  = 0x53424D54; // "SBMT"
+const uint32_t TAIL_MAGIC  = 0x53424D32; // "SBM2"
 const uint8_t  TAIL_FRAMES = 64;
-const uint8_t  TAIL_RAW    = 28;
+const uint8_t  TAIL_RAW    = 36;
 
 struct TailEntry
 {
