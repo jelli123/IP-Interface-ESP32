@@ -4590,3 +4590,121 @@ def patch_tunnel_addresses_top():
 
 
 patch_tunnel_addresses_top()
+
+
+# --------------------------------------------------------------------------
+# 37. Say why Data Secure dropped a telegram
+# --------------------------------------------------------------------------
+#
+# SecureApplicationLayer::decrypt() drops a telegram without a key, a replay,
+# a sync.req for another serial number or one too soon after the last
+# sync.res, a sync.res nobody asked for, and a wrong MAC - silently, as the
+# specification wants it on the bus, and its prints are compiled out (patch
+# 22). A tool that computed the tool access MAC with sender 0.0.0 while the
+# device checked it with its tunnel address cost hours that way. Each case now
+# goes to sbipSecureRejectHook (src/knx_secure_diag.cpp), which counts it and
+# logs it. A broadcast sync.req for another device is no failure and stays
+# silent.
+
+SEC37_MARKER = "// sbip: Data Secure drops are reported, see scripts/patch_knx.py 37"
+
+SEC37_EDITS = (
+    (
+        "extern uint64_t (*sbipSequenceHook)(uint8_t counter, uint64_t value, bool store);\n",
+        "extern uint64_t (*sbipSequenceHook)(uint8_t counter, uint64_t value, bool store);\n"
+        + SEC37_MARKER + "\n"
+        "// Reasons: 1 no key, 2 replay, 3 serial number, 4 sync.req too soon,\n"
+        "// 5 no pending sync.req, 6 MAC. Defined in src/knx_secure_diag.cpp.\n"
+        "extern void (*sbipSecureRejectHook)(uint8_t reason, uint16_t src, uint16_t dst, bool group,\n"
+        "                                    uint8_t scf, uint64_t seq, uint64_t expected);\n"
+        "#define SBIP_REJECT(reason, seq, expected) \\\n"
+        "    do { if (sbipSecureRejectHook) sbipSecureRejectHook(reason, srcAddr, dstAddr, dstAddrIsGroupAddr, scf, seq, expected); } while (0)\n",
+    ),
+    (
+        "        println(toolAccess ? \"true\" : \"false\");\n"
+        "        return false;\n"
+        "    }\n"
+        "\n"
+        "    uint8_t seqNum[6];\n"
+        "    pBuf = popByteArray(seqNum, 6, pBuf);\n",
+        "        println(toolAccess ? \"true\" : \"false\");\n"
+        "        SBIP_REJECT(1, 0, 0);\n"
+        "        return false;\n"
+        "    }\n"
+        "\n"
+        "    uint8_t seqNum[6];\n"
+        "    pBuf = popByteArray(seqNum, 6, pBuf);\n",
+    ),
+    (
+        "                print(expectedSeqNumber, HEX);\n"
+        "                return false;\n",
+        "                print(expectedSeqNumber, HEX);\n"
+        "                SBIP_REJECT(2, receivedSeqNumber, expectedSeqNumber);\n"
+        "                return false;\n",
+    ),
+    (
+        "                           : dstAddrIsGroupAddr || dstAddr != _deviceObj.individualAddress() || !(ourSerial || noSerial)))\n"
+        "                return false;\n",
+        "                           : dstAddrIsGroupAddr || dstAddr != _deviceObj.individualAddress() || !(ourSerial || noSerial)))\n"
+        "            {\n"
+        "                if (!dstAddrIsGroupAddr && dstAddr == _deviceObj.individualAddress())\n"
+        "                    SBIP_REJECT(3, 0, 0);\n"
+        "                return false;\n"
+        "            }\n",
+    ),
+    (
+        "        if ((millis() - _lastSyncRes) < 1000)\n"
+        "        {\n"
+        "            return false;\n"
+        "        }\n",
+        "        if ((millis() - _lastSyncRes) < 1000)\n"
+        "        {\n"
+        "            SBIP_REJECT(4, 0, 0);\n"
+        "            return false;\n"
+        "        }\n",
+    ),
+    (
+        "            println(\"Cannot find matching challenge for source address!\");\n"
+        "            return false;\n",
+        "            println(\"Cannot find matching challenge for source address!\");\n"
+        "            SBIP_REJECT(5, 0, 0);\n"
+        "            return false;\n",
+    ),
+    (
+        "            print(\" != received MAC: \");\n"
+        "            print(mac, HEX);\n"
+        "            println(\"\\n\");\n"
+        "\n"
+        "            return false;\n",
+        "            print(\" != received MAC: \");\n"
+        "            print(mac, HEX);\n"
+        "            println(\"\\n\");\n"
+        "\n"
+        "            SBIP_REJECT(6, 0, 0);\n"
+        "            return false;\n",
+    ),
+    (
+        "            print(\" != decrypted MAC: \");\n"
+        "            print(decryptedMac, HEX);\n"
+        "            println(\"\\n\");\n"
+        "\n"
+        "            return false;\n",
+        "            print(\" != decrypted MAC: \");\n"
+        "            print(decryptedMac, HEX);\n"
+        "            println(\"\\n\");\n"
+        "\n"
+        "            SBIP_REJECT(6, 0, 0);\n"
+        "            return false;\n",
+    ),
+)
+
+
+def patch_secure_reject_report():
+    if apply_secure_edits(
+        "secure_application_layer.cpp", SEC37_MARKER, SEC37_EDITS,
+        "Data Secure drops telegrams without a trace",
+    ):
+        print("patch_knx.py: Data Secure drops reported in secure_application_layer.cpp")
+
+
+patch_secure_reject_report()

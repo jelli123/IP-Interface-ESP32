@@ -24,6 +24,7 @@
 #include "knx_link.h"
 #include "knx_secure_crypto.h"
 #include "knx_secure_store.h"
+#include "knx_secure_diag.h"
 #include "knx_security_proxy.h"
 #include "knxip_shim.h"
 
@@ -1199,6 +1200,7 @@ bool KnxLink::begin()
     sbipAccessHook     = &checkServiceAccess;
     sbipCemiAccessHook = &checkCemiAccess;
     sbipTunnelFeatureHook = &tunnelFeature;
+    knxSecureDiag.begin();
     sbipIpSbcHook         = &ipSbcFunction;
     sbipLocalTransportSend = &localTransportSend;
     sbipCemiServiceHook    = &cemiService;
@@ -2475,6 +2477,7 @@ String KnxLink::secureJson() const
     j += ",\"plain_refused\":" + String(shs.plainConnectRefused + shs.plainRoutingDropped);
     j += ",\"hijack\":" + String(shs.channelHijackDropped);
     j += ",\"proxy\":" + knxSecurityProxy.json();
+    j += ",\"data\":" + knxSecureDiag.json();
     j += "}";
     return j;
 }

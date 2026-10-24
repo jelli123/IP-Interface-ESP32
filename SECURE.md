@@ -107,6 +107,7 @@ IP-Secure-Profil das Profilmodul „S-AL“.
 | MAC „nur Authentifizierung“ nach AN158 | Patch 22 (Stack rechnete falsch, KNXSTACK.md 14) |
 | Access Policies für Dienste und Daten | `src/knx_access_policy.cpp` nach AN193, Patch 23 |
 | Abgewiesen: Property-Dienste mit 0 Elementen / `AccessDenied`; `A_DeviceDescriptor_Read` mit FFFFh bzw. Typ 3Fh; Beschreibung mit genullten Feldern | Patch 23 (AN193 2.2.1, 2.2.4.5) |
+| Verworfene Telegramme bleiben auf dem Bus unbeantwortet, sollen aber bei der Fehlersuche sichtbar sein | Patch 37: kein Schlüssel, Replay, fremde Seriennummer, Sync.req zu früh, Sync.res ohne Anfrage und falscher MAC werden in `/api/status` unter `secure.data` gezählt (`tool_mac_fail` extra) und höchstens einmal pro Minute je Absender und Grund geloggt, `src/knx_secure_diag.cpp` |
 
 ### 2.4 Koppler
 
