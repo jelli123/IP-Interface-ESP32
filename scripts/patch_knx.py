@@ -4523,3 +4523,70 @@ def patch_function_property_null():
 
 
 patch_function_property_null()
+
+
+# --------------------------------------------------------------------------
+# 36. Tunnel addresses from the top of the line, without the device's own
+# --------------------------------------------------------------------------
+#
+# Until ETS writes PID_ADDITIONAL_INDIVIDUAL_ADDRESSES the stack fills it
+# with the device's line, 1 to n. A device that got x.y.1 by serial number
+# then had its own address as the first tunnel's, and the low numbers are
+# the ones a line gives its first devices anyway. The list now comes from
+# sbipDefaultTunnelAddresses() in src/knx_link.cpp: x.y.255 downwards, the
+# device's own address left out, as ETS and sb-projekt hand them out.
+# sbipTunnelAddressesStale() replaces the check of patch 33 and also
+# recognises a list of the old form that holds the device's address.
+
+SEC36_MARKER = "// sbip: tunnel addresses from the top of the line, see scripts/patch_knx.py 36"
+
+SEC36_ANCHOR_DECL = '#include "ip_data_link_layer.h"\n'
+
+SEC36_DECL = (
+    SEC36_ANCHOR_DECL
+    + "\n"
+    + SEC36_MARKER + "\n"
+    "// Defined in src/knx_link.cpp.\n"
+    "void sbipDefaultTunnelAddresses(uint16_t own, uint8_t* list);\n"
+    "bool sbipTunnelAddressesStale(uint16_t own, const uint8_t* list);\n"
+)
+
+SEC36_ANCHOR_STALE = (
+    "        const uint8_t* stored = _ipParameters.propertyData(PID_ADDITIONAL_INDIVIDUAL_ADDRESSES);\n"
+    "        bool filled = stored != nullptr;\n"
+    "\n"
+    "        for (int i = 0; filled && i < KNX_TUNNELING; i++)\n"
+    "            filled = stored[i * 2] == stored[0] && stored[i * 2 + 1] == i + 1;\n"
+    "\n"
+    "        sbipStale = filled && stored[0] != _deviceObject.individualAddress() / 0x0100;\n"
+)
+
+SEC36_STALE = (
+    "        const uint8_t* stored = _ipParameters.propertyData(PID_ADDITIONAL_INDIVIDUAL_ADDRESSES);\n"
+    "        sbipStale = stored != nullptr && sbipTunnelAddressesStale(_deviceObject.individualAddress(), stored);\n"
+)
+
+SEC36_ANCHOR_FILL = (
+    "        for (int i = 0; i < KNX_TUNNELING; i++)\n"
+    "        {\n"
+    "            addrbuffer[i * 2 + 1] = i + 1;\n"
+    "            addrbuffer[i * 2] = _deviceObject.individualAddress() / 0x0100;\n"
+    "        }\n"
+)
+
+SEC36_FILL = (
+    "        sbipDefaultTunnelAddresses(_deviceObject.individualAddress(), addrbuffer);\n"
+)
+
+
+def patch_tunnel_addresses_top():
+    if apply_secure_edits(
+        "ip_data_link_layer.cpp", SEC36_MARKER,
+        ((SEC36_ANCHOR_DECL, SEC36_DECL), (SEC36_ANCHOR_STALE, SEC36_STALE),
+         (SEC36_ANCHOR_FILL, SEC36_FILL)),
+        "tunnel addresses start at x.y.1 and may hold the device's own address",
+    ):
+        print("patch_knx.py: tunnel addresses from the top of the line in ip_data_link_layer.cpp")
+
+
+patch_tunnel_addresses_top()

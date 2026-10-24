@@ -107,6 +107,13 @@ uint8_t (*sbipTunnelFeatureHook)(uint8_t slot, uint16_t tunnelAddress, uint8_t f
                                  uint8_t* out, uint8_t& outLength, uint16_t& newAddress) = nullptr;
 
 /*
+ * The tunnel addresses until ETS writes them, defined further down. The stack
+ * calls both as well, see scripts/patch_knx.py 36.
+ */
+void sbipDefaultTunnelAddresses(uint16_t own, uint8_t* list);
+bool sbipTunnelAddressesStale(uint16_t own, const uint8_t* list);
+
+/*
  * KNX IP System Broadcast, see patch 27: PID_IP_SBC_CONTROL and whether a
  * broadcast from IP may go on to TP. Both answered by src/knxip_shim.cpp.
  */
@@ -1242,13 +1249,17 @@ bool KnxLink::begin()
     };
     KnxIpShim::Tunnels tunnels = {
         // Slot n of the stack uses PID 53 entry n + 1. Until ETS wrote the
-        // list the stack takes the device's own line, 1 to n, and stores
-        // that at the first connect.
+        // list the stack takes the default one and stores it at the first
+        // connect.
         [](uint8_t slot) -> uint16_t {
             uint16_t addresses[KNX_TUNNELING];
             uint8_t  count = knxLink.tunnelAddresses(addresses, KNX_TUNNELING);
             if (count != KNX_TUNNELING)
-                return (uint16_t)((knxBau.deviceObject().individualAddress() & 0xFF00) | (slot + 1));
+            {
+                uint8_t list[KNX_TUNNELING * 2];
+                sbipDefaultTunnelAddresses(knxBau.deviceObject().individualAddress(), list);
+                return (uint16_t)((list[slot * 2] << 8) | list[slot * 2 + 1]);
+            }
             return addresses[slot];
         },
         [](uint16_t address) -> bool {
@@ -1827,14 +1838,75 @@ void KnxLink::warnAboutCouplerAddress()
 }
 
 /*
- * Tunnel addresses the stack filled in itself follow a new device address.
+ * The tunnel addresses this firmware fills in until ETS writes the list
+ * (PID_ADDITIONAL_INDIVIDUAL_ADDRESSES, KNX_TUNNELING entries of 2 octets).
  *
- * At the first tunnel connection the stack stores the device's line, 1 to n,
- * in PID_ADDITIONAL_INDIVIDUAL_ADDRESSES - 15.15.1 to 15.15.10 for a device
- * fresh from the box. ETS then sets, say, 1.1.0 and goes on in the same
- * connection; search and description answers kept offering 15.15.x, a line
- * ETS knows no way to, until the next connect (patch 33). A list ETS wrote
- * is left alone.
+ * Taken from the top of the device's line downwards, x.y.255 first, as ETS
+ * and sb-projekt hand them out, and stored in ascending order. The device's
+ * own address is left out: with 1 to n, the stack's original choice, the
+ * first tunnel of a device at x.y.1 carried the device's own address, and
+ * the low numbers are what a line gives its first devices anyway.
+ *
+ * Also called by the stack, see scripts/patch_knx.py 36.
+ */
+void sbipDefaultTunnelAddresses(uint16_t own, uint8_t* list)
+{
+    uint8_t  line   = (uint8_t)(own >> 8);
+    uint8_t  device = (uint8_t)own;
+    int      slot   = KNX_TUNNELING - 1;
+
+    for (int number = 255; number > 0 && slot >= 0; number--)
+    {
+        if (number == device) continue;
+        list[slot * 2]     = line;
+        list[slot * 2 + 1] = (uint8_t)number;
+        slot--;
+    }
+}
+
+/*
+ * Whether a stored list is one this firmware or the stack filled in and no
+ * longer fits the device's address @p own - then it is filled anew.
+ *
+ * Only when it is on another line than the device or holds the device's own
+ * address: a list of either form on the device's line may just as well have
+ * come from ETS. A list ETS wrote in any other form is never touched.
+ */
+bool sbipTunnelAddressesStale(uint16_t own, const uint8_t* list)
+{
+    uint8_t line = list[0];
+    bool    mine = false; // holds the device's own address
+
+    bool oldForm = true;  // 1 to n, the stack's original choice
+    for (int i = 0; i < KNX_TUNNELING; i++)
+    {
+        if (list[i * 2] != line) return false;
+        if (list[i * 2 + 1] != i + 1) oldForm = false;
+        if (((line << 8) | list[i * 2 + 1]) == own) mine = true;
+    }
+
+    if (line == (uint8_t)(own >> 8) && !mine) return false;
+    if (oldForm) return true;
+
+    // The new form, filled for some device on that line: the device number
+    // only matters when it was among the top addresses.
+    for (int device = 255 - KNX_TUNNELING; device <= 256; device++)
+    {
+        uint8_t filled[KNX_TUNNELING * 2];
+        sbipDefaultTunnelAddresses((uint16_t)((line << 8) | (device & 0xFF)), filled);
+        if (memcmp(list, filled, sizeof(filled)) == 0) return true;
+    }
+    return false;
+}
+
+/*
+ * Tunnel addresses this firmware filled in itself follow a new device address.
+ *
+ * At the first tunnel connection the stack stores the default list - for a
+ * device fresh from the box 15.15.246 to 15.15.255. ETS then sets, say, 1.1.0
+ * and goes on in the same connection; search and description answers kept
+ * offering 15.15.x, a line ETS knows no way to, until the next connect (patch
+ * 33). A list ETS wrote is left alone.
  */
 void KnxLink::followTunnelAddresses()
 {
@@ -1845,27 +1917,26 @@ void KnxLink::followTunnelAddresses()
     uint16_t addresses[KNX_TUNNELING];
     if (tunnelAddresses(addresses, KNX_TUNNELING) != KNX_TUNNELING) return;
 
-    uint16_t line = addresses[0] & 0xFF00;
-    if (line == (address & 0xFF00)) return;
-
-    for (uint8_t i = 0; i < KNX_TUNNELING; i++)
-        if (addresses[i] != (line | (i + 1))) return;
-
     uint8_t list[KNX_TUNNELING * 2];
     for (uint8_t i = 0; i < KNX_TUNNELING; i++)
     {
-        list[i * 2]     = (uint8_t)(address >> 8);
-        list[i * 2 + 1] = (uint8_t)(i + 1);
+        list[i * 2]     = (uint8_t)(addresses[i] >> 8);
+        list[i * 2 + 1] = (uint8_t)addresses[i];
     }
+    if (!sbipTunnelAddressesStale(address, list)) return;
+
+    sbipDefaultTunnelAddresses(address, list);
 
     uint8_t count = KNX_TUNNELING;
     knxBau.propertyValueWrite(OT_IP_PARAMETER, 1, PID_ADDITIONAL_INDIVIDUAL_ADDRESSES,
                               count, 1, list, sizeof(list));
     saveMemorySoon();
 
-    sysLog.printf("KNX: tunnel addresses moved from line %u.%u to %u.%u\n",
-                  (unsigned)(line >> 12), (unsigned)((line >> 8) & 0x0F),
-                  (unsigned)(address >> 12), (unsigned)((address >> 8) & 0x0F));
+    sysLog.printf("KNX: tunnel addresses moved from %u.%u.%u-%u to %u.%u.%u-%u\n",
+                  (unsigned)(addresses[0] >> 12), (unsigned)((addresses[0] >> 8) & 0x0F),
+                  (unsigned)(addresses[0] & 0xFF), (unsigned)(addresses[KNX_TUNNELING - 1] & 0xFF),
+                  (unsigned)(list[0] >> 4), (unsigned)(list[0] & 0x0F),
+                  (unsigned)list[1], (unsigned)list[KNX_TUNNELING * 2 - 1]);
 }
 
 void KnxLink::activityTrampoline(uint8_t info)

@@ -1262,8 +1262,11 @@ Löwenanteil aus, und keiner davon ist optional.
 ### Tunnelanzahl
 
 `-DKNX_TUNNELING=10` entspricht ip4knx. Jede Tunnelverbindung braucht eine
-eigene physikalische Adresse; solange das Gerät unprogrammiert ist, leitet der
-Stack sie aus dem eigenen Subnetz ab (`15.15.1` … `15.15.10`). Der Aufwand liegt
+eigene physikalische Adresse. Bis die ETS sie schreibt, nimmt die Firmware sie
+von oben aus der eigenen Linie und lässt die eigene Adresse aus (`15.15.246` …
+`15.15.255`), wie ETS und sb-projekt. Bekommt das Gerät eine neue Adresse,
+wandert eine so vergebene Liste mit, wenn sie auf einer anderen Linie liegt oder
+die neue Adresse enthält (Patch 33 und 36). Der Aufwand liegt
 bei ~24 Byte RAM und 7 Byte Property-Daten je Tunnel – die praktische Grenze ist
 der Adressbereich, nicht der ESP32.
 
