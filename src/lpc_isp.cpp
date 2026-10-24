@@ -52,6 +52,7 @@ const uint8_t  U_PRODUCT_ID_REQ   = 0x20;
 const uint8_t  U_EMU_IDENTIFY_REQ = 0xFE;
 const uint8_t  EMU_IDENTIFY_MIN   = 14;    //!< payload octets of format 1
 const uint8_t  EMU_IDENTIFY_FMT2  = 16;    //!< payload octets of format 2
+const uint8_t  EMU_IDENTIFY_FMT3  = 21;    //!< payload octets of format 3, with the build id
 const uint8_t  EMU_IDENTIFY_MAX   = 64;    //!< anything longer is not an answer
 const uint32_t TP_BAUD            = 19200;
 
@@ -743,6 +744,15 @@ bool LpcIsp::parseIdentify(const uint8_t* data, size_t length)
         {
             _tp.features = p[14];
             _tp.maxRate  = p[15];
+        }
+
+        _tp.buildId    = 0;
+        _tp.buildDirty = false;
+        if (p[0] >= 3 && payload >= EMU_IDENTIFY_FMT3)
+        {
+            _tp.buildId    = ((uint32_t)p[16] << 24) | ((uint32_t)p[17] << 16) |
+                             ((uint32_t)p[18] << 8) | p[19];
+            _tp.buildDirty = (p[20] & 0x01) != 0;
         }
         return true;
     }
@@ -1675,6 +1685,20 @@ String LpcIsp::statusJson() const
     return j;
 }
 
+/**
+ * ", build 1a2b3c4d" for an emulator that reports the Git commit it was
+ * built from, with "+" for changes to it; empty before identify format 3.
+ */
+String LpcIsp::buildText() const
+{
+    if (_tp.buildId == 0) return String();
+
+    char text[24];
+    snprintf(text, sizeof(text), ", build %08lx%s",
+             (unsigned long)_tp.buildId, _tp.buildDirty ? "+" : "");
+    return String(text);
+}
+
 String LpcIsp::transceiverText() const
 {
     char text[96];
@@ -1682,11 +1706,17 @@ String LpcIsp::transceiverText() const
     switch (_tp.kind)
     {
     case Transceiver::EMULATOR:
-        snprintf(text, sizeof(text),
-                 "Selfbus SB-Interface, TP-UART 2 emulation %u.%02u (sblib %X.%02X)",
-                 (unsigned)_tp.fwMajor, (unsigned)_tp.fwMinor,
-                 (unsigned)(_tp.sblib >> 8), (unsigned)(_tp.sblib & 0xFF));
+    {
+        int n = snprintf(text, sizeof(text),
+                         "Selfbus SB-Interface, TP-UART 2 emulation %u.%02u (sblib %X.%02X",
+                         (unsigned)_tp.fwMajor, (unsigned)_tp.fwMinor,
+                         (unsigned)(_tp.sblib >> 8), (unsigned)(_tp.sblib & 0xFF));
+        if (n > 0 && (size_t)n < sizeof(text))
+        {
+            snprintf(text + n, sizeof(text) - n, "%s)", buildText().c_str());
+        }
         break;
+    }
 
     case Transceiver::TPUART:
         if (_tp.hasProductId)
@@ -1739,6 +1769,13 @@ String LpcIsp::transceiverJson() const
         j += ",\"version\":\"" + String(version) + "\"";
         j += ",\"sblib\":\"" + String(sblib) + "\"";
         j += ",\"max_frame\":" + String(_tp.maxFrame);
+        if (_tp.buildId != 0)
+        {
+            char build[12];
+            snprintf(build, sizeof(build), "%08lx%s",
+                     (unsigned long)_tp.buildId, _tp.buildDirty ? "+" : "");
+            j += ",\"build\":\"" + String(build) + "\"";
+        }
         j += ",\"baud\":" + String(_tp.baud);
     }
 

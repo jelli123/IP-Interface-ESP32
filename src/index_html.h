@@ -3399,7 +3399,7 @@ function tpTypeText(x, busy){
   switch(x.kind){
   case 'emulator':
     return t('Selfbus SB-Interface, TP-UART-2-Emulation') + ' ' + x.version
-         + ' (sblib ' + x.sblib + ')';
+         + ' (sblib ' + x.sblib + (x.build ? ', Build ' + x.build : '') + ')';
   case 'tpuart':
     return x.product_id >= 0
          ? t('TP-UART, Produkt-ID') + ' 0x' + x.product_id.toString(16).toUpperCase().padStart(2,'0')

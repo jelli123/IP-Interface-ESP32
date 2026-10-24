@@ -68,6 +68,8 @@ public:
         char     name[9]      = {0};
         uint8_t  features     = 0;  //!< feature bits of identify format 2
         uint8_t  maxRate      = 0;  //!< highest U_EmuConfigure rate code
+        uint32_t buildId      = 0;  //!< Git commit of the emulator build (format 3), 0 = unknown
+        bool     buildDirty   = false; //!< built with changes to that commit
         uint32_t baud         = 19200; //!< what the KNX UART runs at after the query
 
         /** Feature bit: the emulator drives /LPC_READY (0.12 and later). */
@@ -141,6 +143,8 @@ public:
     String statusJson() const;
 
 private:
+    String buildText() const;
+
     enum Job : uint8_t
     {
         NONE = 0,
