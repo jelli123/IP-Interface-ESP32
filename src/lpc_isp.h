@@ -71,6 +71,14 @@ public:
         uint32_t buildId      = 0;  //!< Git commit of the emulator build (format 3), 0 = unknown
         bool     buildDirty   = false; //!< built with changes to that commit
         uint32_t baud         = 19200; //!< what the KNX UART runs at after the query
+        int16_t  systemState  = -1; //!< U_SystemState octet at the query, -1 = not asked
+
+        /** @return true if the STKNX reported the KNX bus voltage (KNX_OK) */
+        bool busVoltage() const { return systemState >= 0 && (systemState & 0x20); }
+        /** @return true if the STKNX reported its supply in range (VCC_OK) */
+        bool supplyOk() const { return systemState >= 0 && (systemState & 0x10); }
+        /** @return true if the emulator can send on the bus */
+        bool busReady() const { return busVoltage() && supplyOk(); }
 
         /** Feature bit: the emulator drives /LPC_READY (0.12 and later). */
         static constexpr uint8_t FEATURE_READY = 0x02;

@@ -57,6 +57,16 @@ const uint8_t  EMU_IDENTIFY_MAX   = 64;    //!< anything longer is not an answer
 const uint32_t TP_BAUD            = 19200;
 
 /*
+ * U_SystemState (emulator 0.12 and later, feature bit 2): 0x0D, answered
+ * with 0x4B and the state octet as on an NCN5120. VBUS and VDD2 carry the
+ * KNX_OK and VCC_OK outputs of the STKNX; without both the emulator cannot
+ * send and confirms every frame negatively with TE.
+ */
+const uint8_t  U_SYSTEM_STATE_REQ   = 0x0D;
+const uint8_t  U_SYSTEM_STAT_IND    = 0x4B;
+const uint8_t  EMU_FEATURE_SYSTEM_STATE = 0x04;
+
+/*
  * U_EmuConfigure (emulator 0.11 and later, feature bit 0 of U_EmuIdentify):
  * 0xFD, rate code, flags. The emulator answers at the old rate and switches
  * once the answer is out; it falls back to 19200 baud on its own after a
@@ -833,6 +843,20 @@ void LpcIsp::queryTransceiver(uint32_t bootMs)
             }
         }
 
+        if (_tp.kind == Transceiver::EMULATOR && (_tp.features & EMU_FEATURE_SYSTEM_STATE))
+        {
+            // Two octets; a telegram may come before them, so take the last
+            // 0x4B that is followed by a state octet.
+            for (int attempt = 0; attempt < 2 && _tp.systemState < 0; attempt++)
+            {
+                size_t n = collect(U_SYSTEM_STATE_REQ, buf, sizeof(buf), 10);
+                for (size_t i = 0; i + 1 < n; i++)
+                {
+                    if (buf[i] == U_SYSTEM_STAT_IND) _tp.systemState = buf[i + 1];
+                }
+            }
+        }
+
         if (_tp.kind != Transceiver::EMULATOR)
         {
             _tp.kind = Transceiver::TPUART;
@@ -875,6 +899,13 @@ void LpcIsp::queryTransceiver(uint32_t bootMs)
     _uart->end();
     sysLog.printf("LPC: on the KNX UART: %s, %u baud%s\n", transceiverText().c_str(),
                   (unsigned)_tp.baud, _tp.baud != TP_BAUD ? " without pacing" : "");
+    if (_tp.systemState >= 0 && !_tp.busReady())
+    {
+        sysLog.printf("LPC: the transceiver is not on the bus (STKNX%s%s low), every frame "
+                      "sent is confirmed negatively\n",
+                      _tp.busVoltage() ? "" : " KNX_OK",
+                      _tp.supplyOk()   ? "" : " VCC_OK");
+    }
 }
 
 /* ------------------------------------------------------------------------- *
@@ -1777,6 +1808,11 @@ String LpcIsp::transceiverJson() const
             j += ",\"build\":\"" + String(build) + "\"";
         }
         j += ",\"baud\":" + String(_tp.baud);
+        if (_tp.systemState >= 0)
+        {
+            j += ",\"bus_voltage\":" + String(_tp.busVoltage() ? "true" : "false");
+            j += ",\"supply_ok\":" + String(_tp.supplyOk() ? "true" : "false");
+        }
     }
 
     // For "nothing answers": whether the bootloader did, and what it found.

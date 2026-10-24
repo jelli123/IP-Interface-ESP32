@@ -1979,6 +1979,7 @@ const EN = {
 'startfähiges Programm':'a program that will start',
 'Inhalt ohne gültige Prüfsumme':'contents without a valid checksum',
 'antwortet':'answering', 'keine Antwort':'no answer',
+'nicht am Bus (keine Busspannung)':'not on the bus (no bus voltage)', 'nicht am Bus (STKNX-Versorgung fehlt)':'not on the bus (STKNX supply missing)',
 'installiert':'installed', 'Schnittstelle abfragen':'Asking the interface',
 'Selfbus SB-Interface, TP-UART-2-Emulation':'Selfbus SB-Interface, TP-UART 2 emulation',
 'TP-UART, Produkt-ID':'TP-UART, product ID',
@@ -3399,7 +3400,9 @@ function tpTypeText(x, busy){
   switch(x.kind){
   case 'emulator':
     return t('Selfbus SB-Interface, TP-UART-2-Emulation') + ' ' + x.version
-         + ' (sblib ' + x.sblib + (x.build ? ', Build ' + x.build : '') + ')';
+         + ' (sblib ' + x.sblib + (x.build ? ', Build ' + x.build : '') + ')'
+         + (x.bus_voltage === false ? ', ' + t('nicht am Bus (keine Busspannung)')
+          : x.supply_ok === false ? ', ' + t('nicht am Bus (STKNX-Versorgung fehlt)') : '');
   case 'tpuart':
     return x.product_id >= 0
          ? t('TP-UART, Produkt-ID') + ' 0x' + x.product_id.toString(16).toUpperCase().padStart(2,'0')
