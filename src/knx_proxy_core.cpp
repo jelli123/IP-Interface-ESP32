@@ -601,7 +601,9 @@ void Proxy::ptpTemp(bool command, const uint8_t* data, uint8_t length,
     result[1]    = service;
     resultLength = 2;
 
-    auto word = [&](uint8_t at) -> uint16_t { return (uint16_t)((data[at] << 8) | data[at + 1]); };
+    // Not "word": Arduino.h defines word(...) as a macro, should it ever
+    // come in here.
+    auto wordAt = [&](uint8_t at) -> uint16_t { return (uint16_t)((data[at] << 8) | data[at + 1]); };
 
     if (!command)
     {
@@ -617,7 +619,7 @@ void Proxy::ptpTemp(bool command, const uint8_t* data, uint8_t length,
         }
 
         result[0]    = E_SUCCESS;
-        result[2]    = _white.check(word(2), word(4), word(6), now) ? 1 : 0;
+        result[2]    = _white.check(wordAt(2), wordAt(4), wordAt(6), now) ? 1 : 0;
         resultLength = 3;
         return;
     }
@@ -625,7 +627,7 @@ void Proxy::ptpTemp(bool command, const uint8_t* data, uint8_t length,
     switch (service)
     {
         case 0:
-            result[0] = length < 8 ? E_DATA_VOID : _white.add(own, word(2), word(4), word(6), now);
+            result[0] = length < 8 ? E_DATA_VOID : _white.add(own, wordAt(2), wordAt(4), wordAt(6), now);
             break;
 
         case 1:
@@ -634,12 +636,12 @@ void Proxy::ptpTemp(bool command, const uint8_t* data, uint8_t length,
                 result[0] = E_DATA_VOID;
                 break;
             }
-            _white.revoke(word(2));
+            _white.revoke(wordAt(2));
             result[0] = E_SUCCESS;
             break;
 
         case 2:
-            result[0] = length < 4 ? E_DATA_VOID : _white.retrigger(word(2), now);
+            result[0] = length < 4 ? E_DATA_VOID : _white.retrigger(wordAt(2), now);
             break;
 
         default:

@@ -875,7 +875,9 @@ static uint8_t tunnelFeature(uint8_t slot, uint16_t tunnelAddress, uint8_t featu
                              const uint8_t* value, uint8_t length,
                              uint8_t* out, uint8_t& outLength, uint16_t& newAddress)
 {
-    auto word = [&](uint16_t v) {
+    // Not "word": Arduino.h defines word(...) as makeWord(...), which turns
+    // every call into a discarded value and leaves outLength at 0.
+    auto putWord = [&](uint16_t v) {
         out[0] = (uint8_t)(v >> 8);
         out[1] = (uint8_t)v;
         outLength = 2;
@@ -883,14 +885,14 @@ static uint8_t tunnelFeature(uint8_t slot, uint16_t tunnelAddress, uint8_t featu
 
     switch (feature)
     {
-        case 0x01: word(0x0004); break;                                // supported EMI: cEMI
-        case 0x02: word(knxBau.deviceObject().maskVersion()); break;   // device descriptor type 0
+        case 0x01: putWord(0x0004); break;                                 // supported EMI: cEMI
+        case 0x02: putWord(knxBau.deviceObject().maskVersion()); break;    // device descriptor type 0
         case 0x03: out[0] = knxLink.tpConnected() ? 1 : 0; outLength = 1; break;
-        case 0x04: word(knxBau.deviceObject().manufacturerId()); break;
-        case 0x05: out[0] = 0x03; outLength = 1; break;                // active EMI: cEMI
-        case 0x06: word(tunnelAddress); break;
-        case 0x07: word(maxTpApdu()); break;                           // as PID_MAX_INTERFACE_APDU_LENGTH
-        default:   return FEATURE_ADDRESS_VOID;                        // 3.5: no value with it
+        case 0x04: putWord(knxBau.deviceObject().manufacturerId()); break;
+        case 0x05: out[0] = 0x03; outLength = 1; break;                    // active EMI: cEMI
+        case 0x06: putWord(tunnelAddress); break;
+        case 0x07: putWord(maxTpApdu()); break;                            // as PID_MAX_INTERFACE_APDU_LENGTH
+        default:   return FEATURE_ADDRESS_VOID;                            // 3.5: no value with it
     }
 
     if (!set) return FEATURE_OK;
