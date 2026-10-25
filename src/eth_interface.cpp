@@ -9,11 +9,10 @@
 #if SBIP_ETH_COMPILED
 #include <ETH.h>
 #include <SPI.h>
-#include <driver/gpio.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 
+#include "eth_private.h"
 #include "hw_config.h"
+#include "knx_link.h"
 #include "log_buffer.h"
 #include "net_manager.h"
 #endif
@@ -60,11 +59,24 @@ static const uint32_t LEASE_WARN_MS = 15000UL;
 /*
  * A W5500 that does not or only half answers makes the driver log several
  * errors a second, for as long as it runs: send command timeouts, a failed
- * OPEN, a failed link change. That many within the window stop the driver
- * for the rest of the run, with one line that says why.
+ * OPEN, a failed link change - seen with a supply that sags once the PHY has
+ * a link. That many within the window count as a hung chip.
  */
 static const uint32_t DRIVER_ERROR_WINDOW_MS = 30000UL;
 static const uint32_t DRIVER_ERROR_LIMIT     = 30;
+
+/*
+ * A device built into a cabinet cannot be unplugged, so a hung chip, a
+ * driver that fails to start or a chip that does not answer the probe is
+ * tried again, for as long as it takes: reset, probe, start. The delays grow
+ * to RETRY_DELAYS_S's last entry and start over once the driver has run
+ * STABLE_AFTER_MS without trouble.
+ */
+static const uint16_t RETRY_DELAYS_S[]  = {5, 30, 60, 120, 300};
+static const uint32_t STABLE_AFTER_MS   = 10UL * 60UL * 1000UL;
+/** Past this many failed tries, one line an hour is enough. */
+static const uint8_t  RETRY_LOG_TRIES   = 5;
+static const uint32_t RETRY_LOG_EVERY_MS = 60UL * 60UL * 1000UL;
 
 /** ESP-IDF error lines of the W5500 driver, counted by driverErrorHook(). */
 static volatile uint32_t s_driverErrors = 0;
@@ -101,13 +113,13 @@ uint8_t EthInterface::readVersion()
  * so one register read while the line is low settles it. Costs a single SPI
  * transaction, once per boot.
  */
-void EthInterface::resetChip()
+void EthInterface::resetChip(bool verbose)
 {
     const HwProfile& hw = hwConfig.active();
 
     if (hw.ethRstPin < 0)
     {
-        sysLog.println("ETH: RST not wired, using the chip's own power-on reset");
+        if (verbose) sysLog.println("ETH: RST not wired, using the chip's own power-on reset");
         return;
     }
 
@@ -119,6 +131,8 @@ void EthInterface::resetChip()
 
     digitalWrite(hw.ethRstPin, HIGH);
     delay(60);  // PLL lock, ~50 ms
+
+    if (!verbose) return;
 
     if (held == W5500_VERSION)
     {
@@ -145,7 +159,7 @@ void EthInterface::resetChip()
  * VERSIONR is a constant 0x04 on every W5500, so it doubles as a presence
  * check and as a guard against reading a different chip on the same bus.
  */
-bool EthInterface::probeChip()
+bool EthInterface::probeChip(bool verbose)
 {
     const HwProfile& hw = hwConfig.active();
 
@@ -154,7 +168,7 @@ bool EthInterface::probeChip()
 
     SPI.begin(hw.ethSckPin, hw.ethMisoPin, hw.ethMosiPin, -1);
 
-    resetChip();
+    resetChip(verbose);
 
     uint8_t version = 0;
 
@@ -169,7 +183,7 @@ bool EthInterface::probeChip()
 
         if (version == W5500_VERSION)
         {
-            if (attempt > 0)
+            if (attempt > 0 && verbose)
             {
                 sysLog.printf("ETH: W5500 answered on attempt %u\n",
                               (unsigned)(attempt + 1));
@@ -180,40 +194,125 @@ bool EthInterface::probeChip()
 
     // 0x00 and 0xFF mean nothing is driving MISO; anything else is a chip that
     // answers but is not a W5500, or wiring too long for the clock.
-    sysLog.printf("ETH: no W5500 after %u tries, VERSIONR=0x%02X (%s)\n",
+    if (verbose)
+        sysLog.printf("ETH: no W5500 after %u tries, VERSIONR=0x%02X (%s)\n",
                   (unsigned)PROBE_ATTEMPTS, version,
                   (version == 0x00 || version == 0xFF) ? "no answer"
                                                        : "unexpected chip");
+    _lastVersion = version;
     return false;
 }
 
 /*
- * Clean up after ETH.begin() failed in esp_eth_driver_install().
+ * Start the ESP-IDF driver on a chip that answered the probe.
  *
- * Arduino then returns without deleting the MAC object, and the W5500 MAC
- * keeps its receive task and INT handler - while the driver they report to
- * is already freed. The next interrupt (a frame arrives once there is a
- * link) makes the task call through that freed driver: a panic in w5500_tsk
- * with PC 0xfffffffd, at every boot, until the crash-loop guard of the
- * hardware profile gives up on the profile. The MAC object itself cannot be
- * reached from here and stays allocated; its task and interrupt go.
+ * The reset pin is handed over as -1: the chip was already reset in the
+ * probe, and letting the driver toggle it again only costs another 60 ms.
  */
-void EthInterface::abandonDriver()
+bool EthInterface::startDriver()
 {
     const HwProfile& hw = hwConfig.active();
 
-    if (hw.ethIrqPin >= 0)
+    LogBuffer::setIdfErrorHook(&driverErrorHook);
+
+    if (!ETH.begin(ETH_PHY_W5500, SBIP_ETH_PHY_ADDR, hw.ethCsPin,
+                   hw.ethIrqPin, -1, SPI, hw.ethSpiMhz))
     {
-        gpio_intr_disable((gpio_num_t)hw.ethIrqPin);
-        gpio_isr_handler_remove((gpio_num_t)hw.ethIrqPin);
+        // What ETH.begin() leaves behind would crash the device, see
+        // eth_private.cpp.
+        ethReleaseFailedDriver();
+        return false;
     }
 
-    TaskHandle_t task = xTaskGetHandle("w5500_tsk");
-    if (task != nullptr)
+    _started          = true;
+    _startedAt        = millis();
+    _errorWindowStart = millis();
+    _errorWindowCount = s_driverErrors;
+    _wasLink          = false;
+    _wasUp            = false;
+    _leaseWarned      = false;
+    return true;
+}
+
+/*
+ * Take the driver down, chip first: a hung W5500 does not take the stop
+ * commands, a freshly reset one does, and without a stop ETH.end() keeps the
+ * driver installed.
+ */
+void EthInterface::stopDriver()
+{
+    if (!_started) return;
+
+    resetChip(false);
+    ETH.end();
+    _started = false;
+
+    if (ethDriverInstalled())
+        sysLog.println("ETH: the driver did not stop, trying again with the next attempt");
+}
+
+void EthInterface::scheduleRetry()
+{
+    size_t   last  = sizeof(RETRY_DELAYS_S) / sizeof(RETRY_DELAYS_S[0]) - 1;
+    uint16_t delay = RETRY_DELAYS_S[_retries < last ? _retries : last];
+
+    _retries++;
+    _recovering = true;
+    _retryAt    = millis() + (uint32_t)delay * 1000UL;
+}
+
+/** Whether a failed try is worth a line: the first few, then hourly. */
+bool EthInterface::logRetry()
+{
+    if (_retries <= RETRY_LOG_TRIES) return true;
+    if ((uint32_t)(millis() - _retryLogged) < RETRY_LOG_EVERY_MS) return false;
+    _retryLogged = millis();
+    return true;
+}
+
+/*
+ * One try to bring the chip back: reset, probe, start. Link and address are
+ * then picked up by loop() as after a cable change, and NetManager decides
+ * whether that is a reason to move to Ethernet.
+ */
+void EthInterface::retry()
+{
+    if (ethDriverInstalled())
     {
-        vTaskDelete(task);
-        sysLog.println("ETH: receive task of the failed driver stopped");
+        resetChip(false);
+        ETH.end();
     }
+
+    if (!probeChip(false))
+    {
+        if (logRetry())
+            sysLog.printf("ETH: W5500 still not answering (try %u, VERSIONR=0x%02X), next in %u s\n",
+                          (unsigned)_retries, _lastVersion, (unsigned)nextDelayS());
+        scheduleRetry();
+        return;
+    }
+
+    _present = true;
+
+    if (!startDriver())
+    {
+        if (logRetry())
+            sysLog.printf("ETH: W5500 answers, but its driver failed to start (try %u), next in %u s\n",
+                          (unsigned)_retries, (unsigned)nextDelayS());
+        scheduleRetry();
+        return;
+    }
+
+    _recovering = false;
+    _rearmKnx   = true;
+    sysLog.printf("ETH: W5500 back, driver restarted after %u tr%s\n",
+                  (unsigned)_retries, _retries == 1 ? "y" : "ies");
+}
+
+uint16_t EthInterface::nextDelayS() const
+{
+    size_t last = sizeof(RETRY_DELAYS_S) / sizeof(RETRY_DELAYS_S[0]) - 1;
+    return RETRY_DELAYS_S[_retries < last ? _retries : last];
 }
 
 bool EthInterface::begin(void (*keepAlive)())
@@ -225,27 +324,24 @@ bool EthInterface::begin(void (*keepAlive)())
         return false; // not fitted according to the active hardware profile
     }
 
-    if (!probeChip())
+    if (!probeChip(true))
     {
-        sysLog.println("ETH: continuing without Ethernet");
+        sysLog.printf("ETH: continuing without Ethernet, trying again in %u s\n",
+                      (unsigned)nextDelayS());
+        scheduleRetry();
         return false;
     }
 
     _present = true;
     sysLog.println("ETH: W5500 found");
 
-    LogBuffer::setIdfErrorHook(&driverErrorHook);
-
-    // The reset pin is handed over as -1: the chip was already reset in the
-    // probe, and letting the driver toggle it again only costs another 60 ms.
-    if (!ETH.begin(ETH_PHY_W5500, SBIP_ETH_PHY_ADDR, hw.ethCsPin,
-                   hw.ethIrqPin, -1, SPI, hw.ethSpiMhz))
+    if (!startDriver())
     {
-        sysLog.println("ETH: driver failed to start");
-        abandonDriver();
+        sysLog.printf("ETH: driver failed to start, trying again in %u s\n",
+                      (unsigned)nextDelayS());
+        scheduleRetry();
         return false;
     }
-    _started = true;
 
     /*
      * The driver polls the receive status every 10 ms unless it is given an
@@ -320,6 +416,11 @@ bool EthInterface::begin(void (*keepAlive)())
 
 void EthInterface::loop()
 {
+    if (_recovering)
+    {
+        if ((int32_t)(millis() - _retryAt) >= 0) retry();
+        return;
+    }
     if (!_started)
     {
         return;
@@ -330,7 +431,10 @@ void EthInterface::loop()
     }
     _lastCheckMs = millis();
 
-    if (stopOnDriverErrors()) return;
+    if (recoverOnDriverErrors()) return;
+
+    // Running well for a while: the next trouble starts with short delays.
+    if (_retries != 0 && (uint32_t)(millis() - _startedAt) >= STABLE_AFTER_MS) _retries = 0;
 
     bool link = ETH.linkUp();
     bool up   = link && ETH.hasIP();
@@ -381,7 +485,15 @@ void EthInterface::loop()
          * reports; taking the route from under the KNX multicast socket is
          * what the restart-instead-of-switch rule exists to avoid.
          */
-        if (netManager.isEthernetMode()) ETH.setDefault();
+        if (netManager.isEthernetMode())
+        {
+            ETH.setDefault();
+
+            // A restarted driver brought a new netif, and the KNX multicast
+            // membership went with the old one.
+            if (_rearmKnx) knxLink.restartIpLayer();
+        }
+        _rearmKnx = false;
 
         /*
          * The lease is real - the driver runs DHCP as soon as the link is
@@ -404,31 +516,31 @@ void EthInterface::loop()
 }
 
 /*
- * Stop the driver once it does nothing but fail. Without a working chip it
- * is of no use, and its errors push everything else out of the log.
+ * Take a driver that does nothing but fail down, and bring the chip back
+ * through reset and probe. Its errors would otherwise push everything else
+ * out of the log; the single repeated lines are already summed up there.
  */
-bool EthInterface::stopOnDriverErrors()
+bool EthInterface::recoverOnDriverErrors()
 {
     uint32_t errors = s_driverErrors;
 
     if ((uint32_t)(millis() - _errorWindowStart) >= DRIVER_ERROR_WINDOW_MS)
     {
-        _errorWindowStart  = millis();
-        _errorWindowCount  = errors;
+        _errorWindowStart = millis();
+        _errorWindowCount = errors;
         return false;
     }
 
     uint32_t recent = errors - _errorWindowCount;
     if (recent < DRIVER_ERROR_LIMIT) return false;
 
-    sysLog.printf("ETH: W5500: %u driver errors within %u s - the chip does not answer "
-                  "reliably, Ethernet stays off until the next restart\n",
-                  (unsigned)recent, (unsigned)(DRIVER_ERROR_WINDOW_MS / 1000));
+    sysLog.printf("ETH: W5500: %u driver errors within %u s - resetting the chip and "
+                  "restarting its driver in %u s\n",
+                  (unsigned)recent, (unsigned)(DRIVER_ERROR_WINDOW_MS / 1000),
+                  (unsigned)nextDelayS());
 
-    _started = false;
-    _stopped = true;
-    ETH.end();
-    LogBuffer::setIdfErrorHook(nullptr);
+    stopDriver();
+    scheduleRetry();
     return true;
 }
 
@@ -441,7 +553,7 @@ EthInterface::State EthInterface::state() const
 {
     if (!hwConfig.active().ethEnabled) return STATE_DISABLED;
     if (!_present)     return STATE_ABSENT;
-    if (_stopped)      return STATE_FAILED;
+    if (_recovering)   return STATE_RECOVERING;
     if (!_started)     return STATE_ABSENT;
     if (!ETH.linkUp()) return STATE_NO_LINK;
     if (!ETH.hasIP())  return STATE_NO_IP;
@@ -503,7 +615,7 @@ const char* EthInterface::stateName() const
     case STATE_ABSENT:   return "absent";
     case STATE_NO_LINK:  return "no_link";
     case STATE_NO_IP:    return "no_ip";
-    case STATE_FAILED:   return "failed";
+    case STATE_RECOVERING: return "recovering";
     case STATE_READY:    return "ready";
     }
     return "?";

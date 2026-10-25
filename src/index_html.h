@@ -1724,7 +1724,7 @@ const EN = {
 'Programmiermodus beenden':'Stop programming mode',
 'verbunden':'connected', 'kein Link':'no link',
 'keine IP-Adresse':'no IP address', 'nicht gefunden':'not found',
-'gestoppt, W5500 antwortet nicht zuverlässig':'stopped, the W5500 does not answer reliably',
+'W5500 gestört, neuer Versuch läuft':'W5500 failing, retrying',
 'nicht konfiguriert':'not configured', 'WLAN':'Wi-Fi',
 'AP-Modus aktiv':'AP mode active', 'getrennt':'disconnected',
 'manuell':'manual', 'keine':'none', 'nicht gesetzt':'not set',
@@ -2255,7 +2255,7 @@ async function refresh(){
 
   const ES = {ready:'verbunden', no_link:'kein Link', no_ip:'keine IP-Adresse',
               absent:'nicht gefunden', disabled:'nicht konfiguriert',
-              failed:'gestoppt, W5500 antwortet nicht zuverlässig'};
+              recovering:'W5500 gestört, neuer Versuch läuft'};
   const est = t(ES[s.eth.state] || s.eth.state);
   const eok = s.eth.state === 'ready';
   $('ethSt').innerHTML = (s.eth.state === 'disabled' || s.eth.state === 'absent')

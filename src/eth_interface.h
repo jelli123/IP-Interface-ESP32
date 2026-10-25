@@ -29,7 +29,7 @@ public:
         STATE_NO_LINK,  //!< chip found, cable unplugged or no partner
         STATE_NO_IP,    //!< link up, waiting for DHCP
         STATE_READY,    //!< link up and addressed
-        STATE_FAILED    //!< driver stopped, the chip kept failing
+        STATE_RECOVERING //!< chip missing or failing, reset and retried in the background
     };
 
     /**
@@ -76,11 +76,16 @@ public:
     bool     fullDuplex() const;
 
 private:
-    static bool probeChip();
-    static void resetChip();
+    bool probeChip(bool verbose);
+    static void resetChip(bool verbose);
     static uint8_t readVersion();
-    bool stopOnDriverErrors();
-    static void abandonDriver();
+    bool startDriver();
+    void stopDriver();
+    void scheduleRetry();
+    void retry();
+    bool logRetry();
+    uint16_t nextDelayS() const;
+    bool recoverOnDriverErrors();
 
     bool     _present     = false;
     bool     _started     = false;
@@ -89,9 +94,15 @@ private:
     bool     _leaseWarned = false;
     uint32_t _linkSince   = 0;
     uint32_t _lastCheckMs = 0;
-    bool     _stopped     = false;
+    uint32_t _startedAt   = 0;
     uint32_t _errorWindowStart = 0;
     uint32_t _errorWindowCount = 0;
+    bool     _recovering  = false;
+    bool     _rearmKnx    = false;    //!< driver restarted, multicast to renew once up
+    uint8_t  _retries     = 0;    //!< failed tries since the driver last ran stable
+    uint32_t _retryAt     = 0;
+    uint32_t _retryLogged = 0;
+    uint8_t  _lastVersion = 0;    //!< VERSIONR at the last failed probe
 };
 
 extern EthInterface ethInterface;
