@@ -115,7 +115,7 @@ IP-Secure-Profil das Profilmodul „S-AL“.
 |---|---|
 | Gesicherte Telegramme unverändert weiterleiten (Filtertabelle wie üblich) | Stack routet APDU-transparent |
 | Security Proxy (AN192) | umgesetzt, siehe 2.8 |
-| **Langrahmen**: ein S-A_Data-Rahmen trägt 13 Oktette Overhead; mit Standardrahmen (15 Oktette APDU) passt praktisch kein gesichertes Management hindurch | Der TP-UART-Emulator ab 0.10 sendet Extended Frames bis 64 Oktette, ab 0.14 bis 263, und meldet das per `U_EmuIdentify`. `KnxLink::applyTransceiver()` übernimmt den Wert nach jeder Erkennung, der Router meldet dann `PID_MAX_APDULENGTH_ROUTING` = 55 bzw. 254, und Patch 25 bestätigt nur längere Rahmen negativ. Ohne diese Angabe (älterer Emulator, echter TP-UART ohne `-DSBIP_TP_EXTENDED_FRAMES=1`) bleibt es bei 15. **Folge:** Mit dem Emulator ab 0.10 lassen sich Geräte hinter diesem Router sicher programmieren, sonst nicht. Der Router selbst ist davon nicht betroffen – er wird über IP programmiert |
+| **Langrahmen**: ein S-A_Data-Rahmen trägt 13 Oktette Overhead; mit Standardrahmen (15 Oktette APDU) passt praktisch kein gesichertes Management hindurch | Der TP-UART-Emulator ab 0.10 sendet Extended Frames bis 64 Oktette, ab 0.14 bis 263, und meldet das per `U_EmuIdentify`. `KnxLink::applyTransceiver()` übernimmt den Wert nach jeder Erkennung, der Router meldet dann `PID_MAX_APDULENGTH_ROUTING` = 55 bzw. 254, die Produktdaten (`MaxRoutingApduLength`, `make_knxprod.py`) sagen ab Applikationsversion 7 254, für Emulator 0.10 bis 0.13 `--routing-apdu 55`, und Patch 25 bestätigt nur längere Rahmen negativ. Ohne diese Angabe (älterer Emulator, echter TP-UART ohne `-DSBIP_TP_EXTENDED_FRAMES=1`) bleibt es bei 15. **Folge:** Mit dem Emulator ab 0.10 lassen sich Geräte hinter diesem Router sicher programmieren, sonst nicht. Der Router selbst ist davon nicht betroffen – er wird über IP programmiert |
 
 ### 2.5 Tunnelling v2 (3/8/4 3, 5.4.3; TSSK 2.7)
 
@@ -242,7 +242,6 @@ betrifft TP/TP-Koppler, nicht diesen IP-Router.
 
 * **Security Proxy:** Zonenschlüsseltabelle (LTE); die Datenbank mit
   `--proxy` ist noch nicht signiert und nicht mit der ETS geprüft, siehe 2.8.
-* **Produktdaten mit APDU 254** – `ROUTING_APDU` in `scripts/make_knxprod.py` steht noch auf 55, passend zum Emulator vor 0.14; das Gerät meldet zur Laufzeit 254, siehe 2.4.
 * **IP System Broadcast bei anderer Routing-Multicast-Adresse** als
   224.0.23.12: dazu müsste der Socket die Zielgruppe eines Pakets kennen
   (`IP_PKTINFO`), was das Arduino-lwIP nicht liefert.

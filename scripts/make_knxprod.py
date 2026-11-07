@@ -115,13 +115,16 @@ SECURITY_IA_ENTRIES = 32
 
 
 #: Längste APDU, die der Router zwischen IP und TP weiterreicht: mit dem
-#: TP-UART-Emulator ab 0.10 Extended Frames bis 64 Oktette, also 55 - der
-#: Wert, den das Gerät auch in PID_MAX_APDULENGTH_ROUTING meldet. Ohne die
+#: TP-UART-Emulator ab 0.14 Extended Frames bis 263 Oktette, also 254, das
+#: Maximum auf TP - der Wert, den das Gerät dann auch in
+#: PID_MAX_APDULENGTH_ROUTING meldet. Emulator 0.10 bis 0.13 schafft 64
+#: Oktette, für ihn --routing-apdu 55; längere Rahmen bestätigt der Router
+#: sonst negativ (Patch 25), statt sie zu senden. Ohne die
 #: Angabe rechnet die ETS für einen Koppler mit 15, und gesicherte
 #: Telegramme (34 Oktette und mehr) gehen dann nicht über ihn - auch nicht
 #: an den Router selbst, solange sein Tunnel noch eine Adresse außerhalb
 #: seiner Linie hat.
-ROUTING_APDU = 55
+ROUTING_APDU = 254
 
 
 def secure_attributes(tunnels):
@@ -370,7 +373,8 @@ def main():
     parser.add_argument("--routing-apdu", type=int, default=0,
                         help="MaxRoutingApduLength: längste APDU, die der Router "
                              "weiterreicht. Vorgabe %d mit --secure/--proxy "
-                             "(TP-UART-Emulator ab 0.10), 15 für einen echten "
+                             "(TP-UART-Emulator ab 0.14), 55 für Emulator 0.10 "
+                             "bis 0.13, 15 für einen echten "
                              "TP-UART ohne Extended Frames" % ROUTING_APDU)
     parser.add_argument("--identity", help="zusätzlich die passende JSON-Kennung "
                                            "für das Dashboard schreiben")

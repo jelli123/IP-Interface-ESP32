@@ -3400,8 +3400,8 @@ Diese Punkte folgen aus der Emulation, nicht aus dieser Firmware:
   Thermal-Warning existieren beim LPC1115 nicht. Das Dashboard zeigt
   stattdessen den Verbindungszustand und die Frame-Zähler.
 * **Extended Frames bis 263 Oktette erst ab Emulator 0.14** (APDU 254, wie ein
-  NCN5130). 0.10 bis 0.13 senden bis 64 Oktette, also APDU 55. Ein solcher
-  Rahmen belegt den Bus rund 360 ms; der Emulator bestätigt ihn nach 520 ms
+  NCN5130). 0.10 bis 0.13 senden bis 64 Oktette, also APDU 55. Ein Rahmen von 263 Oktetten
+  belegt den Bus rund 360 ms; der Emulator bestätigt ihn nach 520 ms
   negativ, Wiederholungen so langer Rahmen deckt das nicht ab.
 * **`L_Data.con` ist immer positiv.** sblib gibt das Sendeergebnis nicht heraus
   und wiederholt intern bereits bei NACK und BUSY.
