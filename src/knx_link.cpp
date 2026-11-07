@@ -78,13 +78,19 @@ bool (*sbipCemiAccessHook)(uint16_t objectType, uint8_t propertyId, bool write) 
  * U_EmuIdentify (64 octets as of version 0.10, 263 as of 0.14 - an APDU of
  * 254, the most TP allows), and applyTransceiver() takes
  * it from there after every identification. A genuine TP-UART does not say;
- * for one of those -DSBIP_TP_EXTENDED_FRAMES=1 allows extended frames, the
- * default is standard frames only. Until the first identification the same
- * default applies.
+ * for one of those -DSBIP_TP_MAX_FRAME=<octets> sets the limit: 64 for a
+ * Siemens TP-UART 2, 263 for an NCN5120/5130, which take longer frames with
+ * U_L_DataOffset. The default of 23 is standard frames only, and it applies
+ * until the first identification as well.
  */
-#ifndef SBIP_TP_EXTENDED_FRAMES
-#define SBIP_TP_EXTENDED_FRAMES 0
+#ifdef SBIP_TP_EXTENDED_FRAMES
+#error "SBIP_TP_EXTENDED_FRAMES is gone: set -DSBIP_TP_MAX_FRAME=64 (TP-UART 2) or 263 (NCN5120/5130)"
 #endif
+#ifndef SBIP_TP_MAX_FRAME
+#define SBIP_TP_MAX_FRAME 23
+#endif
+static_assert(SBIP_TP_MAX_FRAME >= 23 && SBIP_TP_MAX_FRAME <= 263,
+              "SBIP_TP_MAX_FRAME: 23 (standard frames) to 263 octets");
 static constexpr uint16_t TP_STD_MAX_FRAME = 23;  //!< 15 octets APDU + 8
 static constexpr uint16_t TP_EXT_OVERHEAD  = 9;   //!< extended frame without APDU
 /*
@@ -95,7 +101,7 @@ static constexpr uint16_t TP_EXT_OVERHEAD  = 9;   //!< extended frame without AP
  */
 static constexpr uint16_t TP_MAX_APDU      = 253;
 static constexpr uint16_t TP_DEFAULT_MAX_FRAME =
-    SBIP_TP_EXTENDED_FRAMES ? (TP_MAX_APDU + TP_EXT_OVERHEAD) : TP_STD_MAX_FRAME;
+    (SBIP_TP_MAX_FRAME > TP_MAX_APDU + TP_EXT_OVERHEAD) ? (TP_MAX_APDU + TP_EXT_OVERHEAD) : SBIP_TP_MAX_FRAME;
 uint16_t sbipTpMaxFrame = TP_DEFAULT_MAX_FRAME;
 
 /*

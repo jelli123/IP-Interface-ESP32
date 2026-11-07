@@ -2910,8 +2910,10 @@ Byte Nutzdaten und praktisch das ganze gesicherte Management brauchen einen
 > Ein älterer Emulator oder ein echter TP-UART meldet keine Rahmenlänge. Dann
 > bleibt es bei Standardrahmen (APDU 15): Gesicherte Telegramme, die in einen
 > Standardrahmen passen, gehen durch, **Geräte hinter dem Router lassen sich
-> aber nicht sicher programmieren**. Für einen echten TP-UART schaltet
-> `-DSBIP_TP_EXTENDED_FRAMES=1` Extended Frames frei. Längere Rahmen gibt der
+> aber nicht sicher programmieren**. Für einen echten TP-UART gibt
+> `-DSBIP_TP_MAX_FRAME=<Oktette>` die Rahmenlänge vor: `64` für einen Siemens
+> TP-UART 2 (APDU 55), `263` für einen NCN5120/5130 (der Router nutzt davon
+> 262, APDU 253). Längere Rahmen gibt der
 > Router nicht an den TP-UART weiter, sondern bestätigt sie negativ. Der Router
 > selbst ist nicht betroffen – er wird über IP programmiert.
 
