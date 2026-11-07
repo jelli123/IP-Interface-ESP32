@@ -678,6 +678,49 @@ static bool checkCemiAccess(uint16_t objectType, uint8_t propertyId, bool write)
     return ok;
 }
 
+/*
+ * Every L_Data.con of a data link layer, see patch 39. Called from
+ * knx.loop(). Only TP is counted: the IP side confirms everything at once.
+ */
+void (*sbipConfirmHook)(DptMedium medium, bool success, CemiFrame& frame) = nullptr;
+
+static uint32_t s_tpConOk     = 0;
+static uint32_t s_tpConFailed = 0;
+
+static void noteConfirmation(DptMedium medium, bool success, CemiFrame& frame)
+{
+    if (medium != DptMedium::KNX_TP1) return;
+
+    if (success)
+    {
+        s_tpConOk++;
+        return;
+    }
+
+    s_tpConFailed++;
+
+    // A line without bus voltage confirms every frame negatively; one line a
+    // second says enough.
+    static uint32_t lastAt     = 0;
+    static uint32_t suppressed = 0;
+    uint32_t now = millis();
+    if (lastAt != 0 && (uint32_t)(now - lastAt) < 1000)
+    {
+        suppressed++;
+        return;
+    }
+    lastAt = now;
+
+    uint16_t dst = frame.destinationAddress();
+    bool     group = frame.addressType() == AddressType::GroupAddress;
+    sysLog.printf("KNX: TP frame to %u%s%u%s%u not sent (negative L_Data.con), %u octets on TP%s\n",
+                  group ? (unsigned)(dst >> 11) : (unsigned)(dst >> 12), group ? "/" : ".",
+                  group ? (unsigned)((dst >> 8) & 0x07) : (unsigned)((dst >> 8) & 0x0F), group ? "/" : ".",
+                  (unsigned)(dst & 0xFF), (unsigned)frame.telegramLengthtTP(),
+                  suppressed ? (", " + String(suppressed) + " more before").c_str() : "");
+    suppressed = 0;
+}
+
 static bool isTunnelSource(uint16_t address)
 {
     IpDataLinkLayer* ip = knxBau.getPrimaryDataLinkLayer();
@@ -1192,6 +1235,7 @@ bool KnxLink::begin()
 
     sbipLoopHook = &reportRoutingLoop;
     sbipTunnelSourceHook = &isTunnelSource;
+    sbipConfirmHook      = &noteConfirmation;
 
     sbipFdskHook      = []() -> const uint8_t* { return knxSecureStore.fdsk(); };
     sbipRandomHook    = [](uint8_t* out, size_t length) { knxsec::random(out, length); };
@@ -1472,6 +1516,8 @@ void KnxLink::loop()
         _stats.tpRxInvalid   = tp->getRxInvalidFrameCounter();
         _stats.tpTxFrames    = tp->getTxFrameCounter();
         _stats.tpTxProcessed = tp->getTxProcessedFrameCounter();
+        _stats.tpConOk       = s_tpConOk;
+        _stats.tpConFailed   = s_tpConFailed;
     }
 
     updateBusLoad();
@@ -2369,7 +2415,7 @@ void KnxLink::restartIpLayer()
 bool KnxLink::sendGroupValue(uint16_t groupAddress, const uint8_t* payload,
                              uint8_t length, bool packed)
 {
-    if (groupAddress == 0 || payload == nullptr || length == 0 || length > 14)
+    if (groupAddress == 0 || payload == nullptr || length == 0 || length > GROUP_VALUE_MAX)
     {
         return false;
     }
@@ -2395,6 +2441,9 @@ bool KnxLink::sendGroupValue(uint16_t groupAddress, const uint8_t* payload,
     // route" - routers would drop it. 6 is the KNX default.
     frame.npdu().hopCount(6);
 
+    // A standard frame carries 15 octets after the TPCI, APCI included.
+    FrameFormat format = (length + 1u > 15u) ? ExtendedFrame : StandardFrame;
+
     uint16_t source = knx.individualAddress();
 
     TpUartDataLinkLayer* tp = knxBau.getSecondaryDataLinkLayer();
@@ -2404,14 +2453,14 @@ bool KnxLink::sendGroupValue(uint16_t groupAddress, const uint8_t* payload,
     if (tp != nullptr)
     {
         tp->dataRequest(AckRequested, GroupAddress, groupAddress, source,
-                        StandardFrame, LowPriority, frame.npdu());
+                        format, LowPriority, frame.npdu());
         sent = true;
     }
 
     if (ip != nullptr)
     {
         ip->dataRequest(AckRequested, GroupAddress, groupAddress, source,
-                        StandardFrame, LowPriority, frame.npdu());
+                        format, LowPriority, frame.npdu());
         sent = true;
     }
 
@@ -2421,7 +2470,7 @@ bool KnxLink::sendGroupValue(uint16_t groupAddress, const uint8_t* payload,
 bool KnxLink::queueGroupValue(uint16_t groupAddress, const uint8_t* payload,
                               uint8_t length, bool packed)
 {
-    if (groupAddress == 0 || payload == nullptr || length == 0 || length > 14)
+    if (groupAddress == 0 || payload == nullptr || length == 0 || length > GROUP_VALUE_MAX)
         return false;
 
     if (packed && (length != 1 || payload[0] > 0x3F))

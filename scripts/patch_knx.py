@@ -4775,3 +4775,42 @@ def patch_coupler_any_address():
 
 
 patch_coupler_any_address()
+
+
+# --------------------------------------------------------------------------
+# 39. Every L_Data.con the data link layer gets, to the firmware
+# --------------------------------------------------------------------------
+#
+# The bus monitor sees frames, not confirmations, so whether the TP-UART got
+# a frame out stays invisible - and for a frame the router sends itself no
+# tunnel client gets the confirmation either. sbipConfirmHook, defined in
+# src/knx_link.cpp, counts them for /api/status and logs the negative ones.
+# Unset it costs a pointer compare.
+
+SEC39_MARKER = "// sbip: confirmation hook, see scripts/patch_knx.py 39"
+
+SEC39_EDITS = (
+    (
+        "void DataLinkLayer::dataConReceived(CemiFrame& frame, bool success)\n"
+        "{\n",
+        SEC39_MARKER + "\n"
+        "extern void (*sbipConfirmHook)(DptMedium medium, bool success, CemiFrame& frame);\n"
+        "\n"
+        "void DataLinkLayer::dataConReceived(CemiFrame& frame, bool success)\n"
+        "{\n"
+        "    if (sbipConfirmHook != nullptr)\n"
+        "        sbipConfirmHook(mediumType(), success, frame);\n"
+        "\n",
+    ),
+)
+
+
+def patch_confirm_hook():
+    if apply_secure_edits(
+        "data_link_layer.cpp", SEC39_MARKER, SEC39_EDITS,
+        "TP confirmations are not counted",
+    ):
+        print("patch_knx.py: confirmation hook in data_link_layer.cpp")
+
+
+patch_confirm_hook()

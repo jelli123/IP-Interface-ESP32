@@ -25,6 +25,8 @@ public:
         uint32_t tpRxInvalid;     //!< TP1 frames with a bad checksum or length
         uint32_t tpTxFrames;      //!< frames handed to the TP-UART
         uint32_t tpTxProcessed;   //!< frames confirmed by the TP-UART
+        uint32_t tpConOk;         //!< positive L_Data.con from the TP-UART
+        uint32_t tpConFailed;     //!< negative L_Data.con, incl. frames refused before the UART
         uint32_t ipRxFrames;      //!< frames received from KNXnet/IP
         uint32_t ipTxFrames;      //!< frames sent to KNXnet/IP
         uint16_t busLoadPermille; //!< TP1 utilisation over the last second
@@ -286,7 +288,8 @@ public:
      * Must be called from the main task only - it touches the KNX stack.
      *
      * @param groupAddress destination group address, 0 is rejected
-     * @param payload      APDU payload, 1..14 octets
+     * @param payload      APDU payload, 1..GROUP_VALUE_MAX octets; more than
+     *                     14 go in an extended frame
      * @param length       number of payload octets
      * @param packed       put a single value of six bits or less into the APCI
      *                     octet, which is the form ETS uses for DPT 1, 2 and 3
@@ -294,6 +297,9 @@ public:
      */
     bool sendGroupValue(uint16_t groupAddress, const uint8_t* payload,
                         uint8_t length, bool packed = false);
+
+    /** Longest group value: an APDU of 254, the most an extended frame carries. */
+    static constexpr uint8_t GROUP_VALUE_MAX = 253;
 
     /**
      * Same telegram, but safe to ask for from a web handler: the frame is
@@ -382,7 +388,7 @@ private:
 
     volatile bool _sendPending = false;
     uint16_t      _sendAddress = 0;
-    uint8_t       _sendData[14] = {};
+    uint8_t       _sendData[GROUP_VALUE_MAX] = {};
     uint8_t       _sendLength   = 0;
     bool          _sendPacked   = false;
 

@@ -381,6 +381,8 @@ static String statusJson()
     json += "\"rx_invalid\":" + String(stats.tpRxInvalid) + ",";
     json += "\"tx_frames\":" + String(stats.tpTxFrames) + ",";
     json += "\"tx_processed\":" + String(stats.tpTxProcessed) + ",";
+    json += "\"con_ok\":" + String(stats.tpConOk) + ",";
+    json += "\"con_failed\":" + String(stats.tpConFailed) + ",";
     json += "\"bus_load\":" + String(stats.busLoadPermille) + ",";
     json += "\"bus_load_peak\":" + String(stats.busLoadPeak) + ",";
     json += "\"bus_load_peak_age\":" + String(knxLink.busPeakAge()) + ",";
@@ -2032,7 +2034,7 @@ static void registerMonitorRoutes()
         }
 
         String  hex = request->getParam("value", true)->value();
-        uint8_t payload[14];
+        uint8_t payload[KnxLink::GROUP_VALUE_MAX];
         uint8_t length = 0;
 
         for (unsigned i = 0; i < hex.length() && length < sizeof(payload); i++)
