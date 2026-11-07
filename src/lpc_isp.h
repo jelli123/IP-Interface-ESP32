@@ -64,7 +64,7 @@ public:
         uint8_t  fwMajor      = 0;  //!< emulator firmware version
         uint8_t  fwMinor      = 0;
         uint16_t sblib        = 0;  //!< SBLIB_VERSION the emulator was built with
-        uint8_t  maxFrame     = 0;  //!< longest frame incl. checksum
+        uint16_t maxFrame     = 0;  //!< longest frame incl. checksum, 16 bit since format 4
         char     name[9]      = {0};
         uint8_t  features     = 0;  //!< feature bits of identify format 2
         uint8_t  maxRate      = 0;  //!< highest U_EmuConfigure rate code

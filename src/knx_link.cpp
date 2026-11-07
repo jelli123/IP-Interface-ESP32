@@ -75,7 +75,8 @@ bool (*sbipCemiAccessHook)(uint16_t objectType, uint8_t propertyId, bool write) 
  * longer the stack refuses with a negative L_Data.con rather than hand over.
  *
  * The TP-UART 2 emulator on the SB-Interface says how long in its answer to
- * U_EmuIdentify (64 octets as of version 0.10), and applyTransceiver() takes
+ * U_EmuIdentify (64 octets as of version 0.10, 263 as of 0.14 - an APDU of
+ * 254, the most TP allows), and applyTransceiver() takes
  * it from there after every identification. A genuine TP-UART does not say;
  * for one of those -DSBIP_TP_EXTENDED_FRAMES=1 allows extended frames, the
  * default is standard frames only. Until the first identification the same
@@ -86,7 +87,7 @@ bool (*sbipCemiAccessHook)(uint16_t objectType, uint8_t propertyId, bool write) 
 #endif
 static constexpr uint16_t TP_STD_MAX_FRAME = 23;  //!< 15 octets APDU + 8
 static constexpr uint16_t TP_EXT_OVERHEAD  = 9;   //!< extended frame without APDU
-static constexpr uint16_t TP_MAX_APDU      = 220; //!< what the stack handles at most
+static constexpr uint16_t TP_MAX_APDU      = 254; //!< longest APDU of an extended frame
 static constexpr uint16_t TP_DEFAULT_MAX_FRAME =
     SBIP_TP_EXTENDED_FRAMES ? (TP_MAX_APDU + TP_EXT_OVERHEAD) : TP_STD_MAX_FRAME;
 uint16_t sbipTpMaxFrame = TP_DEFAULT_MAX_FRAME;

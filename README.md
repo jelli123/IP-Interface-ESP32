@@ -2898,11 +2898,13 @@ Byte Nutzdaten und praktisch das ganze gesicherte Management brauchen einen
 *Extended Frame*.
 
 > **Rahmenlänge auf TP:** Der TP-UART-Emulator auf dem SB-Interface sendet ab
-> Version 0.10 Extended Frames bis 64 Oktette und meldet das in seiner Antwort
-> auf `U_EmuIdentify`. Der Router übernimmt den Wert nach jeder Erkennung des
-> SB-Interfaces und meldet daraus `PID_MAX_APDULENGTH_ROUTING` und
-> `PID_MAX_INTERFACE_APDU_LENGTH` = **55**. Das reicht für gesichertes
-> Management der Geräte hinter dem Router.
+> Version 0.10 Extended Frames bis 64 Oktette, ab 0.14 bis 263 Oktette, und
+> meldet das in seiner Antwort auf `U_EmuIdentify` (263 passt erst in die
+> 16-Bit-Angabe von Format 4). Der Router übernimmt den Wert nach jeder
+> Erkennung des SB-Interfaces und meldet daraus `PID_MAX_APDULENGTH_ROUTING`
+> und `PID_MAX_INTERFACE_APDU_LENGTH`: **55** mit 0.10 bis 0.13, **254** ab
+> 0.14, das Maximum auf TP. Schon 55 reicht für gesichertes Management der
+> Geräte hinter dem Router.
 >
 > Ein älterer Emulator oder ein echter TP-UART meldet keine Rahmenlänge. Dann
 > bleibt es bei Standardrahmen (APDU 15): Gesicherte Telegramme, die in einen
@@ -3397,8 +3399,10 @@ Diese Punkte folgen aus der Emulation, nicht aus dieser Firmware:
 * **Keine Transceiver-Telemetrie.** V20V, VDD2, VBUS, VFILT, XTAL und
   Thermal-Warning existieren beim LPC1115 nicht. Das Dashboard zeigt
   stattdessen den Verbindungszustand und die Frame-Zähler.
-* **Extended Frames nur bis 64 Oktette.** Ab Emulator 0.10, das reicht für eine
-  APDU von 55 Oktetten. Ein NCN5130 nimmt bis 263 Oktette.
+* **Extended Frames bis 263 Oktette erst ab Emulator 0.14** (APDU 254, wie ein
+  NCN5130). 0.10 bis 0.13 senden bis 64 Oktette, also APDU 55. Ein solcher
+  Rahmen belegt den Bus rund 360 ms; der Emulator bestätigt ihn nach 520 ms
+  negativ, Wiederholungen so langer Rahmen deckt das nicht ab.
 * **`L_Data.con` ist immer positiv.** sblib gibt das Sendeergebnis nicht heraus
   und wiederholt intern bereits bei NACK und BUSY.
 * **ACK erfolgt autonom.** Das SB-Interface quittiert jedes empfangene

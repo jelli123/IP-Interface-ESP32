@@ -53,6 +53,7 @@ const uint8_t  U_EMU_IDENTIFY_REQ = 0xFE;
 const uint8_t  EMU_IDENTIFY_MIN   = 14;    //!< payload octets of format 1
 const uint8_t  EMU_IDENTIFY_FMT2  = 16;    //!< payload octets of format 2
 const uint8_t  EMU_IDENTIFY_FMT3  = 21;    //!< payload octets of format 3, with the build id
+const uint8_t  EMU_IDENTIFY_FMT4  = 23;    //!< payload octets of format 4, with a 16 bit frame length
 const uint8_t  EMU_IDENTIFY_MAX   = 64;    //!< anything longer is not an answer
 const uint32_t TP_BAUD            = 19200;
 
@@ -764,6 +765,11 @@ bool LpcIsp::parseIdentify(const uint8_t* data, size_t length)
                              ((uint32_t)p[18] << 8) | p[19];
             _tp.buildDirty = (p[20] & 0x01) != 0;
         }
+
+        // Octet 7 holds at most 255; a longer frame (263 octets since
+        // emulator 0.14) comes in 16 bit with format 4.
+        if (p[0] >= 4 && payload >= EMU_IDENTIFY_FMT4)
+            _tp.maxFrame = (uint16_t)((p[21] << 8) | p[22]);
         return true;
     }
     return false;
