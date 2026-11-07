@@ -4814,3 +4814,38 @@ def patch_confirm_hook():
 
 
 patch_confirm_hook()
+
+
+# --------------------------------------------------------------------------
+# 40. No TP frame of 263 octets into the stack
+# --------------------------------------------------------------------------
+#
+# TP carries an APDU of up to 254, a frame of 263 octets, and the TP-UART 2
+# emulator passes such a frame on since 0.14. The stack does not handle it:
+# NPDU::length() (APDU + 2, as uint8_t) wraps to 0, and the CemiFrame copy
+# constructor copies 264 octets into a buffer of 0xFF + 8. Such a frame is
+# taken as invalid instead; the router itself sends at most 262 octets, see
+# TP_MAX_APDU in src/knx_link.cpp.
+
+SEC40_MARKER = "// sbip: no frame of MAX_KNX_TELEGRAM_SIZE, see scripts/patch_knx.py 40"
+
+SEC40_EDITS = (
+    (
+        "    // Is the frame complete and valid\n"
+        "    if (_rxFrame->isValid())\n",
+        "    // Is the frame complete and valid\n"
+        "    " + SEC40_MARKER + "\n"
+        "    if (_rxFrame->isValid() && _rxFrame->size() < MAX_KNX_TELEGRAM_SIZE)\n",
+    ),
+)
+
+
+def patch_longest_frame():
+    if apply_secure_edits(
+        "tpuart_data_link_layer.cpp", SEC40_MARKER, SEC40_EDITS,
+        "a TP frame of 263 octets overruns the stack's buffers",
+    ):
+        print("patch_knx.py: TP frames of 263 octets dropped in tpuart_data_link_layer.cpp")
+
+
+patch_longest_frame()

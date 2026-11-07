@@ -2902,9 +2902,10 @@ Byte Nutzdaten und praktisch das ganze gesicherte Management brauchen einen
 > meldet das in seiner Antwort auf `U_EmuIdentify` (263 passt erst in die
 > 16-Bit-Angabe von Format 4). Der Router übernimmt den Wert nach jeder
 > Erkennung des SB-Interfaces und meldet daraus `PID_MAX_APDULENGTH_ROUTING`
-> und `PID_MAX_INTERFACE_APDU_LENGTH`: **55** mit 0.10 bis 0.13, **254** ab
-> 0.14, das Maximum auf TP. Schon 55 reicht für gesichertes Management der
-> Geräte hinter dem Router.
+> und `PID_MAX_INTERFACE_APDU_LENGTH`: **55** mit 0.10 bis 0.13, **253** ab
+> 0.14. TP trüge 254, der Stack verarbeitet eine APDU bis 253 (`NPDU::length()`
+> ist `uint8_t`); einen 263-Oktett-Rahmen vom Bus verwirft er (Patch 40).
+> Schon 55 reicht für gesichertes Management der Geräte hinter dem Router.
 >
 > Ein älterer Emulator oder ein echter TP-UART meldet keine Rahmenlänge. Dann
 > bleibt es bei Standardrahmen (APDU 15): Gesicherte Telegramme, die in einen
@@ -3400,9 +3401,14 @@ Diese Punkte folgen aus der Emulation, nicht aus dieser Firmware:
   Thermal-Warning existieren beim LPC1115 nicht. Das Dashboard zeigt
   stattdessen den Verbindungszustand und die Frame-Zähler.
 * **Extended Frames bis 263 Oktette erst ab Emulator 0.14** (APDU 254, wie ein
-  NCN5130). 0.10 bis 0.13 senden bis 64 Oktette, also APDU 55. Ein Rahmen von 263 Oktetten
-  belegt den Bus rund 360 ms; der Emulator bestätigt ihn nach 520 ms
-  negativ, Wiederholungen so langer Rahmen deckt das nicht ab.
+  NCN5130; der Router nutzt davon 253, siehe oben). 0.10 bis 0.13 senden bis
+  64 Oktette, also APDU 55. Ein Rahmen von 263 Oktetten belegt den Bus rund
+  360 ms. Quittiert niemand, wiederholt sblib ihn dreimal; ab etwa 75
+  Oktetten passt das nicht mehr in den Bestätigungs-Timeout des Emulators
+  (400 ms + 0,5 ms je Oktett über 23), er bestätigt dann negativ – wie ein
+  echter TP-UART für einen unquittierten Rahmen, nur bevor die Wiederholungen
+  durch sind. Gemessen 2026-11-07: Gruppentelegramme ohne Empfänger bis 74
+  Oktette positiv, ab 75 negativ.
 * **`L_Data.con` ist immer positiv.** sblib gibt das Sendeergebnis nicht heraus
   und wiederholt intern bereits bei NACK und BUSY.
 * **ACK erfolgt autonom.** Das SB-Interface quittiert jedes empfangene

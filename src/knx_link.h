@@ -298,8 +298,8 @@ public:
     bool sendGroupValue(uint16_t groupAddress, const uint8_t* payload,
                         uint8_t length, bool packed = false);
 
-    /** Longest group value: an APDU of 254, the most an extended frame carries. */
-    static constexpr uint8_t GROUP_VALUE_MAX = 253;
+    /** Longest group value: an APDU of 253, the most the stack handles. */
+    static constexpr uint8_t GROUP_VALUE_MAX = 252;
 
     /**
      * Same telegram, but safe to ask for from a web handler: the frame is

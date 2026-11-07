@@ -115,16 +115,16 @@ SECURITY_IA_ENTRIES = 32
 
 
 #: Längste APDU, die der Router zwischen IP und TP weiterreicht: mit dem
-#: TP-UART-Emulator ab 0.14 Extended Frames bis 263 Oktette, also 254, das
-#: Maximum auf TP - der Wert, den das Gerät dann auch in
-#: PID_MAX_APDULENGTH_ROUTING meldet. Emulator 0.10 bis 0.13 schafft 64
+#: TP-UART-Emulator ab 0.14 Extended Frames bis 263 Oktette (APDU 254); der
+#: Stack verarbeitet eine APDU bis 253 (src/knx_link.cpp, TP_MAX_APDU) - der
+#: Wert, den das Gerät dann auch in PID_MAX_APDULENGTH_ROUTING meldet. Emulator 0.10 bis 0.13 schafft 64
 #: Oktette, für ihn --routing-apdu 55; längere Rahmen bestätigt der Router
 #: sonst negativ (Patch 25), statt sie zu senden. Ohne die
 #: Angabe rechnet die ETS für einen Koppler mit 15, und gesicherte
 #: Telegramme (34 Oktette und mehr) gehen dann nicht über ihn - auch nicht
 #: an den Router selbst, solange sein Tunnel noch eine Adresse außerhalb
 #: seiner Linie hat.
-ROUTING_APDU = 254
+ROUTING_APDU = 253
 
 
 def secure_attributes(tunnels):

@@ -87,7 +87,13 @@ bool (*sbipCemiAccessHook)(uint16_t objectType, uint8_t propertyId, bool write) 
 #endif
 static constexpr uint16_t TP_STD_MAX_FRAME = 23;  //!< 15 octets APDU + 8
 static constexpr uint16_t TP_EXT_OVERHEAD  = 9;   //!< extended frame without APDU
-static constexpr uint16_t TP_MAX_APDU      = 254; //!< longest APDU of an extended frame
+/*
+ * Longest APDU the stack handles: one less than TP allows. NPDU::length()
+ * returns the APDU length + 2 as uint8_t, which wraps for 254, and
+ * CemiFrame's buffer of 0xFF + 8 octets holds an APDU of 253. A frame of 263
+ * octets from the bus is dropped for the same reason, see patch 40.
+ */
+static constexpr uint16_t TP_MAX_APDU      = 253;
 static constexpr uint16_t TP_DEFAULT_MAX_FRAME =
     SBIP_TP_EXTENDED_FRAMES ? (TP_MAX_APDU + TP_EXT_OVERHEAD) : TP_STD_MAX_FRAME;
 uint16_t sbipTpMaxFrame = TP_DEFAULT_MAX_FRAME;
@@ -2015,6 +2021,8 @@ void KnxLink::applyTransceiver()
     uint16_t maxFrame = TP_DEFAULT_MAX_FRAME;
     if (tp.kind == LpcIsp::Transceiver::EMULATOR && tp.maxFrame != 0)
         maxFrame = (tp.maxFrame < TP_STD_MAX_FRAME) ? TP_STD_MAX_FRAME : tp.maxFrame;
+    if (maxFrame > TP_MAX_APDU + TP_EXT_OVERHEAD)
+        maxFrame = TP_MAX_APDU + TP_EXT_OVERHEAD;
 
     bool changed   = maxFrame != sbipTpMaxFrame;
     sbipTpMaxFrame = maxFrame;
